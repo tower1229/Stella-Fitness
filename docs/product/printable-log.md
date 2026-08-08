@@ -2,162 +2,213 @@
 
 **状态：Phase 0 product requirement**
 
-Stella Fitness 的训练日志输入不应迫使用户在训练中操作手机。为了同时降低用户摩擦和图像结构化难度，项目应提供一套**可打印、对人友好、对机器也友好**的训练记录模板。
+Stella Fitness 的训练日志输入不应迫使用户在训练中操作手机。
 
-该模板是推荐路径，不是强制格式。Plugin 最终仍可支持自由格式纸质日志，但官方模板应成为 extraction benchmark 的第一优先级。
+用户已提供一份覆盖三个训练阶段的现成 XLSX 训练情况记录模板。v1 不再要求重新设计或由 ProgramSpec 自动生成另一套默认训练表，而是**优先采用该现成模板作为标准记录格式**。
 
-## 1. 目标
+详见：[training-log-template.md](./training-log-template.md)。
 
-模板必须做到：
+## 1. v1 目标
+
+首版记录流程必须做到：
 
 - 训练过程中只需纸笔；
-- 用户不需要重新抄写计划；
-- 实际训练结果与计划目标明显分区；
-- 拍照后能稳定识别 week/day/exercise/load/reps；
-- 用户只记录真正影响长期监督的最低限度字段；
-- 不要求用户学习复杂 RPE/RIR 体系才能使用。
+- 用户不需要在组间操作手机；
+- 动作名称、week/day 等固定信息由模板提供；
+- 用户只填写实际重量、每组结果、动作质量与必要备注；
+- 训练后拍照即可进入结构化流程；
+- 不要求用户学习复杂 RPE/RIR 体系。
 
-## 2. 推荐生成方式
+## 2. 已采用的默认模板
 
-未来 Program Engine 根据 ProgramSpec 生成打印表，而不是让用户手写计划。
-
-例如一张 session sheet 已预填：
+现有 workbook：
 
 ```text
-Program: zhuoshu-12-week
-Cycle: 2026-Q3
-Week: 7
-Day: Monday / Torso
-
-Exercise            Target        Actual load      Actual reps
-Pull-up             total 25      —                [ ][ ][ ][ ]
-DB bench press      4 × 8         ______ kg        __ / __ / __ / __
-DB overhead press   3 × 8–12      ______ kg        __ / __ / __
-Plank               3 × 60s       —                __ / __ / __
+第一阶段  — 第 1~4 周
+第二阶段  — 第 5~8 周
+第三阶段  — 第 9~12 周
 ```
 
-用户只填实际数据。
+常规训练块固定为：
 
-## 3. 必需字段
+```text
+动作 | 重量 | 第一组 | 第二组 | 第三组 | 第四组 | 第五组 | 第六组 | 动作质量 | 问题备注
+```
 
-### Document metadata
+因此 v1 不需要先开发：
 
-应预打印：
+```text
+ProgramSpec → dynamically generate printable PDF/XLSX
+```
 
-- `program_id`；
-- `program_version`；
-- `cycle_id` 或 cycle start；
-- week；
-- day/session id；
-- 日期空白或预填日期。
+这可以留到以后支持其他 program 时再做。
 
-### Exercise row
+## 3. 用户实际填写字段
 
-预打印：
+### 重量
 
-- normalized exercise name；
-- 人类可读动作名称；
-- target prescription；
-- target load symbol（如 `N+1`）。
+该字段是**多态字段**，不能简单理解为 kilogram number：
 
-用户填写：
+- 哑铃动作：通常为实际总公斤数；
+- 徒手引体：可留空；
+- 弹力带辅助引体：可填写弹力带颜色；
+- 俯卧撑：可以填写 `跪姿`、`标准` 或负重方式；
+- 平板支撑：模板使用 `-`。
 
-- actual load；
-- actual reps / duration / total reps；
-- 完成状态。
+因此未来 schema 必须保留 `raw_value` 并允许 load type 分类，而不是强制 number parsing。
 
-## 4. 可选字段
+### 第一组～第六组
 
-仅允许低摩擦选项：
+表示实际完成结果。
 
-- `感觉明显异常` checkbox；
-- `备注` 单行自由文本；
-- `动作/器械发生替换` checkbox。
+通常是 repetitions，但平板支撑等 duration 动作需要根据动作/ProgramSpec 解释为秒数或其他 duration value。
 
-v1 默认**不要求**：
+**不能默认所有组格都是 reps。**
+
+### 动作质量
+
+模板定义：
+
+- `高`：动作标准、轻松完成；
+- `中`：动作完成，变形不严重；
+- `低`：动作完成但明显变形，或动作未完成。
+
+这是低摩擦 subjective signal，不等价于 RPE / RIR。
+
+### 问题备注
+
+允许记录身体不适、动作问题、训练过轻或其他情况。
+
+该字段可能同时包含：
+
+- 普通用户观点；
+- 恢复感受；
+- 潜在安全红旗。
+
+因此其安全信息与用户 belief 需要在系统中分流，而不是整段原文直接送入 Blind Diagnosis。
+
+## 4. 特殊力量测试块
+
+第一阶段模板中的第 4 周周五不是普通 10 列训练块，而是：
+
+```text
+第4周，周五，力量测试
+```
+
+包含：
+
+- 高脚杯深蹲 12RM 测试重量；
+- 哑铃卧推 12RM 测试重量；
+- 哑铃硬拉 12RM 测试重量；
+- 引体向上第一组最大完成次数。
+
+因此 extraction pipeline 必须支持至少两类 layout：
+
+```text
+regular_training_block
+strength_test_block
+```
+
+这份信息目前只是教程 GAP-001 的**候选补充证据**，不自动修改 canonical ProgramSpec，详见 `known-gaps.md`。
+
+## 5. 模板是 Actual-first，而不是 Target/Actual 双栏
+
+此前设想的新模板会同时打印 `Target` 和 `Actual`。现有模板实际上更简单：
+
+- 动作/训练日预填；
+- 用户填写实际训练结果；
+- 不在每一行重复打印目标组次。
+
+这对视觉识别是一个优势，因为大幅降低了 `Target → Actual` 混淆风险。
+
+因此 v1 Benchmark 应把重点改为：
+
+- 空白 vs 实际填写；
+- 重量字段的多态识别；
+- reps vs duration；
+- 数字涂改；
+- 动作质量分类；
+- 问题备注；
+- 特殊力量测试块。
+
+`Target/Actual confusion` 仍作为未来动态生成模板时的回归项，但不再是当前模板的主要风险。
+
+## 6. v1 不额外增加高摩擦字段
+
+当前模板已经包含足够的监督信号。
+
+首版默认不要求增加：
 
 - 每组 RPE；
 - 每组 RIR；
 - 心率；
-- 休息秒数实际记录；
+- 实际休息秒数；
 - 情绪量表；
-- 每组打卡手机交互。
+- 每组手机打卡。
 
-这些字段可能有研究价值，但会显著增加执行成本，而且用户主观估计未必稳定。
+如果未来研究证明某字段具有明确增量价值，再通过需求变更加入，而不是先把表做复杂。
 
-## 5. 机器可读设计
+## 7. Photograph UX
 
-未来模板可以使用以下设计提高视觉识别稳定性：
+用户训练后：
 
-- 固定列布局；
-- 清晰表格边界；
-- 四角视觉定位标记；
-- 大字号 week/day/session 标识；
-- 可选二维码或短 ID，仅编码 program/session metadata，不编码私人身体数据；
-- 足够大的手写数字区域；
-- load 与 reps 分栏，避免语义混淆。
-
-二维码不是训练过程交互入口，只用于训练后照片结构化时识别模板元数据。
-
-## 6. 隐私原则
-
-打印表默认不需要包含：
-
-- 用户真实姓名；
-- 联系方式；
-- 医疗信息；
-- 账户 ID。
-
-`cycle_id` 应可使用本地随机标识。
-
-## 7. Extraction contract
-
-对于官方模板，模型/解析器可以使用 layout prior，但必须遵守：
-
-- 计划目标不能被当成实际完成数据；
-- 空白格必须保持 unknown；
-- OCR 不确定数字必须进入 uncertainty flow；
-- 被涂改字段必须优先识别最终修正，无法确认时请求用户确认；
-- template metadata 只用于定位，不替代实际训练记录。
-
-## 8. Photograph UX
-
-用户训练结束后只需要：
-
-1. 展平纸张；
-2. 拍摄完整页面；
+1. 展平记录表；
+2. 拍清完整的当前训练块或页面；
 3. 上传。
 
 系统应容忍轻微：
 
 - 透视；
 - 阴影；
-- 纸张折痕；
+- 折痕；
 - 圆珠笔/铅笔；
-- 中文或数字手写。
+- 涂改；
+- 中文手写。
 
-如果图片裁切导致关键列缺失，应请求重拍，而不是猜。
+如果关键列被裁切，应请求重拍，而不是猜测。
 
-## 9. Benchmark tiers
+## 8. Benchmark tiers
 
-### Tier A — Official template
+### Tier A — Supplied template
 
-用于验证最优默认体验，是 v1 extraction 的首要发布门槛。
+直接使用现成三阶段模板的打印/拍照样本，是 v1 extraction 的第一优先级。
 
-### Tier B — Modified official template
+### Tier B — Noisy supplied template
 
-用户手写额外行、划线、改动作、涂改。
+包含涂改、划线、光照、阴影、斜拍、跨格等真实噪声。
 
 ### Tier C — Free-form logs
 
-笔记本、自制表格等。
+笔记本、自制表格等，只作为扩展能力。
 
-公开产品可以逐步支持 B/C，但不能为了宣称“任意纸张都能识别”而牺牲可靠性。
+## 9. ProgramSpec 与模板的关系
 
-## 10. Product implication
+v1：
 
-Stella Fitness 的一个重要资产不只是 AI pipeline，还包括：
+```text
+ProgramSpec = plan semantics / supervision baseline
+Existing XLSX = human execution / logging interface
+```
 
-> **ProgramSpec → print-friendly execution sheet → paper execution → photo ingestion**
+两者不要求由同一份数据实时生成，但需要在实施前进行一致性审计：
 
-这是将 Agent 能力放在训练之外、同时保持训练过程低干扰的关键交互闭环。
+- week/day/action list 是否匹配；
+- recovery day 是否正确解释；
+- 特殊测试日是否存在来源冲突。
+
+未来新增其他训练计划时，才考虑建立通用：
+
+```text
+ProgramSpec → printable template generator
+```
+
+## 10. 来源与发布
+
+“项目可以使用该模板进行需求设计”与“公开 ClawHub 包可以再分发该 XLSX”是两个不同问题。
+
+在模板来源/版权状态明确之前：
+
+- Phase 0 可以记录结构和字段；
+- Benchmark 可以围绕私有模板样本准备；
+- 原始 XLSX 不提交公开 Git 历史；
+- public release 的模板分发方式另行决策。
