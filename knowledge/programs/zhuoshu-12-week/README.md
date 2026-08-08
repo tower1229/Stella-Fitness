@@ -25,59 +25,92 @@
 
 - [overview.md](./overview.md)：课程概览、器械与三阶段结构
 - [nutrition.md](./nutrition.md)：原教程饮食方案
-- [rules.md](./rules.md)：重量、力竭、恢复与加重规则
+- [rules.md](./rules.md)：12RM、重量节点、力竭、引体辅助、恢复与加重规则
 - [warmup-and-recovery.md](./warmup-and-recovery.md)：统一热身与放松
-- [phase-1-weeks-01-04.md](./phase-1-weeks-01-04.md)：第 1–4 周（含已补齐的第 4 周周五力量测试）
+- [phase-1-weeks-01-04.md](./phase-1-weeks-01-04.md)：第 1–4 周（含第 4 周周五力量测试）
 - [phase-2-weeks-05-08.md](./phase-2-weeks-05-08.md)：第 5–8 周
 - [phase-3-weeks-09-12.md](./phase-3-weeks-09-12.md)：第 9–12 周
-- [cycle.md](./cycle.md)：12 周结束后的 12RM 重测与循环
-- [open-questions.md](./open-questions.md)：仍需用户确认的课程语义关系
-- [source-audit.md](./source-audit.md)：源资料完整性、未知项与发布风险审计
-- [program-spec.v0.1.yaml](./program-spec.v0.1.yaml)：**历史草案**，生成于配套 XLSX 来源确认前
+- [cycle.md](./cycle.md)：`A → N → 下一周期 A` 与 12RM 重测逻辑
+- [open-questions.md](./open-questions.md)：曾有语义问题及最终确认记录；当前 Q1–Q6 已全部关闭
+- [source-audit.md](./source-audit.md)：源资料完整性与发布风险审计
+- [program-spec.v0.1.yaml](./program-spec.v0.1.yaml)：来源补全前的历史草案
+- [program-spec.v0.2.yaml](./program-spec.v0.2.yaml)：**当前来源已收敛的 ProgramSpec 草案**
 
-## 第 4 周周五已解决
+## 已确认的关键课程语义
 
-早期结构化教程把第 4 周周五标记为“资料缺失”。原课程配套 XLSX 提供了缺失内容，且用户已确认其同源可靠性。
+### `A`
 
-正式 source program 内容为：
+第一次开始课程时，三个主项分别测试 12RM，各自结果就是对应动作的 `A`。
+
+### 第 4 周周五
+
+正式内容为力量测试：
 
 ```text
-第4周，周五，力量测试
-
 高脚杯深蹲：12RM 测试重量
 哑铃卧推：12RM 测试重量
 哑铃硬拉：12RM 测试重量
 引体向上：第一组最大完成次数
 ```
 
-因此**第 4 周周五不再是来源缺口**。
+三个主项的新 12RM 分别直接成为第二阶段对应动作的 `N`。
+
+### 引体向上
+
+第 4 周测试值用于第二阶段辅助带选择。徒手或弹力带辅助的选择目标是：
+
+> 尽量让每组能完成 8 次以上，同时保持课程规定的累计总次数目标。
+
+### 12RM 测试
+
+课程开始、第 4 周周五和完整周期结束后的 12RM 重测使用相同基本协议。
+
+### 动作名称
+
+课程中的“哑铃推举”和“哑铃推肩”是同一个动作，统一为：
+
+```text
+哑铃推肩 / dumbbell-overhead-press
+```
+
+第三个月新增的“哑铃弯举 / dumbbell-curl”是另一项独立动作，不能混淆。
+
+### 第一阶段加重频率
+
+详细逐周计划具有最高权威：
+
+```text
+第1周 A
+第2周 A+1
+第3周 A+2
+第4周 A+2 + 周五12RM重测
+```
+
+“两周加重一次”只作为长期一般节奏的概括；第一个月是特殊阶段，不能用该概括覆盖实际周计划。
 
 ## ProgramSpec 当前状态
 
-`program-spec.v0.1.yaml` 仍保留在仓库中用于追踪早期结构化工作，但其中 Week 4 Friday 的 `unresolved` 已被后续来源证据推翻。
+`program-spec.v0.2.yaml` 已吸收上述同源资料和用户确认，当前在**训练处方来源层面没有已知缺口**。
 
-Phase 0 当前不直接就地“猜着修”这一份旧草案，而采用以下顺序：
+它仍保持 `draft`，原因不是训练计划内容未知，而是 Stella Fitness 尚处于 Phase 0：
 
-1. 先补齐 source Markdown；
-2. 将所有仍影响 ProgramSpec 的问题集中到 `open-questions.md`；
-3. 用户一次性确认；
-4. 再生成/审定下一版 ProgramSpec，使 A/N/测试关系和动作命名同时收敛。
+- ProgramSpec schema 尚未实施验证；
+- public default program 仍需决定专业审核范围；
+- 教程/XLSX 的公开再发布权仍需单独处理；
+- 任何实现代码尚未开始。
 
-在下一版 ProgramSpec 生成前，**source Markdown + source audit 是当前训练计划内容的权威表示**。
+`program-spec.v0.1.yaml` 仅作为历史来源审计保留，不应再作为当前计划事实使用。
 
-## 不自行推断课程意图
+## 训练计划问题处理规则
 
-已有同源资料能明确证明的内容直接记录；资料没有说明的关系保持 Unknown。
+目前没有新的、必须由用户解释才能确定的训练计划语义问题。
 
-尤其不得自行推断：
+后续如果在教程、XLSX、Markdown 或 ProgramSpec 交叉核对中发现新歧义：
 
-- 第 4 周 12RM 与第 5 周 `N` 的映射；
-- 引体向上测试值如何影响下一阶段；
-- `A` 是否一定等于初始 12RM；
-- “哑铃推举/哑铃推肩”是否同一动作；
-- 第一阶段加重频率汇总冲突。
-
-详见 [open-questions.md](./open-questions.md)。
+1. 记录原始冲突；
+2. 集中整理问题；
+3. 一次性向用户确认；
+4. 不通过训练学常识或 LLM 自行补齐课程意图。
 
 ## 忠实结构化不等于专业背书
 
@@ -85,6 +118,6 @@ Phase 0 当前不直接就地“猜着修”这一份旧草案，而采用以下
 
 ## 与 Stella Fitness 的关系
 
-该计划是 Stella Fitness 的第一份 program package，但当前仍处于 Phase 0 来源审定阶段。
+该计划是 Stella Fitness 的第一份 program package，训练处方来源已基本收敛，但项目整体仍处于 Phase 0。
 
 项目架构不应与该计划强耦合。未来应允许新增其他训练计划，并通过统一 ProgramSpec 接口供监督引擎使用。
