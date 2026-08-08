@@ -1,9 +1,11 @@
 # Supplied Training Log Template
 
-**状态：Phase 0 adopted v1 template candidate**  
+**状态：ADOPTED V1 TEMPLATE / RELIABLE SAME-SOURCE COURSE MATERIAL**  
 **来源：用户于 2026-08-08 提供的三阶段 XLSX 训练情况记录模板**
 
-本文记录现成训练日志模板的实际结构及其对 Stella Fitness 的需求影响。原始 XLSX 暂不提交到公开仓库，直到来源/再发布权限被确认。
+用户已明确确认：该 XLSX 是原课程配套资料，来自原作者或其他可靠同源版本；其中第 4 周周五的力量测试就是训练计划正式内容。
+
+原始 XLSX 暂不提交到公开仓库，原因只剩**公开再发布权限尚未确认**，不再是来源可靠性问题。
 
 ## 1. Workbook 结构
 
@@ -17,11 +19,11 @@
 
 每张表按 week/day 分块，动作名称已经预填，用户训练时主要填写实际结果。
 
-这比重新设计一套 ProgramSpec 自动生成表更符合 v1 的低摩擦目标，因此当前需求决定为：
+v1 产品决定：
 
-> **优先复用这份现成模板，不在 v1 为了“更 AI”而重新发明训练记录表。**
+> **直接复用这份原课程配套模板，不重新发明默认训练记录表。**
 
-ProgramSpec 未来可以用于校验模板、生成其他 program 的表格，但不要求首版替换现有模板。
+ProgramSpec 未来可用于校验模板、支持其他 program 或生成新模板，但不是 v1 前置条件。
 
 ## 2. 常规训练块字段
 
@@ -40,55 +42,34 @@ ProgramSpec 未来可以用于校验模板、生成其他 program 的表格，�
 | I | 动作质量 | 用户主观填写 |
 | J | 问题备注 | 用户自由文本 |
 
-最多提供六组记录栏，能够覆盖当前三阶段计划的训练容量。
+最多提供六组记录栏，覆盖当前三阶段计划的训练容量。
 
 ## 3. 动作质量语义
 
-模板定义动作质量为**最后一组的总体动作情况**：
+模板定义动作质量为最后一组总体动作情况：
 
 - `高`：动作标准、轻松完成；
 - `中`：动作完成，变形不严重；
 - `低`：动作完成但明显变形，或动作未完成。
 
-这是一个低摩擦主观信号，可以作为 `Subjective Observation` 保存，但不能被当作等价于 RPE/RIR 的精确强度量表。
-
-Stella Fitness 不应擅自把：
-
-```text
-高 / 中 / 低
-```
-
-映射为固定 RPE、RIR 或百分比强度。
+这是低摩擦主观信号，可作为 `Subjective Observation` 保存，但不能擅自映射为固定 RPE/RIR。
 
 ## 4. 问题备注
 
-模板允许用户记录：
+可记录膝盖或其他部位不适、感觉过轻、动作异常或其他训练情况。
 
-- 膝盖或其他部位不适；
-- 感觉过轻；
-- 动作异常；
-- 其他训练情况。
+`问题备注` 必须进入 Subjective Claim / Safety pre-screen 流程，而不是整段混入 Blind Diagnosis 的 objective EvidencePacket。
 
-`问题备注` 必须进入 Subjective Claim / Safety pre-screen 流程，而不能直接混入 Blind Diagnosis 的 objective EvidencePacket。
-
-其中可能出现安全红旗，因此在信息隔离前可以先经过**确定性/专用 Safety extraction**，但普通“我觉得练得不够”等观点不能因此泄露给 Blind Diagnostician。
-
-## 5. 不同动作的 `重量` 字段不是同一数据类型
-
-模板本身已经体现 `重量` 列具有多态语义：
+## 5. `重量` 字段是多态值
 
 ### 普通哑铃动作
 
-记录实际使用的总公斤数，例如：
-
-```text
-10 kg
-```
+记录实际使用的总公斤数。
 
 ### 引体向上
 
 - 徒手可留空；
-- 使用弹力带辅助时，填写弹力带颜色。
+- 弹力带辅助时填写弹力带颜色。
 
 ### 俯卧撑
 
@@ -98,92 +79,42 @@ Stella Fitness 不应擅自把：
 - `标准`；
 - 实际负重情况。
 
-因此未来 extraction schema **不能把 B 列简单定义为 `load_kg: number`**。
-
-建议领域表示至少区分：
-
-```text
-load_kind:
-  external_weight
-  bodyweight
-  assisted
-  exercise_variant
-  none
-
-load_value?
-load_unit?
-assistance_description?
-variant_description?
-raw_value
-```
-
-这属于需求层 schema 约束，不要求 Phase 0 写代码。
+因此未来 extraction schema 不能简单定义为 `load_kg: number`，而应保留 load kind / raw value / unit / assistance / variant 等语义。
 
 ## 6. `第 x 组` 的单位依动作而异
 
-模板说明把组栏描述为“实际次数”，但计划中存在平板支撑等 duration 动作。
+大多数动作记录 repetitions；平板支撑等动作记录 duration。
 
-因此未来解析不能默认所有 C:H 都是 reps。
+未来解析必须结合动作类型/ProgramSpec 解释，不得默认 C:H 全是 repetitions。
 
-应根据 ProgramSpec / exercise type 解释为：
+## 7. 第 4 周周五：正式力量测试
 
-```text
-reps
-seconds / duration
-other exercise-specific quantity
-```
-
-如果模板实际填写习惯尚未确认，应在 benchmark 中专门加入平板支撑样本。
-
-## 7. 第一阶段第 4 周周五的特殊结构
-
-这份模板出现了一个非常重要的新信息：
+原课程配套表明确：
 
 ```text
 第4周，周五，力量测试
 ```
 
-并提供：
+正式内容：
 
-- 高脚杯深蹲 `12RM 测试重量`；
-- 哑铃卧推 `12RM 测试重量`；
-- 哑铃硬拉 `12RM 测试重量`；
-- 引体向上 `测试次数`，说明为第一组能完成的总次数。
+- 高脚杯深蹲：12RM 测试重量；
+- 哑铃卧推：12RM 测试重量；
+- 哑铃硬拉：12RM 测试重量；
+- 引体向上：第一组最大完成次数。
 
-这与当前结构化教程中的“第 4 周周五资料缺失”不同。
+该内容现已被接受为 source program 的正式组成部分，原先“Week 4 Friday 缺失”问题关闭。
 
-### 当前处理
+仍待用户确认的是**测试结果与后续符号/目标的关系**，例如 12RM 是否直接成为 `N`。这些问题记录在：
 
-该模板被视为 **GAP-001 的候选补充证据**，但暂不直接修改 canonical program：
+`knowledge/programs/zhuoshu-12-week/open-questions.md`
 
-1. 需要确认模板与教程的来源关系；
-2. 如果模板来自同一课程/原作者且版本可信，则可用于补齐 source program；
-3. 如果只是后来整理者自行设计的日志，则只能作为产品日志模板，不足以证明原训练处方。
+## 8. 第二、第三阶段恢复周
 
-在确认前：
+第 8、12 周恢复日继续使用普通日志块布局。
 
-```text
-ProgramSpec Week 4 Friday = unresolved
-Template Week 4 Friday = candidate evidence: strength test
-```
-
-两者必须同时保留，不能静默选择一个版本。
-
-## 8. 第二、第三阶段的恢复周表示
-
-模板第 8 周、12 周的周四/周五仍采用普通训练记录块标题，并没有在日志布局层单独标记 `recovery`。
-
-这不自动构成与教程的冲突，因为日志表可以用相同字段记录恢复训练。
-
-要求：
-
-- recovery 语义仍来自 ProgramSpec / source program；
-- 不能仅从模板标题判断该日是否为 recovery；
-- extraction 只负责“实际写了什么”，Program Engine 负责“该日计划语义是什么”。
+recovery 语义来自 ProgramSpec/source program，而不是从日志标题样式判断。
 
 ## 9. v1 Extraction 最小字段
-
-针对这份固定模板，首版 extraction contract 应优先支持：
 
 ```text
 stage
@@ -203,7 +134,7 @@ field_confidence
 uncertain_fields[]
 ```
 
-特殊力量测试块另有：
+力量测试块另有：
 
 ```text
 test_type: 12RM | max_reps
@@ -212,13 +143,11 @@ test_value
 test_unit
 ```
 
-## 10. 对 Benchmark 的影响
+## 10. Benchmark
 
-未来训练日志 benchmark 的 Tier A 不再是假想“官方模板”，而应以**这份实际 workbook 的打印/拍照结果**为主。
+Tier A 直接以这份 workbook 的真实打印/填写/拍照结果为主，覆盖：
 
-必须覆盖：
-
-- 三张阶段表；
+- 三个阶段；
 - 普通哑铃重量；
 - 引体向上徒手/弹力带；
 - 俯卧撑姿势/负重；
@@ -232,10 +161,19 @@ test_unit
 
 ## 11. 发布与来源治理
 
-用户已经明确该模板可用于 Stella Fitness 产品设计，但这不自动等价于“可以随 public GitHub / ClawHub artifact 再分发原 XLSX”。
+已经确认：
 
-在来源/许可确认前：
+- 模板可用于 Stella Fitness 产品设计与 v1 工作流；
+- 模板属于可靠同源课程资料；
+- 模板可用于训练计划来源补全。
 
-- 可以基于模板结构做需求、schema 和 benchmark 设计；
-- 不把原始 XLSX 二进制文件提交到公开仓库；
-- public release 是否携带模板文件单独做 rights decision。
+仍未确认：
+
+> **是否允许将原始 XLSX 二进制文件随 public GitHub / ClawHub artifact 再分发。**
+
+因此在 rights decision 前：
+
+- 可依据模板结构设计 extraction；
+- 可私下打印并准备 benchmark；
+- 不把 raw XLSX 提交公开仓库；
+- public release 是否携带模板文件单独决策。
