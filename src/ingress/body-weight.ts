@@ -4,8 +4,8 @@ export interface BodyWeightObservation {
   userConfirmed: boolean;
 }
 
-export function isPlausibleBodyWeightKg(value: number): boolean {
-  // Parsing validation only, not a health judgment. The deliberately broad
-  // range is intended to catch obvious extraction/unit errors.
-  return Number.isFinite(value) && value > 20 && value < 400;
-}
+/**
+ * Phase 0 intentionally defines no plausibility thresholds for body weight.
+ * Unit/error detection belongs in a reviewed ingestion policy and test set,
+ * not in an arbitrary hard-coded health range.
+ */
