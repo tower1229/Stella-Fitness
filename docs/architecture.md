@@ -344,9 +344,16 @@ Template
 
 ## 10. 数据持久化
 
-推荐：Plugin-owned SQLite。
+首版采用 **Plugin-owned SQLite**，具体实现优先使用 Node.js 内置 `node:sqlite`，而不是依赖需要 npm install script / native build 的第三方 SQLite 包。
 
-原因：
+选择理由：
+
+- OpenClaw 托管 Plugin 依赖安装使用 `--ignore-scripts`；
+- 项目要求的 Node `>=22.22.3` 已具备 `node:sqlite`；
+- 减少 ClawHub 跨平台安装时的 native binary / postinstall 风险；
+- 数据仍然保持为普通 SQLite 文件，方便备份和迁移。
+
+领域数据不使用 OpenClaw transcript/session store 作为主数据库，因为：
 
 - 数据属于长期领域事实，不属于聊天 session；
 - 需要时间序列和聚合查询；
