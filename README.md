@@ -109,7 +109,8 @@ Product nutrition label
 - OpenClaw Plugin hooks、isolated runtime、media extraction、Cron 与 ClawHub 技术调研；
 - 首个 12 周教程的可审计 Markdown 知识包；
 - 第 4 周周五通过原课程同源 XLSX 补齐为力量测试；
-- `ProgramSpec v0.1` 历史草案及下一版来源审定路径；
+- `A` / `N` / 12RM、引体辅助、动作别名和第一阶段加重节奏等课程语义已集中确认；
+- `ProgramSpec v0.2` source-reconciled draft；
 - 运动科学、营养、食物图像能力、安全升级和营养数据源研究基线；
 - Golden Cases 第一版目录；
 - Training Log / Diet Benchmark 规范；
@@ -153,6 +154,7 @@ Product nutrition label
 - [现成训练日志模板语义](docs/product/training-log-template.md)
 - [V1 适用范围](docs/product/applicability.md)
 - [决策策略](docs/product/decision-policy.md)
+- [ProgramSpec 设计](docs/program-spec.md)
 - [Golden Cases](docs/quality/golden-cases.md)
 - [Training Log Benchmark](docs/quality/training-log-benchmark.md)
 - [Diet Benchmark](docs/quality/diet-benchmark.md)
@@ -168,30 +170,28 @@ Product nutrition label
 1. 《卓叔增重 · 结构化增肌增重教程》；
 2. 原课程三阶段训练情况记录 XLSX。
 
-配套 XLSX 已确认来自原作者或可靠同源版本，并补齐了结构化教程中此前缺失的第 4 周周五：
+训练处方与关键关系目前已经收敛：
 
-```text
-第4周，周五，力量测试
-高脚杯深蹲：12RM 测试重量
-哑铃卧推：12RM 测试重量
-哑铃硬拉：12RM 测试重量
-引体向上：第一组最大完成次数
-```
+- 第一次开始课程时，三个主项各自测试 12RM，并分别绑定为 `A`；
+- 第 4 周周五是力量测试：三个主项重新测试 12RM，并分别直接绑定第二阶段对应的 `N`；
+- 同日引体向上测试第一组最大次数，用于第二阶段辅助带选择，目标是尽量让每组能完成 8 次以上，同时保持计划规定的累计总次数；
+- 第 4 周与完整周期结束后的 12RM 测试采用同一基本协议；
+- “哑铃推举”和“哑铃推肩”是同一动作，统一为哑铃推肩；第三个月新增的哑铃弯举是独立动作；
+- 第一阶段以详细逐周计划 `A → A+1 → A+2 → A+2 + retest` 为准，“两周加重一次”仅视为长期一般节奏概括。
 
-因此 12 周训练日来源覆盖已经完整。
+当前 [ProgramSpec v0.2](knowledge/programs/zhuoshu-12-week/program-spec.v0.2.yaml) 已吸收这些确认；`v0.1` 仅保留为历史草案。
 
-当前仍有少量**关系语义**需要集中向用户确认，例如 12RM 与 `N` 的映射、初始 `A` 的定义和“哑铃推举/推肩”的命名一致性；这些问题集中在：
+目前没有已知、仍需用户解释的训练计划语义问题。后续若交叉核对发现新歧义，会集中整理后向用户确认，不自行猜测。
 
-- [训练计划待确认问题](knowledge/programs/zhuoshu-12-week/open-questions.md)
-
-此外，教程末尾注明部分内容可能由 AI 生成，且教程/XLSX 的公开再分发许可尚未确认。当前工作是**来源忠实的结构化和需求研究**，不是对教程进行专业背书。
+教程末尾注明部分内容可能由 AI 生成，且教程/XLSX 的公开再分发许可尚未确认。当前工作是**来源忠实的结构化和需求研究**，不是对教程进行专业背书。
 
 详见：
 
 - [知识包](knowledge/programs/zhuoshu-12-week/README.md)
+- [课程语义确认记录](knowledge/programs/zhuoshu-12-week/open-questions.md)
 - [源资料审计](knowledge/programs/zhuoshu-12-week/source-audit.md)
 - [已知缺口](docs/known-gaps.md)
 
 ## 状态声明
 
-**Stella Fitness 当前不是可运行产品。** 仓库中的架构、ProgramSpec、模型候选、研究阈值与领域策略均属于实施前设计基线。只有经过训练计划关系确认、Golden Cases 审核、专业策略审定、隐私审查与 Phase 0 Exit Review 后，才允许进入真实训练监督实现。
+**Stella Fitness 当前不是可运行产品。** 训练计划来源语义已经基本收敛，但项目仍需完成最终 source cross-check、Golden Cases 审核、专业策略审定、隐私/权利决策与 Phase 0 Exit Review，才允许进入真实训练监督实现。
