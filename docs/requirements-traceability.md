@@ -5,9 +5,14 @@
 | Requirement | 设计落点 | 依据/研究 | 未来验收 |
 |---|---|---|---|
 | 训练中零手机依赖 | `product/user-flows.md` | 用户场景约束 | 训练流程不要求 set-by-set 手机输入 |
-| 官方可打印训练表作为首选 | `product/printable-log.md`, ADR-005 | offline-first UX + extraction reliability | Tier A printable-log benchmark |
-| 训练后照片录入 | ingestion contract（未来） | `research/openclaw-platform.md` | `quality/training-log-benchmark.md` |
-| Target 与 Actual 严格分离 | printable log / extraction schema | 训练日志数据完整性 | source/target confusion rate |
+| v1 复用现成三阶段 XLSX 训练日志 | `product/training-log-template.md`, ADR-005 | 用户提供可用模板 + offline-first UX | supplied-template Tier A benchmark |
+| 不为 v1 强制开发 ProgramSpec 模板生成器 | ADR-005 | 避免无必要实现成本 | v1 scope review |
+| 训练后照片录入 | ingestion contract（未来） | `research/openclaw-platform.md` | `quality/training-log-template-benchmark.md` |
+| 空白实际值不得根据计划补齐 | extraction schema | evidence integrity | blank preservation / inferred-actual rate |
+| `重量` 支持 kg / 辅助 / 动作变式等多态语义 | `product/training-log-template.md` | supplied workbook semantics | load semantic classification accuracy |
+| 组格按动作区分 reps / duration | extraction schema + ProgramSpec | 平板支撑等动作语义 | set-value semantic accuracy |
+| 第 4 周周五力量测试需要独立 layout | template extraction contract | supplied workbook | strength-test layout classification |
+| 动作质量高/中/低不映射为固定 RPE/RIR | subjective evidence policy | supplied workbook + measurement caution | schema/Golden Cases |
 | 识别不确定时最小补充 | extraction uncertainty flow | low-friction principle | ambiguous/cropped Golden Cases |
 | 用户纠错优先于模型 extraction | observation provenance | data integrity | correction case + metric recompute |
 | 体重定期输入 | evidence model（未来） | 产品需求 | 时间序列可追溯、支持修正 |
@@ -20,7 +25,7 @@
 | 原计划确定性解释 | Program Engine（未来） | ProgramSpec | 相同 program state 得到相同 prescription |
 | Symbolic load 不解释成固定公斤 | ProgramSpec | source fidelity | G-SRC-002 |
 | Recovery 不误判为退步 | Program/Metric semantics | source plan | G-SRC-003 / recovery eval |
-| Unknown fail closed | `known-gaps.md`, ProgramSpec | source fidelity | Week 4 Friday 保持 unresolved |
+| Week 4 Friday 未确认前 fail closed | `known-gaps.md`, ProgramSpec | tutorial missing + XLSX candidate evidence provenance 未确认 | canonical source review |
 | 源计划与外部证据分层 | source/program critique boundary | `research/domain-evidence.md` | external evidence 不静默改 ProgramSpec |
 | 用户观点不进入盲诊 | Blind Diagnosis boundary, ADR-002 | sycophancy research + OpenClaw isolated runtime | Information Flow Test |
 | 诊断冻结后再披露 belief | diagnosis/audit protocol | architecture | trajectory / payload audit |
@@ -43,6 +48,7 @@
 | 周期监督默认静默 | Cron design（未来） | OpenClaw Cron capability | NO_REPLY/silence cases |
 | 可公开安装 | release contract | ClawHub research | validate + dry-run + clean install |
 | 首个教程合法发布范围明确 | source governance | rights gap | rights review before artifact inclusion |
+| 训练日志 XLSX 是否可公开分发单独确认 | `sources/training-log-template-audit.md` | 用户允许产品使用 ≠ 自动获得公开再分发权 | rights review before bundling |
 
 ## 需求变更规则
 
