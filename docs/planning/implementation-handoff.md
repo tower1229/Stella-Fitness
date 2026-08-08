@@ -20,16 +20,20 @@
 
 - [x] 教程完成 Markdown 重组
 - [x] 原课程配套三阶段 XLSX 来源关系已确认
-- [x] 第 4 周周五已正式补齐为阶段末力量测试
-- [x] source audit 建立
-- [x] ProgramSpec v0.1 已标明为来源确认前的历史草案
-- [x] 训练计划剩余解释问题集中记录在 `knowledge/programs/zhuoshu-12-week/open-questions.md`
-- [ ] 用户集中确认 Q1–Q6
-- [ ] 基于确认结果形成下一版 ProgramSpec 并完成来源逐项核对
+- [x] 第 4 周周五正式补齐为力量测试
+- [x] Q1–Q6 课程关系语义集中确认完成
+- [x] `A` = 各主项初始 12RM
+- [x] 第 4 周主项新 12RM → 第二阶段对应 `N`
+- [x] 第 4 周引体测试 → 第二阶段辅助带选择，尽量每组 ≥8 次
+- [x] 第 4 周与周期末使用同一 12RM 测试协议
+- [x] “哑铃推举 / 哑铃推肩”统一为哑铃推肩；哑铃弯举为独立动作
+- [x] 第一阶段详细逐周处方优先于“两周加重一次”长期概括
+- [x] `program-spec.v0.2.yaml` 已形成 source-reconciled draft
+- [ ] 教程/XLSX/Markdown/ProgramSpec v0.2 完成最终逐项 source cross-check
 - [ ] 教程 / XLSX 公开再发布权明确，或确定不捆绑源内容的 fallback
 - [ ] 默认 public program 的专业审核范围已决策并完成相应 review
 
-> Source Program 的未知关系不允许由通用运动科学文献或 LLM 反向猜测。
+> 后续如果 source cross-check 发现新的课程内部歧义，必须集中向用户确认，不允许通用运动科学文献或 LLM 反向猜测课程意图。
 
 ## C. Platform
 
@@ -53,8 +57,6 @@
 - [ ] workout-log 真实填写照片 pilot 样本集准备并人工标注
 - [ ] food-image 真实 benchmark 样本集准备并人工标注
 - [ ] provider privacy profile 选择策略冻结
-
-> 空白 XLSX 模板本身不等于 extraction benchmark。仍需要真实纸笔填写后拍照的样本。
 
 ## E. Domain policy
 
@@ -123,7 +125,9 @@
 14. 哪些 numeric threshold 已获批准，哪些仍必须保持 Unknown？
 15. 训练日志模板能否公开再分发，还是只作为用户侧/private artifact？
 
-如果其中任何问题仍依赖“让模型到时候自己判断”，Phase 0 不应结束。
+当前第 10 项在课程语义层已可以回答“是”；仍需完成最终 source cross-check 与发布/专业审核。
+
+如果其他关键问题仍依赖“让模型到时候自己判断”，Phase 0 不应结束。
 
 ## 建议的实施起点（未来，不执行）
 
