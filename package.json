@@ -19,6 +19,9 @@
     "test": "node --test",
     "pack:check": "npm pack --dry-run"
   },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
   "peerDependencies": {
     "openclaw": ">=2026.7.1"
   },
