@@ -18,13 +18,19 @@
 
 已进入 source Markdown 和 `program-spec.v0.2.yaml`。
 
-## GAP-002：教程版权与再发布许可未知
+## GAP-002：教程发行包再分发策略
 
-**状态：OPEN / RELEASE-BLOCKING**
+**状态：PARTIALLY RESOLVED / RELEASE DECISION**
 
-已确认资料可用于本项目需求和来源整理，但尚未确认教程全文/等价 Markdown 可公开再分发。
+用户已于 2026-08-08 明确确认允许将原始 DOCX 收录到公开 `tower1229/Stella-Fitness` GitHub 仓库，原件已归档至 `sources/originals/`。
 
-关闭条件：明确权利来源、署名和许可范围；否则采用本地导入或不捆绑受限内容的发布方式。
+仍需在 ClawHub/npm 等正式发行前单独决定：
+
+- 是否将原始 DOCX 随发行包捆绑；
+- 是否仅发行派生 ProgramSpec/文档；
+- 是否需要额外署名/许可声明。
+
+GitHub 仓库收录权限与发行包再分发策略分开处理。
 
 ## GAP-003：教程本身存在来源不确定性
 
@@ -84,7 +90,7 @@ photo-only 只形成估算区间与低/中置信证据，不能单独触发高�
 
 **状态：OPEN / RELEASE-BLOCKING**
 
-代码许可证与教程内容许可是独立问题。
+代码许可证与课程原始资料的发行策略是独立问题。
 
 ## GAP-013：Golden Cases 已起草但尚未 reviewer approval
 
@@ -110,19 +116,19 @@ photo-only 只形成估算区间与低/中置信证据，不能单独触发高�
 
 Product / Domain / Safety / Privacy / Platform / Rights reviewer 的职责和签署机制已经定义，但默认 Program、nutrition policy、safety policy 的实际专业审核者和首次签署仍未完成。
 
-## GAP-017：训练日志 XLSX 公开再发布权限
+## GAP-017：训练日志 XLSX 发行包分发策略
 
-**状态：PARTIALLY RESOLVED / RELEASE-BLOCKING FOR BUNDLING TEMPLATE**
+**状态：PARTIALLY RESOLVED / RELEASE DECISION**
 
 已确认：
 
 - XLSX 为原课程可靠同源配套资料；
 - 可作为 Stella Fitness v1 的训练日志模板；
-- 可作为第 4 周周五处方来源。
+- 可作为第 4 周周五处方来源；
+- 用户已明确允许将原始 XLSX 收录到本公开 GitHub 仓库；
+- 原件已归档到 `sources/originals/zhuoshu-workout-log.xlsx`。
 
-仍未确认：原始 XLSX 二进制是否允许随 public GitHub / ClawHub artifact 再分发。
-
-在确认前，不提交 raw XLSX 到公开仓库。
+仍待 ClawHub/npm 等正式发行前决定：是否将 raw XLSX 本身随发行包捆绑，或仅在源码仓库中保留原始来源。
 
 ## GAP-018：训练计划关系语义
 
@@ -137,14 +143,7 @@ Q1–Q6 已由用户基于原课程背景一次性确认：
 5. “哑铃推举”和“哑铃推肩”是同一动作，统一为哑铃推肩；第三个月新增“哑铃弯举”，不得混淆；
 6. 第一阶段以详细逐周处方为准；“两周加重一次”只作为长期一般节奏概括，第一个月属于特殊阶段。
 
-已同步到：
-
-- `knowledge/programs/zhuoshu-12-week/rules.md`；
-- `cycle.md`；
-- Phase 2 / Phase 3 Markdown；
-- `open-questions.md`（现作为确认记录）；
-- `program-spec.v0.2.yaml`；
-- `docs/program-spec.md`。
+已同步到 source Markdown、确认记录和 `program-spec.v0.2.yaml`。
 
 目前**没有新的已知训练计划语义问题需要用户确认**。后续发现新冲突时继续采用“集中提问、不自行猜测”原则。
 
@@ -156,6 +155,7 @@ Q1–Q6 已由用户基于原课程背景一次性确认：
 - `A / N / 12RM` 的关键绑定关系；
 - 哑铃推肩/哑铃弯举命名边界；
 - 第一阶段详细逐周计划的优先级；
+- 原始 DOCX/XLSX：公开 GitHub 仓库收录已确认；
 - Safety：必须存在结构化 red flags 和 `ESCALATE` 优先路径。
 
 ## 维护模板
