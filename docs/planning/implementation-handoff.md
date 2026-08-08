@@ -2,6 +2,8 @@
 
 本文定义“什么时候才算需求阶段完成”。未显式通过本清单前，不创建 `src/` 或真实 Plugin package。
 
+正式签署入口见 [phase0-exit-review.md](./phase0-exit-review.md)，reviewer 职责见 [review-governance.md](./review-governance.md)。
+
 ## A. Product
 
 - [x] 产品定位已冻结
@@ -40,7 +42,7 @@
 - [x] 当前候选模型已登记
 - [x] 模型选择被冻结为 provider-neutral benchmark decision，而非固定厂商依赖
 - [x] workout-log benchmark 数据规范已定义
-- [x] food-image benchmark 评估方向已定义
+- [x] food-image/diet benchmark 规范已定义
 - [x] diagnosis/framing Golden Case catalog 已建立
 - [ ] workout-log 真实 pilot 样本集准备并人工标注
 - [ ] food-image 真实 benchmark 样本集准备并人工标注
@@ -51,10 +53,11 @@
 - [x] ACSM/蛋白质/能量盈余研究基线建立
 - [x] 训练量/力竭/蛋白/增重证据与“不能推出的产品阈值”已分层
 - [x] food-photo 限制建立
+- [x] nutrition evidence hierarchy 建立
 - [x] safety escalation 红旗类别与优先级建立
 - [x] v1 默认适用人群/排除范围冻结
 - [x] 中国食物成分表 / USDA / 包装标签 / 个人餐食库的数据优先级完成调研
-- [ ] 体重/训练/饮食**具体数值干预阈值**获得专业审定并版本化
+- [ ] 体重/训练/饮食**具体数值干预阈值**获得专业审定并版本化，或明确 v1 不自动执行该类精确调整
 - [ ] 中国食物成分表数字访问/许可方案确认，或冻结 USDA + label + local meal library 的 v1 fallback
 
 ## F. Quality
@@ -65,7 +68,9 @@
 - [x] Safety Eval 定义
 - [x] Source Fidelity Eval 定义
 - [x] Training Log Extraction Benchmark 规范定义
+- [x] Diet Evidence Benchmark 规范定义
 - [x] 初版 Golden Cases 文档化
+- [x] Product / Domain / Safety / Privacy / Platform / Rights reviewer 角色定义
 - [ ] 所有 Golden Cases 经 reviewer 批准
 - [ ] 图片类 Golden Cases 对应真实 artifacts/ground truth 准备
 
@@ -74,11 +79,13 @@
 - [x] 数据最小化原则
 - [x] provider privacy research baseline
 - [x] 用户数据导出/删除需求
+- [x] 数据生命周期分层与 Provider disclosure ledger 需求
 - [x] 原图保留问题被明确为产品决策，而非默认永久保留
 - [ ] provider/API 具体数据保留与训练策略按最终候选重新核验并冻结
 - [ ] 软件许可证选择
 - [ ] ClawHub owner/scope 确认
 - [ ] 原始训练/饮食图片默认保留时长与删除策略冻结
+- [ ] source program / nutrition data 的公开分发权处理完成
 
 ## Phase transition rule
 
@@ -102,6 +109,8 @@
 10. 首个 Program 的缺口和授权如何处理？
 11. 用户数据存在哪里、哪些会发给外部 provider、如何删除/导出？
 12. Golden Cases 是否已经在实现前被批准？
+13. 每一项 domain/safety/privacy 决策由谁批准并如何版本化？
+14. 哪些 numeric threshold 已获批准，哪些仍必须保持 Unknown？
 
 如果其中任何问题仍依赖“让模型到时候自己判断”，Phase 0 不应结束。
 
