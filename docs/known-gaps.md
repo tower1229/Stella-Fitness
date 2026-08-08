@@ -35,59 +35,102 @@
 
 ## GAP-004：饮食目标没有连续计算公式
 
-**状态：OPEN / NON-BLOCKING FOR SOURCE FIDELITY**
+**状态：PARTIALLY RESOLVED / SOURCE-FIDELITY LIMITATION**
 
-教程给出 65 kg / 70 kg 示例，并说不同体重按比例调整，但没有定义唯一连续算法。
+教程给出 65 kg / 70 kg 男生示例，并说不同体重按比例调整，但没有定义唯一连续算法。
 
-当前处理：保留示例，不自行发明公式。
+已冻结：
 
-## GAP-005：干预阈值尚未审定
+- 保留源示例；
+- 不发明线性公式；
+- 不把男性示例默认推广给所有用户；
+- nutrition supervision 与 source meal template 分层。
 
-**状态：OPEN / BLOCKING FOR PRODUCTION SUPERVISION**
+仍待决定：是否在专业审核后建立新的通用 nutrition policy。
 
-未冻结：
+## GAP-005：生产干预数值阈值尚未审定
 
-- 体重停滞窗口；
-- 训练完成率/负荷趋势触发条件；
-- 饮食证据覆盖度；
-- 调整幅度；
-- 疲劳/恢复判断边界。
+**状态：PARTIALLY RESOLVED / BLOCKING FOR PRODUCTION SUPERVISION**
 
-研究表明增肌结果涉及多个变量，且能量盈余的精确“最佳值”证据不足，因此不应在需求阶段硬编码一个万能阈值。
+Phase 0 已建立高层证据边界：
 
-## GAP-006：健康安全与适用人群边界待专业审定
+- ACSM 2026 支持足够周训练量的重要性；
+- 力竭并非普遍必要条件；
+- 足够蛋白、保守能量盈余和多次体重趋势具有合理证据基础；
+- recovery session 必须从普通 decline signal 中排除。
 
-**状态：OPEN / BLOCKING FOR PRODUCTION SUPERVISION**
+但以下**个体数值政策**仍不能从这些结论直接推出：
 
-当前只冻结原则：出现胸部不适、异常呼吸困难、明显头晕/晕厥等危险信号时，必须退出“增肌优化”路径并 `ESCALATE`，而不是继续提供训练强化建议。
+- plateau 观察窗口；
+- 最低体重采样频率；
+- training completion threshold；
+- diet coverage threshold；
+- 加热量/碳水幅度；
+- 加重量/容量幅度；
+- OBSERVE → ADJUST 的升级条件。
 
-仍需确定：
+详见 `research/intervention-thresholds.md`。
 
-- 特殊疾病/用药/伤病人群排除条件；
-- 地区化紧急指引；
-- 非急性疼痛如何分流；
-- 哪些健康信息允许 Plugin 主动询问。
+关闭条件：形成有来源、适用人群、专业 reviewer、版本号和 Golden Cases 的 production policy。
+
+## GAP-006：健康安全与适用人群边界
+
+**状态：PARTIALLY RESOLVED**
+
+已冻结：
+
+- v1 默认面向 `healthy adults, age >= 18` 的一般增肌监督；
+- 不属于医疗/康复护理；
+- 胸部不适、晕厥/接近晕厥、异常严重呼吸困难、严重急性伤害、possible rhabdomyolysis 等进入 `ESCALATE`；
+- safety precedence 高于训练/饮食优化。
+
+详见：
+
+- `product/applicability.md`；
+- `quality/safety-escalation.md`。
+
+仍未覆盖：所有特殊疾病/用药/孕期/康复场景的完整远程 triage 与地区化医疗入口。
+
+这些特殊人群不进入 v1 默认普通 policy。
 
 ## GAP-007：食物照片无法提供可靠精确宏量营养素
 
 **状态：KNOWN LIMITATION / DESIGN CONSTRAINT**
 
-现有研究显示，通用视觉模型在食物识别上可以较好，但份量和营养定量误差明显，蛋白质估计尤其可能较差。
+2025–2026 验证研究显示，通用视觉语言模型对食物识别可较好，但份量与营养定量误差显著，蛋白质估算尤其薄弱。
 
 因此：
 
 - photo-only 只能形成估算区间与低/中置信证据；
 - 不显示虚假小数精度；
-- 包装标签、用户确认重量、固定食谱模板等应具有更高证据等级；
+- 包装标签、用户确认重量、固定食谱/餐食、权威数据库具有更高证据等级；
 - photo-only 不能单独触发高置信饮食调整。
 
-## GAP-008：中式饮食营养数据库与 benchmark 尚未确定
+该限制已经转化成明确产品约束，不需要“等待模型完美”才能继续设计。
 
-**状态：OPEN / RESEARCH**
+## GAP-008：中国本地营养数据库的数字访问与许可
 
-USDA FoodData Central / FNDDS 是明确、开放且可通过 API 使用的候选 grounding 数据源，但其覆盖结构不等于中国本地饮食场景。
+**状态：OPEN / QUALITY-BLOCKING FOR STRONG CHINESE-FOOD SUPPORT**
 
-关闭条件：调研并对比适合常见中式菜品的权威数据源，建立真实 benchmark 后再决定。
+国家卫健委公开材料将《中国食物成分表》列为权威食物成分数据来源之一。Phase 0 已完成来源优先级设计，但尚未确认：
+
+- 官方开放 API；
+- 完整数字数据获取方式；
+- 开源/ClawHub 场景的再分发授权。
+
+已冻结 fallback：
+
+```text
+product label
+> user-confirmed recipe/meal
+> authoritative composition DB
+> restaurant published data
+> image-only estimate
+```
+
+USDA FoodData Central 可作为开放 API / global generic fallback。
+
+详见 `research/nutrition-data-sources.md`。
 
 ## GAP-009：最终模型组合未确定
 
@@ -107,7 +150,9 @@ USDA FoodData Central / FNDDS 是明确、开放且可通过 API 使用的候选
 
 **状态：OPEN / PRIVACY REVIEW**
 
-模型供应商的数据政策、ZDR 可用性和功能限制可能变化。生产配置必须记录每个 Provider 的数据用途、默认保留、ZDR/企业选项和是否允许发送图片。
+模型供应商的数据政策、ZDR 可用性和功能限制可能变化。生产配置必须记录每个 Provider 的数据用途、默认保留、ZDR/企业选项、region 和是否允许发送图片。
+
+关闭条件：最终候选模型确定后，对每个外部数据流逐项核验并版本化。
 
 ## GAP-011：ClawHub owner / package scope 未确认
 
@@ -121,19 +166,89 @@ USDA FoodData Central / FNDDS 是明确、开放且可通过 API 使用的候选
 
 代码许可证与教程内容许可是两个独立问题。当前 Phase 0 没有 package，因此不设置虚假的 `UNLICENSED` package 状态。
 
-## GAP-013：Phase 0 Golden Cases 尚未冻结
+## GAP-013：Golden Cases 已起草但尚未 reviewer approval
 
 **状态：OPEN / BLOCKING FOR IMPLEMENTATION**
 
-需要在代码开始前先准备代表性案例，包括：
+`quality/golden-cases.md` 已定义第一版案例目录，覆盖：
 
-- 正常进步 → NO_CHANGE；
-- 数据不足 → COLLECT_MORE_DATA；
-- 同数据不同用户 framing → 同诊断；
-- 恢复周 → 不误判退步；
-- 训练日志识别不确定 → 请求最小补充；
-- 饮食照片与用户主观判断冲突；
-- 安全危险信号 → ESCALATE。
+- source fidelity；
+- extraction；
+- no-change/observe；
+- data-insufficient；
+- anti-sycophancy；
+- diet-photo；
+- safety；
+- auditor；
+- longitudinal behavior。
+
+关闭条件：product/domain/safety reviewer 完成复核并标记 `FROZEN v0.1`。
+
+## GAP-014：真实训练日志与饮食图片 Benchmark 尚未准备
+
+**状态：OPEN / BLOCKING BEFORE MODEL SELECTION**
+
+Benchmark 规则已经定义，但真实标注 artifacts 尚未准备。
+
+训练日志详见 `quality/training-log-benchmark.md`，并优先覆盖：
+
+```text
+Tier A official printable template
+Tier B noisy/edited official template
+Tier C free-form logs
+```
+
+饮食 benchmark 需要覆盖混合中式菜、包装标签、固定个人餐和大份量 stress cases。
+
+## GAP-015：原始图片默认保留策略未冻结
+
+**状态：OPEN / PRIVACY DECISION**
+
+训练/饮食原图对纠错和再抽取有价值，但永久保留增加隐私风险。
+
+实施前需要明确默认策略，例如：
+
+```text
+retain until verified
+retain configurable period
+indefinite retention only by opt-in
+```
+
+在决策前不得默认永久保存。
+
+## GAP-016：外部专业审核机制未冻结
+
+**状态：OPEN / BLOCKING FOR CLAIMING PROFESSIONAL SUPERVISION**
+
+项目可以定位为 evidence-first supervision tool，但在没有专业审核记录前，不应声称经过运动医学、运动营养或其他专业机构认证。
+
+需要决定：
+
+- 谁审核默认 policy；
+- 审核 source program / nutrition / safety 的哪些部分；
+- reviewer approval 如何和 policy version 绑定。
+
+## 已关闭的 Phase 0 设计问题
+
+### 默认适用范围
+
+已冻结为：
+
+```text
+healthy adults, age >= 18,
+general hypertrophy supervision,
+not medical / rehabilitation care
+```
+
+### Offline-first logging interaction
+
+已明确推荐官方可打印训练表：ProgramSpec 预填计划，用户训练时只记录 actual data，训练后拍照上传。
+
+详见 `product/printable-log.md`。
+
+### Safety red-flag category existence
+
+已冻结必须存在结构化 safety flags 和 `ESCALATE` 优先路径，但不声称完成全部医学远程分诊。
 
 ## 维护模板
 
