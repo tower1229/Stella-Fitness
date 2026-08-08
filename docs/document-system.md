@@ -23,7 +23,7 @@ Runtime User Data
 │   ├── requirements.md          # 冻结需求基线
 │   ├── architecture.md          # 总体技术架构
 │   ├── program-spec.md          # ProgramSpec 规范
-│   ├── known-gaps.md            # 已知资料缺口/发布阻塞项
+│   ├── known-gaps.md            # 项目级资料缺口/发布阻塞项
 │   ├── document-system.md       # 本文
 │   └── roadmap.md               # 实施路线
 │
@@ -39,6 +39,8 @@ Runtime User Data
 │           ├── phase-1-weeks-01-04.md
 │           ├── phase-2-weeks-05-08.md
 │           ├── phase-3-weeks-09-12.md
+│           ├── cycle.md
+│           ├── source-audit.md
 │           └── program-spec.v0.1.yaml
 │
 ├── src/                         # Phase 0 后续建立
@@ -74,7 +76,7 @@ Runtime User Data
 
 ### known-gaps.md
 
-所有已知来源缺口、发布阻塞和待确认事项集中登记。禁止把未知内容埋在代码 TODO 中。
+项目级已知来源缺口、发布阻塞和待确认事项集中登记。禁止把未知内容埋在代码 TODO 中。
 
 ### roadmap.md
 
@@ -95,6 +97,8 @@ knowledge/programs/zhuoshu-12-week/
 - 人类可读说明；
 - 训练规则；
 - 逐阶段/逐周计划；
+- 周期循环说明；
+- 源资料审计；
 - 机器可读 ProgramSpec；
 - 来源与已知缺口说明。
 
@@ -160,4 +164,4 @@ ProgramSpec 不应包含用户实际重量、体重或个人日志。
 - tests；
 - changelog（发布后）。
 
-任何来源不确定内容必须进入 `known-gaps.md`。
+任何来源不确定内容必须进入 `known-gaps.md`；program 自身的来源完整性问题还应同步记录到对应的 `source-audit.md`。
