@@ -29,7 +29,8 @@
 
 - [product/user-flows.md](./product/user-flows.md) — 用户输入与监督流程
 - [product/decision-policy.md](./product/decision-policy.md) — NO_CHANGE / OBSERVE / ADJUST 等决策语义
-- [product/printable-log.md](./product/printable-log.md) — offline-first 可打印训练日志要求
+- [product/training-log-template.md](./product/training-log-template.md) — 用户提供的三阶段 XLSX 模板结构、字段与特殊力量测试块
+- [product/printable-log.md](./product/printable-log.md) — offline-first 训练日志要求；v1 已改为优先复用现成模板
 - [product/applicability.md](./product/applicability.md) — v1 默认适用人群与排除边界
 
 ## 目标架构
@@ -54,7 +55,8 @@
 
 - [quality/evaluation-plan.md](./quality/evaluation-plan.md) — 系统级 Eval 设计
 - [quality/golden-cases.md](./quality/golden-cases.md) — 实施前行为真值案例目录
-- [quality/training-log-benchmark.md](./quality/training-log-benchmark.md) — 纸质训练日志图像 Benchmark 规范
+- [quality/training-log-benchmark.md](./quality/training-log-benchmark.md) — 通用纸质训练日志图像 Benchmark 规范
+- [quality/training-log-template-benchmark.md](./quality/training-log-template-benchmark.md) — 针对现成三阶段 XLSX 的专项 Benchmark
 - [quality/diet-benchmark.md](./quality/diet-benchmark.md) — 饮食证据与食物照片 Benchmark 规范
 - [quality/privacy-safety.md](./quality/privacy-safety.md) — Provider 隐私与健康安全总原则
 - [quality/data-lifecycle.md](./quality/data-lifecycle.md) — 原图、事实、派生数据与模型运行记录生命周期
@@ -74,7 +76,7 @@
 - [ADR-002 — Evidence Isolation](./decisions/ADR-002-evidence-isolation.md)
 - [ADR-003 — Provider-neutral Models](./decisions/ADR-003-provider-neutral-models.md)
 - [ADR-004 — Food Photo Is Estimate Only](./decisions/ADR-004-food-photo-estimate-only.md)
-- [ADR-005 — Official Printable Log First](./decisions/ADR-005-printable-log-first.md)
+- [ADR-005 — Existing Printable Log First](./decisions/ADR-005-printable-log-first.md)
 - [ADR-006 — Healthy Adult V1 Scope](./decisions/ADR-006-healthy-adult-v1-scope.md)
 - [ADR-007 — Nutrition Evidence Hierarchy](./decisions/ADR-007-nutrition-evidence-hierarchy.md)
 - [ADR-008 — No Unreviewed Numeric Thresholds](./decisions/ADR-008-no-unreviewed-numeric-thresholds.md)
@@ -90,6 +92,7 @@
 
 - [../sources/README.md](../sources/README.md)
 - [../sources/source-register.md](../sources/source-register.md)
+- [../sources/training-log-template-audit.md](../sources/training-log-template-audit.md)
 
 ## 开工规则
 
