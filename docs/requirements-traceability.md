@@ -5,13 +5,13 @@
 | Requirement | 设计落点 | 依据/研究 | 未来验收 |
 |---|---|---|---|
 | 训练中零手机依赖 | `product/user-flows.md` | 用户场景约束 | 训练流程不要求 set-by-set 手机输入 |
-| v1 复用现成三阶段 XLSX 训练日志 | `product/training-log-template.md`, ADR-005 | 用户提供可用模板 + offline-first UX | supplied-template Tier A benchmark |
+| v1 复用现成三阶段 XLSX 训练日志 | `product/training-log-template.md`, ADR-005 | 原课程配套模板 + offline-first UX | supplied-template Tier A benchmark |
 | 不为 v1 强制开发 ProgramSpec 模板生成器 | ADR-005 | 避免无必要实现成本 | v1 scope review |
 | 训练后照片录入 | ingestion contract（未来） | `research/openclaw-platform.md` | `quality/training-log-template-benchmark.md` |
 | 空白实际值不得根据计划补齐 | extraction schema | evidence integrity | blank preservation / inferred-actual rate |
 | `重量` 支持 kg / 辅助 / 动作变式等多态语义 | `product/training-log-template.md` | supplied workbook semantics | load semantic classification accuracy |
 | 组格按动作区分 reps / duration | extraction schema + ProgramSpec | 平板支撑等动作语义 | set-value semantic accuracy |
-| 第 4 周周五力量测试需要独立 layout | template extraction contract | supplied workbook | strength-test layout classification |
+| 第 4 周周五力量测试需要独立 layout | template extraction contract | original-course workbook | strength-test layout classification |
 | 动作质量高/中/低不映射为固定 RPE/RIR | subjective evidence policy | supplied workbook + measurement caution | schema/Golden Cases |
 | 识别不确定时最小补充 | extraction uncertainty flow | low-friction principle | ambiguous/cropped Golden Cases |
 | 用户纠错优先于模型 extraction | observation provenance | data integrity | correction case + metric recompute |
@@ -23,9 +23,17 @@
 | 包装标签优先于图像猜测 | nutrition source hierarchy | NHC label context + product integrity | packaged-label Golden Cases |
 | Personal Meal 可复用但可纠错 | local meal profile（未来） | private-agent continuity | fixed-meal benchmark cases |
 | 原计划确定性解释 | Program Engine（未来） | ProgramSpec | 相同 program state 得到相同 prescription |
-| Symbolic load 不解释成固定公斤 | ProgramSpec | source fidelity | G-SRC-002 |
-| Recovery 不误判为退步 | Program/Metric semantics | source plan | G-SRC-003 / recovery eval |
-| Week 4 Friday 未确认前 fail closed | `known-gaps.md`, ProgramSpec | tutorial missing + XLSX candidate evidence provenance 未确认 | canonical source review |
+| `A` 是每个主项各自初始 12RM | `rules.md`, `program-spec.v0.2.yaml` | 用户课程背景确认 Q1 | course-start binding fixture |
+| Week 4 三主项新 12RM 分别绑定 `N` | ProgramSpec phase transition | original-course XLSX + Q2 | strength-test → N binding fixture |
+| Week 4 引体测试影响 Phase 2 辅助带选择 | phase2 pull-up rule | Q3 | assistance-selection Golden Cases |
+| 引体辅助尽量支持每组 ≥8 次但不覆盖 total reps | phase2 template | Q3 | assistance rule + total-reps invariant |
+| Week 4 与周期末使用同一 12RM 测试协议 | testing protocol | Q4 + source cycle method | protocol reference fixture |
+| 哑铃推举 / 哑铃推肩归一为同一 exercise ID | exercise aliases | Q5 + XLSX/source naming | normalization fixture |
+| 哑铃弯举必须与哑铃推肩保持不同 exercise ID | exercise aliases | Q5 + third-stage source | false-merge regression case |
+| 第一阶段详细周计划优先于“两周加重一次”概括 | progression authority | Q6 + source detailed schedule | week 2/3 load-node fixtures |
+| Symbolic load 不解释成固定公斤 | ProgramSpec | source fidelity | symbolic-load fixture |
+| Recovery 不误判为退步 | Program/Metric semantics | source plan | recovery eval |
+| Source unknown 必须 fail closed | ProgramSpec design | source-governance principle | future unresolved-program fixture |
 | 源计划与外部证据分层 | source/program critique boundary | `research/domain-evidence.md` | external evidence 不静默改 ProgramSpec |
 | 用户观点不进入盲诊 | Blind Diagnosis boundary, ADR-002 | sycophancy research + OpenClaw isolated runtime | Information Flow Test |
 | 诊断冻结后再披露 belief | diagnosis/audit protocol | architecture | trajectory / payload audit |
@@ -56,4 +64,5 @@
 - 实施中发现平台能力与设计不符，先回到需求/架构层记录，不通过代码 workaround 偷偷改变产品语义；
 - 一项能力没有未来可验证的方法时，默认认为需求还没有定义完整；
 - reviewer 无法确认的专业阈值保持 Unknown，不能用模型意见替代批准；
-- 新模型、数据源或特殊人群支持必须先补“依据 → 设计落点 → 验收”，再进入实现。
+- 新模型、数据源或特殊人群支持必须先补“依据 → 设计落点 → 验收”，再进入实现；
+- 后续若发现新的课程内部歧义，必须先记录并集中向用户确认，再修改 ProgramSpec。
