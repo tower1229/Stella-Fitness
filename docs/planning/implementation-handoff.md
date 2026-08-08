@@ -12,22 +12,24 @@
 - [x] 默认不干预原则已冻结
 - [x] 决策状态语义已定义
 - [x] v1 默认适用范围冻结为健康成年人（18+）的一般增肌监督
-- [x] offline-first paper log 作为推荐输入路径已定义
-- [x] **v1 训练日志模板已选定：复用用户提供的三阶段 XLSX，不重新设计默认表**
+- [x] v1 训练日志模板已选定：复用原课程三阶段 XLSX
 - [x] Phase 0 Golden Case catalog 已起草
 - [ ] Phase 0 Golden Cases 完成人工/专业复核并标记 `FROZEN v0.1`
 
 ## B. Source program
 
 - [x] 教程完成 Markdown 重组
-- [x] ProgramSpec v0.1 设计完成
+- [x] 原课程配套三阶段 XLSX 来源关系已确认
+- [x] 第 4 周周五已正式补齐为阶段末力量测试
 - [x] source audit 建立
-- [x] 第 4 周周五获得新的 candidate evidence：训练日志 workbook 显示为力量测试
-- [ ] 确认该 workbook provenance 是否足以用于补齐 canonical Week 4 Friday；否则继续 unresolved
-- [ ] 教程公开再发布权明确，或确定本地导入替代方案
-- [ ] 默认 program 是否需要外部专业审核已决策
+- [x] ProgramSpec v0.1 已标明为来源确认前的历史草案
+- [x] 训练计划剩余解释问题集中记录在 `knowledge/programs/zhuoshu-12-week/open-questions.md`
+- [ ] 用户集中确认 Q1–Q6
+- [ ] 基于确认结果形成下一版 ProgramSpec 并完成来源逐项核对
+- [ ] 教程 / XLSX 公开再发布权明确，或确定不捆绑源内容的 fallback
+- [ ] 默认 public program 的专业审核范围已决策并完成相应 review
 
-> Source Program 的缺口不允许由通用运动科学文献反向猜测补齐，也不能因为日志模板看起来合理就自动改写 canonical program。
+> Source Program 的未知关系不允许由通用运动科学文献或 LLM 反向猜测。
 
 ## C. Platform
 
@@ -42,13 +44,13 @@
 
 - [x] 模型 role contracts 已定义
 - [x] 当前候选模型已登记
-- [x] 模型选择被冻结为 provider-neutral benchmark decision，而非固定厂商依赖
+- [x] 模型选择被冻结为 provider-neutral benchmark decision
 - [x] workout-log benchmark 数据规范已定义
-- [x] **真实 v1 workbook/template source 已获得并完成结构审计**
+- [x] 真实 v1 workbook/template source 已获得并完成结构审计
 - [x] supplied-template 专项 benchmark 规范已定义
 - [x] food-image/diet benchmark 规范已定义
 - [x] diagnosis/framing Golden Case catalog 已建立
-- [ ] workout-log **真实填写照片** pilot 样本集准备并人工标注
+- [ ] workout-log 真实填写照片 pilot 样本集准备并人工标注
 - [ ] food-image 真实 benchmark 样本集准备并人工标注
 - [ ] provider privacy profile 选择策略冻结
 
@@ -64,7 +66,7 @@
 - [x] v1 默认适用人群/排除范围冻结
 - [x] 中国食物成分表 / USDA / 包装标签 / 个人餐食库的数据优先级完成调研
 - [ ] 体重/训练/饮食具体数值干预阈值获得专业审定并版本化，或明确 v1 不自动执行该类精确调整
-- [ ] 中国食物成分表数字访问/许可方案确认，或冻结 USDA + label + local meal library 的 v1 fallback
+- [ ] 中国食物成分表数字访问/许可方案确认，或冻结 fallback
 
 ## F. Quality
 
@@ -93,7 +95,7 @@
 - [ ] ClawHub owner/scope 确认
 - [ ] 原始训练/饮食图片默认保留时长与删除策略冻结
 - [ ] source program / nutrition data 的公开分发权处理完成
-- [ ] **训练日志 XLSX 的 public redistribution 权限确认，或确定不随 ClawHub 包分发原文件**
+- [ ] 原课程训练日志 XLSX 的 public redistribution 权限确认，或确定不随 ClawHub 包分发原文件
 
 ## Phase transition rule
 
@@ -114,20 +116,19 @@
 7. Blind Diagnostician 精确能看到哪些字段？
 8. 各模型角色的 benchmark 和替换标准是什么？
 9. 营养数据按什么来源优先级取得？
-10. 首个 Program 的缺口和授权如何处理？
+10. 首个 Program 是否所有训练日与关键符号/测试关系均已确认？
 11. 用户数据存在哪里、哪些会发给外部 provider、如何删除/导出？
 12. Golden Cases 是否已经在实现前被批准？
 13. 每一项 domain/safety/privacy 决策由谁批准并如何版本化？
 14. 哪些 numeric threshold 已获批准，哪些仍必须保持 Unknown？
-15. 第 4 周周五的力量测试模板是否具有足够 provenance 成为 canonical source？
-16. 训练日志模板能否公开再分发，还是只作为用户侧/private artifact？
+15. 训练日志模板能否公开再分发，还是只作为用户侧/private artifact？
 
 如果其中任何问题仍依赖“让模型到时候自己判断”，Phase 0 不应结束。
 
 ## 建议的实施起点（未来，不执行）
 
 1. domain schemas + source fixture validation；
-2. **supplied XLSX layout contract + extraction benchmark harness**；
+2. supplied XLSX layout contract + extraction benchmark harness；
 3. local storage + correction/audit primitives；
 4. training-log extraction；
 5. deterministic Program/Metrics/Evidence；
