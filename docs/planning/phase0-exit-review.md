@@ -31,12 +31,23 @@ result: PENDING | APPROVED | CHANGES_REQUIRED
 
 ## 3. Source program & template
 
-- [ ] 12 周教程 Markdown 与下一版 ProgramSpec 经过来源逐项核对。
+### 已完成的 source reconciliation
+
 - [x] supplied XLSX 已确认属于原课程可靠同源配套资料。
-- [x] 第 4 周周五已 source-reconciled：正式内容为力量测试，不再 unresolved。
-- [ ] `open-questions.md` 中 Q1–Q6 已由用户确认，并同步到下一版 ProgramSpec。
-- [ ] `A / A+1 / N / N+1` 等 symbolic load 语义及跨阶段映射均已明确。
-- [ ] recovery session 语义明确，且不会因 workbook 使用普通训练块标题而丢失。
+- [x] 第 4 周周五正式内容已确认：三主项 12RM + 引体向上第一组最大次数。
+- [x] Q1–Q6 已由用户基于课程背景确认。
+- [x] `A` 已确认等于每个主项各自初始 12RM。
+- [x] 第 4 周主项新 12RM 已确认分别直接绑定第二阶段对应 `N`。
+- [x] 引体向上测试已确认用于第二阶段辅助带选择，尽量使每组达到 8 次以上，同时保持计划 total reps。
+- [x] 第 4 周使用与周期结束相同的 12RM 测试协议。
+- [x] “哑铃推举 / 哑铃推肩”已确认同一动作并统一为哑铃推肩；哑铃弯举保持独立动作。
+- [x] 第一阶段详细逐周处方优先于“两周加重一次”的长期概括。
+- [x] `program-spec.v0.2.yaml` 已生成并吸收上述确认。
+
+### 仍需在 Phase 0 Exit 前检查
+
+- [ ] 教程、XLSX、Markdown 与 ProgramSpec v0.2 完成最终逐项 source cross-check。
+- [ ] recovery session 语义完成最终核对，且不会因 workbook 使用普通训练块标题而丢失。
 - [ ] 教程公开再分发权已经确认，**或**采用不分发受限内容的明确 fallback。
 - [ ] XLSX 模板公开再分发权已经确认，**或**明确只把模板视为用户侧/private artifact。
 - [ ] 是否需要专业审核该 source program 已决策并完成对应 review。
@@ -161,7 +172,7 @@ Review meeting 必须能清楚回答：
 6. Diet photo 为什么不能当精确营养计量？
 7. 哪些安全信息会强制退出普通增肌路径？
 8. 哪些数字是经过审核的 Policy，哪些仍然只是研究参考？
-9. 首个 12 周计划的所有训练日是否已完整？其 A/N/测试关系是否均明确？
+9. 首个 12 周计划的所有训练日是否已完整？其 `A/N/12RM` 与引体辅助关系是否均明确？
 10. 用户原图和身体数据多久保存、如何删、发给过谁？
 11. 哪个模型坏了/换了以后，需要重跑什么 Eval？
 12. 如果没有任何模型，Program/Metric 层仍能确定哪些事实？
@@ -169,7 +180,9 @@ Review meeting 必须能清楚回答：
 14. `重量` 为什么不是一个单纯 number 字段？
 15. 第 4 周周五力量测试的来源和语义是什么？
 
-只要其中一个关键问题的答案仍是“模型自己应该能处理”，则结果应为 `CHANGES_REQUIRED`。
+当前第 9 和第 15 项在**课程来源语义层面已经有明确答案**；仍需完成最终交叉核对和独立审核。
+
+只要其他关键问题的答案仍是“模型自己应该能处理”，则结果应为 `CHANGES_REQUIRED`。
 
 ## 14. Sign-off
 
