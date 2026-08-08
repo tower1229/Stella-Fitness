@@ -14,7 +14,7 @@
 - 外部平台能否支持所需信息隔离；
 - 模型、数据库、营养数据等依赖如何选择与替换；
 - 哪些领域原则已有证据，哪些个体数值阈值仍需专业审定；
-- 训练教程是否完整、可再发布；
+- 训练教程是否完整、关键符号/测试关系是否明确、是否可再发布；
 - 如何证明系统没有因为用户 framing 改变诊断；
 - 谁负责批准专业、安全、隐私和发布相关结论。
 
@@ -24,7 +24,7 @@
 
 - [x] 产品定位与非目标
 - [x] Offline-first 训练交互
-- [x] **v1 训练日志模板已确定：复用用户提供的三阶段 XLSX**
+- [x] v1 训练日志模板已确定：复用原课程三阶段 XLSX
 - [x] 不为 v1 强制开发新的 ProgramSpec-driven printable generator
 - [x] 训练日志/体重/饮食输入边界
 - [x] 默认不干预
@@ -35,12 +35,13 @@
 #### B. Source & knowledge
 
 - [x] 12 周教程 Markdown 化
-- [x] ProgramSpec v0.1 设计草案
+- [x] 原课程配套三阶段 XLSX 来源关系确认
+- [x] 第 4 周周五正式补齐为力量测试
 - [x] source audit
-- [x] 缺失内容保持 unresolved
 - [x] source program 与外部研究分层，不静默改写
-- [x] 获得 Week 4 Friday 新 candidate evidence：XLSX 显示力量测试
-- [ ] 确认 XLSX provenance 是否足以补齐 Week 4 Friday canonical source，否则继续 unresolved
+- [x] 训练计划剩余解释问题集中登记为 Q1–Q6
+- [ ] 用户确认 Q1–Q6
+- [ ] 基于确认结果生成下一版 ProgramSpec 并完成逐项 source review
 - [ ] 明确教程再发布许可
 - [ ] 明确 XLSX 模板公开再发布许可，或接受“不随 ClawHub 包分发原文件”的 fallback
 - [ ] 决定 source program 的专业审核范围
@@ -64,7 +65,7 @@
 - [x] Nutrition evidence hierarchy
 - [x] 中国食物成分表 + USDA FoodData Central 候选调研
 - [x] Training Log Benchmark 规范
-- [x] **supplied XLSX 专项 extraction benchmark 规范**
+- [x] supplied XLSX 专项 extraction benchmark 规范
 - [x] Diet Benchmark 规范
 - [ ] 采集并人工标注真实填写后的训练日志照片 pilot benchmark
 - [ ] 采集并人工标注真实饮食 pilot benchmark
@@ -114,13 +115,14 @@
 
 优先级：
 
-1. **确认训练日志模板 provenance**：决定它能否同时解决 Week 4 Friday source gap；
-2. **真实 benchmark pilot 准备**：用这份 XLSX 打印并产生真实手写照片与 ground truth；
-3. **Golden Cases review**：让 Product / Domain / Safety reviewer 逐案确认；
-4. **production numeric policy review**：如果无法得到可靠审核，明确 v1 缩减自动调整范围；
-5. **source / rights resolution**：教程与 XLSX 模板分发权；
-6. **privacy decisions**：raw image retention 与最终 Provider profile；
-7. **Phase 0 Exit Review**。
+1. **训练计划语义确认**：用户一次性回答 `knowledge/programs/zhuoshu-12-week/open-questions.md` 的 Q1–Q6；
+2. **下一版 ProgramSpec 来源审定**：将 Week 4 strength test、A/N 关系和动作命名一次性收敛；
+3. **真实 benchmark pilot 准备**：用现成 XLSX 打印并产生真实手写照片与 ground truth；
+4. **Golden Cases review**：让 Product / Domain / Safety reviewer 逐案确认；
+5. **production numeric policy review**：如果无法得到可靠审核，明确 v1 缩减自动调整范围；
+6. **source / rights resolution**：教程与 XLSX 模板分发权；
+7. **privacy decisions**：raw image retention 与最终 Provider profile；
+8. **Phase 0 Exit Review**。
 
 ## Phase 0 Exit Review
 
