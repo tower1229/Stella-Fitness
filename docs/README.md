@@ -23,7 +23,7 @@
 - [requirements.md](./requirements.md)
 - [requirements-traceability.md](./requirements-traceability.md)
 - [known-gaps.md](./known-gaps.md)
-- [program-spec.md](./program-spec.md)
+- [program-spec.md](./program-spec.md) — 当前设计已演进到 source-reconciled v0.2 草案
 
 ## 产品
 
@@ -65,11 +65,15 @@
 
 ## Source Program
 
-- [../knowledge/programs/zhuoshu-12-week/README.md](../knowledge/programs/zhuoshu-12-week/README.md)
-- [../knowledge/programs/zhuoshu-12-week/source-audit.md](../knowledge/programs/zhuoshu-12-week/source-audit.md)
-- [../knowledge/programs/zhuoshu-12-week/open-questions.md](../knowledge/programs/zhuoshu-12-week/open-questions.md) — 需要用户集中确认的课程关系语义
+- [知识包总览](../knowledge/programs/zhuoshu-12-week/README.md)
+- [ProgramSpec v0.2](../knowledge/programs/zhuoshu-12-week/program-spec.v0.2.yaml) — 当前 source-reconciled draft
+- [ProgramSpec v0.1](../knowledge/programs/zhuoshu-12-week/program-spec.v0.1.yaml) — 历史草案
+- [源资料审计](../knowledge/programs/zhuoshu-12-week/source-audit.md)
+- [课程语义确认记录](../knowledge/programs/zhuoshu-12-week/open-questions.md) — Q1–Q6 已全部关闭
 
-**第 4 周周五已由可靠同源配套 XLSX 补齐为力量测试，不再属于 source gap。**
+当前训练计划来源语义已经明确：`A` 为各主项初始 12RM，第 4 周新 12RM 分别绑定 `N`，引体测试用于辅助带选择，“哑铃推举/推肩”统一为哑铃推肩，第一阶段以详细逐周计划为准。
+
+目前没有新的已知训练计划语义问题。若最终 source cross-check 发现新歧义，按项目规则集中向用户确认，不自行补全。
 
 ## Sources
 
