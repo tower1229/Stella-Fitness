@@ -1,34 +1,46 @@
 # Sources
 
-本目录登记 Stella Fitness 的外部依赖资料、研究依据与来源治理信息。
+本目录登记 Stella Fitness 的原始 Program Source、外部研究依据与来源治理信息。
 
-## 两类 source
+## 1. Original Program Sources
 
-### 1. Program source
+用户已于 2026-08-08 明确确认允许将首个训练计划的两份原始 Office 文件收录到本公开 GitHub 仓库。
 
-用户提供的训练教程属于产品知识来源。它决定 `knowledge/` 中“原计划写了什么”，但不自动成为科学/医学权威。
+原件保存在：
 
-目前 program source：
+- `originals/zhuoshu-hypertrophy-course.docx` — 《卓叔增重 · 结构化增肌增重教程》原始 DOCX；
+- `originals/zhuoshu-workout-log.xlsx` — 原课程三阶段训练情况记录表原始 XLSX。
 
-- 《卓叔增重 · 结构化增肌增重教程》
+目录职责：
 
-完整性与许可问题见：
+```text
+sources/originals/   原始、不可静默改写的来源文件
+        ↓
+knowledge/           来源忠实的 Markdown / ProgramSpec 派生层
+        ↓
+docs/                产品需求、架构、研究、质量与治理
+```
+
+完整性与来源审计见：
 
 - `knowledge/programs/zhuoshu-12-week/source-audit.md`
+- `sources/training-log-template-audit.md`
 - `docs/known-gaps.md`
 
-原始 DOCX 不应仅因为开发方便就公开提交；是否可以再分发取决于许可确认。
+> 本公开 GitHub 仓库收录已获用户明确确认；是否将原始 Office 文件进一步捆绑进 ClawHub、npm 或其他发行包，仍作为独立发布决策处理。
 
-### 2. Research source
+## 2. Research Sources
 
 OpenClaw、模型 Provider、运动科学、营养识别、隐私与安全研究登记在 [source-register.md](./source-register.md)。
 
 ## 来源治理规则
 
-1. 平台/价格/模型属于易变事实，记录检查日期；
-2. 实施开始和正式发布前重新核验；
-3. 技术平台优先官方文档；
-4. 模型信息优先厂商官方文档；
-5. 运动/营养结论优先 position stand、系统综述、meta-analysis、同行评议论文；
-6. `knowledge/` 不通过 research source 静默改写；
-7. 不确定或冲突的资料进入 `known-gaps.md`。
+1. 原始 Program Source 不静默修改；
+2. `knowledge/` 的结构化内容必须可追溯到原件；
+3. 发现原件与派生文档冲突时，记录 reconciliation，不以模型推断覆盖原件；
+4. 平台/价格/模型属于易变事实，记录检查日期；
+5. 实施开始和正式发布前重新核验易变依赖；
+6. 技术平台优先官方文档；
+7. 运动/营养结论优先 position stand、系统综述、meta-analysis、同行评议论文；
+8. `knowledge/` 不通过 research source 静默改写；
+9. 不确定或冲突的资料进入 `known-gaps.md`。
