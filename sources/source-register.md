@@ -4,6 +4,18 @@
 
 本表用于实施前重新核验。URL 是依赖资料来源，不表示项目接受来源中的所有结论。
 
+## User-provided project artifacts
+
+| Artifact | Status | Use |
+|---|---|---|
+| 《卓叔增重 · 结构化增肌增重教程》DOCX | private source artifact | source-faithful program knowledge / ProgramSpec design |
+| 三阶段训练情况记录 XLSX | adopted v1 template candidate; public redistribution not yet established | fixed-layout workout logging / extraction benchmark / candidate evidence for Week 4 Friday |
+
+详见：
+
+- `knowledge/programs/zhuoshu-12-week/source-audit.md`
+- `sources/training-log-template-audit.md`
+
 ## OpenClaw
 
 | Topic | Source | Use |
