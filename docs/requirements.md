@@ -6,7 +6,7 @@
 
 Stella Fitness 是一个 **OpenClaw Plugin 为主体的个人增肌监督智能体**。
 
-它不是一个传统健身 App，也不是一个在训练过程中持续对话的 AI 私教。
+它不是传统健身 App，也不是在训练过程中持续对话的 AI 私教。
 
 核心范式：
 
@@ -33,7 +33,7 @@ Agent intervenes only when necessary
 
 ### 2.2 成功标准
 
-产品的价值不以“每天产生建议”衡量，而以以下能力衡量：
+产品价值不以“每天产生建议”衡量，而以以下能力衡量：
 
 - 正常时不打扰；
 - 异常时能发现；
@@ -49,6 +49,7 @@ v1 不以以下能力为目标：
 - 逐组实时聊天式陪练；
 - 实时摄像头动作纠正；
 - 自动替代成熟训练计划生成每日训练；
+- 为首版重新设计一套不必要的新训练日志表；
 - 在缺少可靠证据时生成精确营养摄入；
 - 医疗诊断、伤病治疗或康复处方。
 
@@ -58,24 +59,32 @@ v1 不以以下能力为目标：
 
 训练时用户应可以只依赖：
 
-- 打印训练计划；
-- 纸笔训练日志；
+- 原课程训练计划；
+- 打印出来的三阶段 XLSX 训练日志；
+- 纸笔；
 - 原有健身习惯。
 
 Stella Fitness 不能要求用户为了使用 Agent 而频繁中断训练。
 
 ### 4.2 训练日志输入
 
+v1 首选模板已经确定：**用户提供的原课程三阶段 XLSX 训练情况记录表**。
+
 首选流程：
 
 ```text
-纸质日志 → 训练后拍照 → 图像结构化 → 用户必要时纠错 → 入库
+原课程 XLSX → 打印 → 训练时纸笔填写 Actual → 训练后拍照 → 图像结构化 → 必要时最小纠错 → 入库
 ```
 
 要求：
 
-- 能识别日期、动作、重量、组数、每组次数等字段；
+- 固定识别 stage / week / weekday / exercise；
+- 识别实际重量、各组完成值、动作质量、问题备注；
+- `重量` 是多态字段，不得强制为 kg number；
+- set cells 可能表示 repetitions 或 duration；
+- 第 4 周周五力量测试有独立结构；
 - 无法可靠识别的字段必须标记低置信或询问，不允许猜测后静默入库；
+- 空白 actual 不得由 ProgramSpec/计划目标自动补值；
 - 原始图片与结构化 observation 之间应保留可追溯关系。
 
 ### 4.3 体重输入
@@ -92,15 +101,28 @@ v1 不强制固定每日输入频率，但数据覆盖率必须进入诊断证�
 
 - 食物照片；
 - 自然语言描述；
-- 用户常用食物/餐食的复用。
+- 用户常用食物/餐食的复用；
+- 包装营养标签或用户确认的称重数据。
 
 照片分析必须承认份量、配方、烹饪方式带来的不确定性。无法得到精确数据时使用范围与置信度，不制造小数点级伪精确值。
 
+营养证据优先级遵循：
+
+```text
+包装营养标签
+> 用户确认的称重食谱/固定餐
+> 权威食物成分数据库 + 已知份量
+> 餐厅公开营养数据
+> 单张照片估算
+> Unknown
+```
+
 ## 5. 初始训练计划
 
-首个 canonical program 来源：
+首个 program source 由两份可靠同源资料构成：
 
-**《卓叔增重 · 结构化增肌增重教程》**
+1. **《卓叔增重 · 结构化增肌增重教程》**；
+2. **原课程配套三阶段训练情况记录 XLSX**。
 
 计划包含一个 12 周周期，分三阶段：
 
@@ -108,11 +130,34 @@ v1 不强制固定每日输入频率，但数据覆盖率必须进入诊断证�
 - 第 5–8 周：高效增肌；
 - 第 9–12 周：全面显壮。
 
-训练计划必须从自然语言资料转换为版本化 `ProgramSpec`，运行时不依赖 LLM 每次重新阅读教程。
+### 第 4 周周五已 source-reconciled
 
-### 已知阻塞项
+结构化教程正文曾缺失该日；同源配套 XLSX 补充并经用户确认后，正式内容为：
 
-原资料第 4 周周五明确标记“资料缺失，待补充”。在获得可靠来源前必须保持 `unresolved`，不得推测补齐。
+```text
+第4周，周五，力量测试
+高脚杯深蹲：12RM 测试重量
+哑铃卧推：12RM 测试重量
+哑铃硬拉：12RM 测试重量
+引体向上：第一组最大完成次数
+```
+
+该日不再是 `unresolved` source gap。
+
+### 尚待确认的课程关系语义
+
+影响下一版 ProgramSpec 的问题必须集中向用户确认，不得自行猜测：
+
+- 初始 `A` 是否等于第一次主项 12RM；
+- 第 4 周 12RM 是否直接成为第 5 周 `N`；
+- 引体向上测试结果的后续用途；
+- 第 4 周是否采用课程末尾同一套 12RM 测试流程；
+- “哑铃推举 / 哑铃推肩”的命名关系；
+- 第一阶段“每两周加重一次”与详细逐周计划的冲突。
+
+详见 `knowledge/programs/zhuoshu-12-week/open-questions.md`。
+
+训练计划最终必须转换为版本化 `ProgramSpec`，运行时不依赖 LLM 每次重新阅读教程。
 
 ## 6. Program Engine 要求
 
@@ -121,14 +166,16 @@ Program Engine 负责回答“按照原计划本来应该发生什么”。
 确定性职责包括：
 
 - 当前周期、阶段、周次和训练日；
+- session type（普通训练 / recovery / strength test）；
 - 计划动作；
 - 目标组次/总次数/持续时间；
 - 相对重量节点；
 - 休息时间；
 - 恢复训练标记；
+- 12RM / max-reps 测试语义；
 - 来源中明确给出的辅助动作加重阈值。
 
-`A`、`A+1`、`N`、`N+1` 等只能表示相对节点，不能自动解释成固定公斤数。
+`A`、`A+1`、`N`、`N+1` 等只能表示已确认的课程符号语义，不能自动解释成固定公斤数，也不能在未确认前自行建立 `12RM → N` 映射。
 
 ## 7. 数据模型要求
 
@@ -144,8 +191,9 @@ Program Engine 负责回答“按照原计划本来应该发生什么”。
 
 - body weight；
 - exercise；
-- load；
-- reps；
+- load / assistance / variant；
+- reps / duration / total reps；
+- strength-test result；
 - diet observation；
 - timestamp；
 - source；
@@ -157,9 +205,12 @@ Program Engine 负责回答“按照原计划本来应该发生什么”。
 
 - “今天特别累”；
 - “我觉得是碳水吃少了”；
-- “我认为训练量不够”。
+- “我认为训练量不够”；
+- 训练日志中的 `动作质量` 和自由备注。
 
 用户观点是有价值的数据，但不能在 Blind Diagnosis 前混入客观 EvidencePacket。
+
+安全相关备注可先经过独立 safety extraction / deterministic pre-screen，不能因为 safety 检查而把全部用户观点泄露给 Blind Diagnostician。
 
 ### 7.4 Derived Metric
 
@@ -183,7 +234,7 @@ Program Engine 负责回答“按照原计划本来应该发生什么”。
 
 - 用户希望得到的结论；
 - 用户对原因的猜测；
-- 无关的聊天历史；
+- 无关聊天历史；
 - 为迎合用户而提供的预设答案。
 
 ### 8.2 Belief Extraction
@@ -218,6 +269,8 @@ ESCALATE
 
 模型不能绕过 Policy Gate 直接产生正式干预结论。
 
+未经 reviewer 审核、版本化和 Golden Case 验证的 numeric intervention threshold，不得由 LLM 临场创造。
+
 ### 8.5 默认沉默
 
 没有异常或没有足够证据时，`NO_CHANGE` / `OBSERVE` 是完整、正确的产品结果。
@@ -227,10 +280,12 @@ ESCALATE
 ## 9. 数据完整性要求
 
 - 所有结构化 observation 应保留来源；
-- OCR/视觉低置信字段不得静默写成确定事实；
+- 视觉低置信字段不得静默写成确定事实；
 - 用户纠错必须可覆盖派生结果，并保留必要的变更轨迹；
 - 未知值必须作为未知保存；
-- ProgramSpec 中 unresolved 内容必须 fail closed。
+- source/ProgramSpec 未确认关系必须保持 Unknown；
+- ProgramSpec 中真正 unresolved 的内容必须 fail closed；
+- recovery / strength test 不能被普通训练趋势逻辑误解释。
 
 ## 10. 数据所有权与隐私
 
@@ -245,13 +300,13 @@ Stella Fitness 的长期训练与身体数据应存储在用户控制的 OpenCla
 - Auditor 获得审核所需内容；
 - Reporter 只获得最终允许公开给用户的 DecisionPacket。
 
+原始训练/饮食图片不得默认永久保存，具体默认期限在实现前通过 Privacy Review 冻结。
+
 ## 11. 安全边界
 
-Stella Fitness 是训练监督工具，不替代医疗服务。
+Stella Fitness v1 默认面向健康成年人（18+）的一般增肌监督，不替代医疗或康复服务。
 
 遇到明显超出训练监督范围的症状、疼痛、疾病或潜在伤害信息时，系统应进入 `ESCALATE`，停止把问题继续解释为普通增肌计划调整。
-
-具体安全规则在实现前需要单独制定并测试。
 
 ## 12. OpenClaw 实现要求
 
@@ -284,6 +339,7 @@ Plugin 应可以被其他 OpenClaw 用户安装，不依赖用户拥有 Stella �
 - 隐私说明；
 - 已知限制；
 - canonical program 来源和许可状态说明；
+- XLSX 模板是否随包分发的明确 rights decision；
 - Eval 结果；
 - 版本与 changelog。
 
@@ -309,18 +365,31 @@ Blind Diagnostician payload 中不得出现 user belief、desired action 或完�
 
 ### Source Fidelity
 
-第 4 周周五等 unresolved 内容不得被自动补全。
+- 第 4 周周五必须解析为力量测试，不得重新变成普通训练或缺失；
+- 课程仍未确认的 A/N/测试关系不能被自动补齐；
+- recovery session 不得误判为退步。
 
 ### Extraction Quality
 
-真实纸质训练日志上的关键字段识别必须有专门评测集，低置信识别需要正确进入纠错流程。
+真实纸质训练日志上的关键字段识别必须有专门评测集，尤其覆盖：
+
+- actual load；
+- reps vs duration；
+- 引体辅助/俯卧撑 variant；
+- 动作质量；
+- 问题备注；
+- 空白保持；
+- 第 4 周力量测试特殊区块。
 
 ## 15. 实现前仍需解决
 
 详见 [known-gaps.md](./known-gaps.md)。
 
-在当前阶段，最重要的阻塞项是：
+当前最重要的 Phase 0 阻塞项包括：
 
-1. 第 4 周周五原始训练内容缺失；
-2. 正式公开发布教程内容前的再发布许可确认；
-3. 训练日志图像结构化模型的真实样本评测尚未建立。
+1. 用户集中确认训练计划 `open-questions.md` 的 Q1–Q6，并形成下一版 ProgramSpec；
+2. 教程与 XLSX 的公开再发布方案；
+3. Golden Cases 的 reviewer approval；
+4. 真实手写训练日志 / 饮食图片 benchmark；
+5. production numeric intervention policy 的专业审定或明确保守 fallback；
+6. Provider privacy profile 与 raw-image retention 默认策略。
