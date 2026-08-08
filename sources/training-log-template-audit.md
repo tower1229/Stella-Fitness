@@ -49,8 +49,6 @@ main three lifts = 12RM test
 pull-up = first-set maximum reps test
 ```
 
-This evidence is sufficient to update the human-readable source program.
-
 ## Remaining interpretation questions
 
 The workbook establishes **what happens**, but does not by itself make every relationship explicit.
