@@ -1,10 +1,21 @@
 # Training Log Workbook Source Audit
 
-**artifact:** user-supplied three-stage XLSX workout log  
+**artifact:** original-course three-stage XLSX workout log  
 **received:** 2026-08-08  
 **provenance:** confirmed by user as original-course companion material from the original author or another reliable same-source version  
 **prescription authority:** accepted for source-plan reconciliation  
-**public redistribution:** not yet established
+**public GitHub repository inclusion:** explicitly approved by user on 2026-08-08  
+**ClawHub/npm/package bundling:** separate release decision, not implied by repository inclusion
+
+## Repository artifact
+
+Canonical raw archive path:
+
+```text
+sources/originals/zhuoshu-workout-log.xlsx
+```
+
+The raw XLSX is retained as the immutable source artifact; requirements and `knowledge/` documents are derived layers.
 
 ## Observed workbook structure
 
@@ -37,11 +48,9 @@ with fields for:
 - dumbbell deadlift 12RM test weight;
 - pull-up first-set maximum repetitions.
 
-The user explicitly confirmed that this workbook is original-course companion material and that this strength test is part of the training plan.
+The user explicitly confirmed that this strength test is part of the original training plan.
 
-Therefore the previous “Week 4 Friday source missing” interpretation is closed.
-
-Canonical source meaning is now:
+Canonical source meaning:
 
 ```text
 Week 4 Friday = strength test
@@ -49,36 +58,28 @@ main three lifts = 12RM test
 pull-up = first-set maximum reps test
 ```
 
-## Remaining interpretation questions
+## Confirmed interpretation relationships
 
-The workbook establishes **what happens**, but does not by itself make every relationship explicit.
+The user subsequently confirmed:
 
-Still awaiting source/user clarification:
+- initial `A` = each main lift's own initial 12RM;
+- Week 4 12RM results directly become the corresponding Phase 2 `N` values;
+- the pull-up test informs assistance-band choice, aiming for at least about 8 reps per set while preserving the programmed total-reps target;
+- Week 4 uses the same 12RM testing protocol as the end-of-cycle retest;
+- `哑铃推举` and `哑铃推肩` are the same exercise, normalized to `哑铃推肩 / dumbbell-overhead-press`;
+- third-month `哑铃弯举 / dumbbell-curl` is a separate exercise;
+- detailed Phase 1 weekly prescriptions override the long-term “two-week loading frequency” summary.
 
-- whether the three 12RM test results directly define Week 5 `N`;
-- whether the pull-up max-reps result is baseline-only or affects Phase 2 targets;
-- whether this test uses the same 12RM protocol described at the end of the 12-week cycle;
-- the precise initial-cycle definition of `A`;
-- naming equivalence of `哑铃推举` / `哑铃推肩`;
-- the Phase 1 “two-week loading frequency” summary conflict.
-
-These are tracked in `knowledge/programs/zhuoshu-12-week/open-questions.md` and must not be guessed.
+These interpretations are recorded in `knowledge/programs/zhuoshu-12-week/open-questions.md` as an audit trail and encoded in `program-spec.v0.2.yaml`.
 
 ## Other interpretation notes
 
-- Week 8 and Week 12 recovery sessions use the same generic logging layout as normal sessions; recovery semantics continue to come from the program source/ProgramSpec, not heading style alone.
+- Week 8 and Week 12 recovery sessions use the same generic logging layout as normal sessions; recovery semantics come from the source program / ProgramSpec, not heading style alone.
 - `重量` is polymorphic: kg for dumbbells, assistance description for pull-ups, and posture/load descriptions for push-ups.
 - set columns may represent repetitions or duration depending on the exercise.
 
 ## Rights handling
 
-The user has approved using this workbook as the Stella Fitness training-log workflow and confirmed its same-source reliability.
+The user has explicitly approved committing this raw XLSX to the public `tower1229/Stella-Fitness` GitHub repository.
 
-That confirms **product use and source-plan interpretation**, but does not by itself establish public redistribution rights for the raw XLSX binary.
-
-Until redistribution rights are separately confirmed:
-
-- document and use its structure in requirements;
-- use private copies for benchmark preparation;
-- do not commit the binary XLSX to the public repository;
-- decide public template packaging separately before ClawHub release.
+This approval resolves **repository archival** only. Before a future ClawHub/npm/package release, decide separately whether the raw XLSX itself is bundled in the distributable artifact or whether only derived/open project files are distributed.
