@@ -22,7 +22,7 @@ result: PENDING | APPROVED | CHANGES_REQUIRED
 
 - [ ] 能用一句话说明 Stella Fitness 的核心价值，而不是泛化为“AI 健身教练”。
 - [ ] 明确训练过程中不要求手机交互。
-- [ ] **v1 已明确复用用户提供的三阶段 XLSX 训练日志，不为了首版重新设计默认记录表。**
+- [ ] v1 已明确复用原课程三阶段 XLSX 训练日志，不为了首版重新设计默认记录表。
 - [ ] 体重是定期低摩擦输入，不要求为制造数据而每日强制打卡。
 - [ ] 饮食是可选证据，缺失时系统会降低诊断置信度，而不是阻止产品使用。
 - [ ] `NO_CHANGE` / `OBSERVE` / `COLLECT_MORE_DATA` 被认可为完整产品结果。
@@ -31,10 +31,11 @@ result: PENDING | APPROVED | CHANGES_REQUIRED
 
 ## 3. Source program & template
 
-- [ ] 12 周教程 Markdown 与 ProgramSpec 草案经过来源逐项核对。
-- [ ] supplied XLSX 与教程的 week/day/action 对应关系完成审计。
-- [ ] Week 4 Friday 的冲突已解决：教程缺失 vs workbook 力量测试，**或**继续明确保持 canonical unresolved。
-- [ ] `A / A+1 / N / N+1` 等 symbolic load 语义没有被误写成固定公斤增量。
+- [ ] 12 周教程 Markdown 与下一版 ProgramSpec 经过来源逐项核对。
+- [x] supplied XLSX 已确认属于原课程可靠同源配套资料。
+- [x] 第 4 周周五已 source-reconciled：正式内容为力量测试，不再 unresolved。
+- [ ] `open-questions.md` 中 Q1–Q6 已由用户确认，并同步到下一版 ProgramSpec。
+- [ ] `A / A+1 / N / N+1` 等 symbolic load 语义及跨阶段映射均已明确。
 - [ ] recovery session 语义明确，且不会因 workbook 使用普通训练块标题而丢失。
 - [ ] 教程公开再分发权已经确认，**或**采用不分发受限内容的明确 fallback。
 - [ ] XLSX 模板公开再分发权已经确认，**或**明确只把模板视为用户侧/private artifact。
@@ -67,7 +68,7 @@ result: PENDING | APPROVED | CHANGES_REQUIRED
 - [ ] Extraction / Belief / Blind Diagnosis / Audit / Reporter 的 role contract 已审核。
 - [ ] 没有把模型厂商名称写成 domain semantics。
 - [ ] supplied XLSX 已作为 Tier A layout 固定。
-- [ ] workout-log **真实填写照片** pilot 数据已经准备并标注。
+- [ ] workout-log 真实填写照片 pilot 数据已经准备并标注。
 - [ ] diet benchmark 的真实 pilot 数据已经准备并标注。
 - [ ] diagnosis/framing Golden Cases 已冻结。
 - [ ] 候选模型比较指标包含质量、abstention、成本、延迟、隐私，而非只看通用榜单。
@@ -160,13 +161,13 @@ Review meeting 必须能清楚回答：
 6. Diet photo 为什么不能当精确营养计量？
 7. 哪些安全信息会强制退出普通增肌路径？
 8. 哪些数字是经过审核的 Policy，哪些仍然只是研究参考？
-9. 首个 12 周计划哪些地方仍然不完整？
+9. 首个 12 周计划的所有训练日是否已完整？其 A/N/测试关系是否均明确？
 10. 用户原图和身体数据多久保存、如何删、发给过谁？
 11. 哪个模型坏了/换了以后，需要重跑什么 Eval？
 12. 如果没有任何模型，Program/Metric 层仍能确定哪些事实？
 13. 为什么 v1 直接复用现成 XLSX，而不是重新生成一份表？
 14. `重量` 为什么不是一个单纯 number 字段？
-15. 第 4 周周五的 XLSX 力量测试是否已经具有足够 provenance 成为 canonical source？
+15. 第 4 周周五力量测试的来源和语义是什么？
 
 只要其中一个关键问题的答案仍是“模型自己应该能处理”，则结果应为 `CHANGES_REQUIRED`。
 
