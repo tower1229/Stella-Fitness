@@ -11,18 +11,42 @@ program_length: 12 weeks
 source_coverage: COMPLETE_FOR_CURRENT_PRESCRIPTION
 source_interpretation: RESOLVED_Q1_Q6
 program_spec_draft: v0.2
+raw_source_archive: COMMITTED_TO_PUBLIC_GITHUB_REPOSITORY
 canonical_ready: false
 ```
 
-`canonical_ready: false` 现在**不是因为训练计划内容仍有缺口**。
+`canonical_ready: false` 现在不是因为训练计划内容仍有缺口，也不是因为原始 Office 文件未归档。
 
 当前训练处方来源层已经收敛；剩余阻塞主要属于：
 
-- public redistribution rights；
+- ClawHub/npm 等发行包是否捆绑原始 Office 文件的独立发布决策；
 - 是否/如何做默认 program 的独立领域审核；
 - ProgramSpec schema/fixture 等未来实施验证。
 
-## 2. 已确认覆盖范围
+## 2. 原始来源归档
+
+用户已于 2026-08-08 明确确认允许将两份原始 Office 资料提交到公开 `tower1229/Stella-Fitness` GitHub 仓库。
+
+当前原件路径：
+
+```text
+sources/originals/zhuoshu-hypertrophy-course.docx
+sources/originals/zhuoshu-workout-log.xlsx
+```
+
+治理关系：
+
+```text
+raw Office sources
+    ↓
+knowledge Markdown / ProgramSpec
+    ↓
+product / architecture / quality docs
+```
+
+原件是回溯来源事实的基准，不通过派生文档反向静默修改。
+
+## 3. 已确认覆盖范围
 
 同源资料组合已覆盖：
 
@@ -42,9 +66,7 @@ canonical_ready: false
 - 第 12 周结束后的 12RM 重测与循环逻辑；
 - 三阶段纸质训练记录布局。
 
-## 3. 第 4 周周五正式内容
-
-结构化教程正文曾标记资料缺失；原课程配套 XLSX 补齐后，用户确认该表来自原作者或可靠同源版本，且该内容就是正式训练计划。
+## 4. 第 4 周周五正式内容
 
 正式处方：
 
@@ -59,7 +81,7 @@ canonical_ready: false
 
 三个主项的测试结果分别成为第二阶段对应动作的 `N`。
 
-## 4. 已确认的课程关系语义
+## 5. 已确认的课程关系语义
 
 ### Q1：第一轮 `A`
 
@@ -73,7 +95,7 @@ canonical_ready: false
 
 第一组最大完成次数会影响第二阶段辅助带选择。
 
-原则：选择徒手或弹力带辅助，使训练时**尽量每组能完成 8 次以上**，同时保持课程规定的累计总次数目标。
+原则：选择徒手或弹力带辅助，使训练时尽量每组能完成 8 次以上，同时保持课程规定的累计总次数目标。
 
 ### Q4：12RM 测试方法
 
@@ -97,9 +119,9 @@ A → A+1 → A+2 → A+2 + 12RM retest
 
 完整确认记录见 `open-questions.md`（文件保留作审计记录）。
 
-## 5. ProgramSpec 状态
+## 6. ProgramSpec 状态
 
-- `program-spec.v0.1.yaml`：历史草案，生成于配套 XLSX 和 Q1–Q6 完全确认前；
+- `program-spec.v0.1.yaml`：历史草案；
 - `program-spec.v0.2.yaml`：当前来源关系已收敛的草案。
 
 v0.2 在训练处方来源层面：
@@ -108,32 +130,34 @@ v0.2 在训练处方来源层面：
 known_gaps: []
 ```
 
-这不等于已经 production-ready。它仍需未来实现阶段的 Schema validation、fixtures 和 Program Engine 验证。
+这不等于已经 production-ready。它仍需未来实施阶段的 Schema validation、fixtures 和 Program Engine 验证。
 
-## 6. 源资料自身的不确定性声明
+## 7. 源资料自身的不确定性声明
 
 结构化教程末尾注明：
 
 > 部分内容可能由 AI 生成。
 
-因此本仓库完成的是**来源忠实结构化**，不是训练科学或医疗层面的专业背书。
+因此本仓库完成的是来源忠实结构化，不是训练科学或医疗层面的专业背书。
 
 配套 XLSX 和用户课程背景确认解决了课程内部完整性/语义问题，但不替代独立领域审核。
 
-## 7. 版权与发布许可
+## 8. GitHub 收录与发行包分发
 
-仓库为公开项目，且计划未来通过 ClawHub 分发。当前尚未确认教程全文、Markdown 等价转写和原始 XLSX 的公开再发布权限。
+已确认：
 
-在发布包含完整教程内容或模板文件的正式版本前，应确认：
+- 原始 DOCX 可以收录到本公开 GitHub 仓库；
+- 原始 XLSX 可以收录到本公开 GitHub 仓库。
 
-1. 项目是否拥有重新分发教程全文/结构化版本的权利；
-2. 原课程配套 XLSX 是否允许随 public GitHub / ClawHub artifact 分发；
-3. 是否需要署名、来源链接或特定许可声明；
-4. 如果无法重新分发，是否采用用户本地导入或不捆绑源内容的方案。
+仍作为未来 release decision 单独处理：
 
-该问题与“内容是否可靠同源”是两件独立事项。
+1. ClawHub/npm 等发行包是否直接携带原始 Office 文件；
+2. 是否只在源码仓库保留原件、发行包只包含派生 ProgramSpec/文档；
+3. 是否需要额外署名或许可声明。
 
-## 8. 审定规则
+因此“GitHub 仓库归档权限”和“发行包再分发策略”不再混为同一个问题。
+
+## 9. 审定规则
 
 未来 `program-spec.v1` 标记为 canonical 前至少需要：
 
@@ -142,8 +166,9 @@ known_gaps: []
 - [x] `A / N` 的 12RM 绑定关系已明确；
 - [x] 哑铃推肩/哑铃弯举命名边界已明确；
 - [x] 第一阶段详细周计划优先级已明确；
+- [x] 原始 DOCX/XLSX 已归档到公开 GitHub 仓库；
 - [ ] 所有训练日与同源资料完成最终逐项审阅；
-- [ ] 源资料公开发布方案已确认；
 - [ ] 默认公开 program 所需的领域审核范围已完成；
 - [ ] ProgramSpec Schema 校验通过；
-- [ ] Program Engine 单元测试覆盖全部 12 周。
+- [ ] Program Engine 单元测试覆盖全部 12 周；
+- [ ] 正式发行前明确原始 Office 文件是否进入 distributable package。
