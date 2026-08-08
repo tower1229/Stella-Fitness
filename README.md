@@ -20,21 +20,23 @@ Intervene only when warranted
 
 Stella Fitness 不做训练中的高频交互，也不把“每天重新生成训练计划”作为核心价值。
 
-推荐体验：
+v1 推荐体验已经明确为：
 
 ```text
-ProgramSpec
-    ↓
-官方可打印训练表（计划预填）
-    ↓
-正常训练 + 纸笔只记录 Actual
-    ↓
+原课程三阶段 XLSX
+      ↓
+打印对应阶段训练日志
+      ↓
+正常训练 + 纸笔记录 Actual
+      ↓
 训练后拍照上传
-    ↓
+      ↓
 结构化事实 + 定期体重 + 可选饮食证据
-    ↓
+      ↓
 长期监督
 ```
+
+不需要为了使用 AI 改变训练时的习惯。
 
 长期监督重点回答四个问题：
 
@@ -67,11 +69,9 @@ Template / Restricted Reporter
 
 原则：**Same evidence, same conclusion, regardless of what the user wants to hear.**
 
-未经审核的模型也无权临场创造正式干预阈值。任何会改变训练/饮食的 production numeric policy，未来都必须有来源、适用人群、reviewer、版本和 Golden Cases。
+未经审核的模型无权临场创造正式干预阈值。任何会改变训练/饮食的 production numeric policy，未来都必须有来源、适用人群、reviewer、版本和 Golden Cases。
 
 ## V1 适用范围
-
-当前默认 scope 已收窄为：
 
 ```text
 healthy adults
@@ -97,18 +97,19 @@ Product nutrition label
 > Unknown
 ```
 
-照片主要用于识别、范围估计和补充长期证据；低置信照片不能单独触发高置信饮食调整。
+低置信照片不能单独触发高置信饮食调整。
 
 ## 当前阶段
 
 ### 已完成的 Phase 0 准备
 
 - 产品定位、非目标、v1 适用范围与核心用户流程；
-- offline-first 可打印训练日志设计要求；
+- 原课程三阶段 XLSX 作为 v1 默认训练日志模板；
 - 反迎合、Blind Diagnosis、Audit 与 Policy Gate 系统不变量；
 - OpenClaw Plugin hooks、isolated runtime、media extraction、Cron 与 ClawHub 技术调研；
 - 首个 12 周教程的可审计 Markdown 知识包；
-- `ProgramSpec v0.1` 规格设计草案；
+- 第 4 周周五通过原课程同源 XLSX 补齐为力量测试；
+- `ProgramSpec v0.1` 历史草案及下一版来源审定路径；
 - 运动科学、营养、食物图像能力、安全升级和营养数据源研究基线；
 - Golden Cases 第一版目录；
 - Training Log / Diet Benchmark 规范；
@@ -149,7 +150,7 @@ Product nutrition label
 - [需求追踪矩阵](docs/requirements-traceability.md)
 - [目标架构](docs/architecture.md)
 - [用户流程](docs/product/user-flows.md)
-- [可打印训练日志](docs/product/printable-log.md)
+- [现成训练日志模板语义](docs/product/training-log-template.md)
 - [V1 适用范围](docs/product/applicability.md)
 - [决策策略](docs/product/decision-policy.md)
 - [Golden Cases](docs/quality/golden-cases.md)
@@ -162,11 +163,28 @@ Product nutrition label
 
 ## 首个训练计划资料
 
-当前使用《卓叔增重 · 结构化增肌增重教程》作为首个 program source。资料描述一个 12 周、三阶段训练周期，并包含饮食、加重、恢复和周期循环信息。
+当前首个 program source 由两份可靠同源课程资料组成：
 
-但源资料第 4 周周五明确标记为“资料缺失，待补充”，因此知识包和 ProgramSpec 都必须保留 `unresolved`，不能根据前后规律自动补齐。
+1. 《卓叔增重 · 结构化增肌增重教程》；
+2. 原课程三阶段训练情况记录 XLSX。
 
-此外，教程末尾注明部分内容可能由 AI 生成，且公开再分发许可尚未确认。当前工作是**来源忠实的结构化和需求研究**，不是对教程进行专业背书。
+配套 XLSX 已确认来自原作者或可靠同源版本，并补齐了结构化教程中此前缺失的第 4 周周五：
+
+```text
+第4周，周五，力量测试
+高脚杯深蹲：12RM 测试重量
+哑铃卧推：12RM 测试重量
+哑铃硬拉：12RM 测试重量
+引体向上：第一组最大完成次数
+```
+
+因此 12 周训练日来源覆盖已经完整。
+
+当前仍有少量**关系语义**需要集中向用户确认，例如 12RM 与 `N` 的映射、初始 `A` 的定义和“哑铃推举/推肩”的命名一致性；这些问题集中在：
+
+- [训练计划待确认问题](knowledge/programs/zhuoshu-12-week/open-questions.md)
+
+此外，教程末尾注明部分内容可能由 AI 生成，且教程/XLSX 的公开再分发许可尚未确认。当前工作是**来源忠实的结构化和需求研究**，不是对教程进行专业背书。
 
 详见：
 
@@ -176,4 +194,4 @@ Product nutrition label
 
 ## 状态声明
 
-**Stella Fitness 当前不是可运行产品。** 仓库中的架构、ProgramSpec、模型候选、研究阈值与领域策略均属于实施前设计基线。只有经过来源处理、Golden Cases 审核、专业策略审定、隐私审查与 Phase 0 Exit Review 后，才允许进入真实训练监督实现。
+**Stella Fitness 当前不是可运行产品。** 仓库中的架构、ProgramSpec、模型候选、研究阈值与领域策略均属于实施前设计基线。只有经过训练计划关系确认、Golden Cases 审核、专业策略审定、隐私审查与 Phase 0 Exit Review 后，才允许进入真实训练监督实现。
