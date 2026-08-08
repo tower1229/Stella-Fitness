@@ -5,6 +5,8 @@
 
 Stella Fitness 处理体重、饮食、训练表现和潜在健康描述。这些数据虽然不一定构成医疗记录，但应按敏感个人身体数据设计。
 
+详细数据生命周期见 [data-lifecycle.md](./data-lifecycle.md)，红旗症状与升级路径见 [safety-escalation.md](./safety-escalation.md)。
+
 ## 1. 数据最小化
 
 ### 本地优先长期保存
@@ -25,7 +27,13 @@ Stella Fitness 处理体重、饮食、训练表现和潜在健康描述。这�
 
 ### Raw artifacts
 
-原始训练照片/饮食照片应有明确保留策略。未来默认值需在隐私设计中冻结，可考虑“结构化完成后可配置删除原图”。
+Phase 0 已冻结原则：
+
+> 长期优先保留 verified structured facts；raw image 应有有限、可配置的保留生命周期，而不是默认永久保存。
+
+具体默认时长仍待 Product/Privacy Review。
+
+如果关联字段仍在 `NEEDS_CONFIRMATION`，原图不能在纠错完成前被自动删除。
 
 ## 2. Provider privacy research snapshot
 
@@ -63,26 +71,59 @@ privacy_profile: standard | strict | local-preferred
 - 是否允许跨 Provider audit；
 - 原图保留多久。
 
-## 4. 安全边界
+模型/Provider 选择必须服从 privacy profile，而不是反过来要求用户为了某个模型放弃隐私策略。
 
-Stella Fitness 的目标是健康成人的增肌训练监督，不是：
+## 4. Provider disclosure ledger
+
+未来系统需要能够让用户审计：
+
+```text
+provider
+model
+role
+run timestamp
+payload category
+raw image sent? yes/no
+privacy profile reference
+```
+
+这不要求无限期保存完整 prompt 文本，但要能回答“哪些身体数据发给过谁”。
+
+## 5. 安全边界
+
+Stella Fitness v1 的默认 scope 是：
+
+```text
+healthy adults, age >= 18,
+general hypertrophy supervision,
+not medical / rehabilitation care
+```
+
+它不是：
 
 - 医疗诊断；
 - 伤病诊断；
 - 药物/激素方案；
 - 饮食治疗；
 - 急救替代；
-- 为未成年人或特殊疾病人群自动制定方案。
+- 特殊疾病、孕期、未成年人或康复人群的通用自动处方系统。
 
 ### Safety escalation
 
-当前只冻结高层原则：出现明显危险症状时停止增肌优化并建议寻求合适医疗帮助。
+遇到明确危险信号时，停止普通增肌优化并进入 `ESCALATE`。
 
-AHA 公开资料将运动中异常/极端呼吸困难、胸部不适，以及头晕/晕厥等列为需要停止活动并寻求医疗帮助的重要警示情形。
+当前 Phase 0 已形成高层类别：
 
-未来 Policy Gate 需要地区化、可审计的 safety rules；不能让 LLM 临场发明医疗阈值。
+- exertional chest discomfort；
+- fainting / near-syncope；
+- unusual/extreme shortness of breath；
+- serious acute injury / loss of function；
+- possible rhabdomyolysis pattern；
+- 其他经 Safety Review 批准的 red flags。
 
-## 5. 数据控制要求
+LLM 无权临场降低这些优先级，例如因为用户说“应该只是低血糖”就继续建议完成训练。
+
+## 6. 数据控制要求
 
 未来产品至少需要：
 
@@ -95,6 +136,27 @@ AHA 公开资料将运动中异常/极端呼吸困难、胸部不适，以及头
 - 查看模型调用/数据披露日志。
 
 这些能力属于产品需求，而不是“以后有空再做”的后台功能。
+
+## 7. Benchmark privacy
+
+真实用户训练日志/饮食照片不能因为被上传给 Stella Fitness 就自动进入研发数据集。
+
+进入 benchmark 前必须：
+
+- 独立授权；
+- 去身份；
+- 明确 public/private dataset 范围；
+- 与 runtime storage 分离。
+
+## 8. 尚未冻结的隐私决策
+
+- raw image Standard profile 的具体默认保留时长；
+- 最终 Provider / endpoint / ZDR 组合；
+- diagnosis/audit structured records 的默认保留周期；
+- benchmark consent template；
+- public privacy notice 的最终措辞。
+
+这些必须在 Phase 0 Exit Review 或 release review 中明确，不得由代码默认值静默决定。
 
 ## Sources
 
