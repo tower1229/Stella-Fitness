@@ -6,12 +6,7 @@
 
 **状态：CLOSED / SOURCE RECONCILED**
 
-早期结构化教程把第 4 周周五标记为“资料缺失”。用户随后提供原课程配套三阶段 XLSX，并明确确认：
-
-- 该表来自原作者或可靠同源版本；
-- 第 4 周周五“力量测试”就是原训练计划内容。
-
-正式内容：
+原课程配套三阶段 XLSX 与用户课程背景确认已经补齐正式内容：
 
 ```text
 第4周，周五，力量测试
@@ -21,7 +16,7 @@
 引体向上：第一组最大完成次数
 ```
 
-已同步到 source Markdown。旧 `program-spec.v0.1.yaml` 是来源确认前的历史草案，下一版 ProgramSpec 会在剩余训练语义问题确认后统一修订。
+已进入 source Markdown 和 `program-spec.v0.2.yaml`。
 
 ## GAP-002：教程版权与再发布许可未知
 
@@ -109,11 +104,11 @@ photo-only 只形成估算区间与低/中置信证据，不能单独触发高�
 
 需要确定默认保留到何时、可配置期限和 opt-in 永久保存规则。
 
-## GAP-016：外部专业审核机制未冻结
+## GAP-016：外部专业审核机制尚未完成
 
-**状态：OPEN / BLOCKING FOR CLAIMING PROFESSIONAL SUPERVISION**
+**状态：PARTIALLY RESOLVED / BLOCKING FOR CLAIMING PROFESSIONAL SUPERVISION**
 
-需要确定默认 Program、nutrition policy、safety policy 的 reviewer 角色与版本绑定方式。
+Product / Domain / Safety / Privacy / Platform / Rights reviewer 的职责和签署机制已经定义，但默认 Program、nutrition policy、safety policy 的实际专业审核者和首次签署仍未完成。
 
 ## GAP-017：训练日志 XLSX 公开再发布权限
 
@@ -129,28 +124,38 @@ photo-only 只形成估算区间与低/中置信证据，不能单独触发高�
 
 在确认前，不提交 raw XLSX 到公开仓库。
 
-## GAP-018：训练计划关系语义待用户确认
+## GAP-018：训练计划关系语义
 
-**状态：OPEN / BLOCKING FOR NEXT PROGRAMSPEC VERSION**
+**状态：CLOSED / USER-CONFIRMED SOURCE INTERPRETATION**
 
-同源资料已经覆盖所有训练日，但以下关系没有被文件直接写明：
+Q1–Q6 已由用户基于原课程背景一次性确认：
 
-1. 第一次训练周期的 `A` 是否就是各主项初始 12RM；
-2. 第 4 周周五三大主项 12RM 是否直接成为第 5 周 `N`；
-3. 第 4 周引体向上测试是基线记录还是影响第二阶段目标；
-4. 第 4 周是否采用课程末尾同一套 12RM 测试方法；
-5. “哑铃推举”与“哑铃推肩”是否为同一动作；
-6. 第一阶段汇总“每两周加重一次”与详细逐周计划连续加重的冲突如何解释。
+1. `A` 是三个主项各自的初始 12RM；
+2. 第 4 周周五三个主项新 12RM 分别直接成为第二阶段对应动作的 `N`；
+3. 引体向上第一组最大次数用于辅助带选择，尽量让每组能完成 8 次以上，同时保持计划总次数；
+4. 第 4 周使用与完整周期结束相同的 12RM 测试协议；
+5. “哑铃推举”和“哑铃推肩”是同一动作，统一为哑铃推肩；第三个月新增“哑铃弯举”，不得混淆；
+6. 第一阶段以详细逐周处方为准；“两周加重一次”只作为长期一般节奏概括，第一个月属于特殊阶段。
 
-详见 `knowledge/programs/zhuoshu-12-week/open-questions.md`。
+已同步到：
 
-原则：集中向用户确认，不自行猜测。
+- `knowledge/programs/zhuoshu-12-week/rules.md`；
+- `cycle.md`；
+- Phase 2 / Phase 3 Markdown；
+- `open-questions.md`（现作为确认记录）；
+- `program-spec.v0.2.yaml`；
+- `docs/program-spec.md`。
+
+目前**没有新的已知训练计划语义问题需要用户确认**。后续发现新冲突时继续采用“集中提问、不自行猜测”原则。
 
 ## 已关闭的 Phase 0 设计问题
 
 - 默认适用范围：健康成年人 18+、一般增肌监督、非医疗/康复；
 - Offline-first：使用原课程配套三阶段 XLSX → 打印 → 纸笔 actuals → 训练后拍照；
-- 第 4 周周五：力量测试，来源缺口已关闭；
+- 第 4 周周五：力量测试；
+- `A / N / 12RM` 的关键绑定关系；
+- 哑铃推肩/哑铃弯举命名边界；
+- 第一阶段详细逐周计划的优先级；
 - Safety：必须存在结构化 red flags 和 `ESCALATE` 优先路径。
 
 ## 维护模板
