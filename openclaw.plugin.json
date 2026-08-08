@@ -1,0 +1,93 @@
+{
+  "id": "stella-fitness",
+  "name": "Stella Fitness",
+  "description": "Evidence-first hypertrophy supervision with isolated diagnosis and deterministic policy gating.",
+  "version": "0.0.0-development",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "agentIds": {
+        "type": "array",
+        "description": "Optional OpenClaw agent ids whose conversations Stella Fitness may claim.",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uniqueItems": true
+      },
+      "dataDir": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional plugin-owned data directory. If omitted, Stella Fitness resolves an OpenClaw-scoped default at runtime."
+      },
+      "models": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "trainingLogExtractor": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dietExtractor": {
+            "type": "string",
+            "minLength": 1
+          },
+          "beliefExtractor": {
+            "type": "string",
+            "minLength": 1
+          },
+          "diagnostician": {
+            "type": "string",
+            "minLength": 1
+          },
+          "auditor": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reporter": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "agentIds": {
+      "label": "Supervised Agent IDs",
+      "placeholder": "[\"fitness-agent\"]"
+    },
+    "dataDir": {
+      "label": "Data directory",
+      "placeholder": "Leave empty to use the plugin default"
+    },
+    "models.trainingLogExtractor": {
+      "label": "Training-log extractor model",
+      "placeholder": "provider/model"
+    },
+    "models.dietExtractor": {
+      "label": "Diet extractor model",
+      "placeholder": "provider/model"
+    },
+    "models.beliefExtractor": {
+      "label": "Belief extractor model",
+      "placeholder": "provider/model"
+    },
+    "models.diagnostician": {
+      "label": "Blind diagnostician model",
+      "placeholder": "provider/model"
+    },
+    "models.auditor": {
+      "label": "Adversarial auditor model",
+      "placeholder": "provider/model"
+    },
+    "models.reporter": {
+      "label": "Optional reporter model",
+      "placeholder": "provider/model"
+    }
+  }
+}
