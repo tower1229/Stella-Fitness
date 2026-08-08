@@ -13,9 +13,10 @@
 - 何时必须保持沉默、收集更多数据或安全升级；
 - 外部平台能否支持所需信息隔离；
 - 模型、数据库、营养数据等依赖如何选择与替换；
-- 哪些领域阈值已有证据，哪些仍需专业审定；
+- 哪些领域原则已有证据，哪些个体数值阈值仍需专业审定；
 - 训练教程是否完整、可再发布；
-- 如何证明系统没有因为用户 framing 改变诊断。
+- 如何证明系统没有因为用户 framing 改变诊断；
+- 谁负责批准专业、安全、隐私和发布相关结论。
 
 ### Phase 0 工作包
 
@@ -23,10 +24,12 @@
 
 - [x] 产品定位与非目标
 - [x] Offline-first 训练交互
+- [x] 官方可打印训练表作为默认记录路径
 - [x] 训练日志/体重/饮食输入边界
 - [x] 默认不干预
 - [x] 信息隔离与反迎合原则
 - [x] 决策状态语义
+- [x] v1 默认适用范围：健康成年人 18+、一般增肌监督、非医疗/康复
 
 #### B. Source & knowledge
 
@@ -34,8 +37,10 @@
 - [x] ProgramSpec v0.1 设计草案
 - [x] source audit
 - [x] 缺失内容保持 unresolved
-- [ ] 补齐第 4 周周五可靠来源
+- [x] source program 与外部研究分层，不静默改写
+- [ ] 补齐第 4 周周五可靠来源，或决定该 program 不作为完整内置默认计划
 - [ ] 明确教程再发布许可
+- [ ] 决定 source program 的专业审核范围
 
 #### C. Platform research
 
@@ -49,35 +54,73 @@
 
 #### D. Model & data research
 
-- [x] 视觉结构化抽取候选模型
-- [x] Blind Diagnosis 候选模型
-- [x] 异构 Auditor 候选模型
-- [x] Provider 数据使用/保留基线
+- [x] 模型角色契约与 provider-neutral 选择原则
+- [x] 当前视觉/推理/Audit 候选模型登记
+- [x] Provider 数据使用/保留研究基线
 - [x] 食物照片营养估算局限
-- [x] USDA FoodData Central grounding 候选
-- [ ] 建立真实手写训练日志 benchmark 数据集
-- [ ] 建立常见中式饮食 benchmark 与营养数据库候选清单
+- [x] Nutrition evidence hierarchy
+- [x] 中国食物成分表 + USDA FoodData Central 候选调研
+- [x] Training Log Benchmark 规范
+- [x] Diet Benchmark 规范
+- [ ] 采集并人工标注真实训练日志 pilot benchmark
+- [ ] 采集并人工标注真实饮食 pilot benchmark
+- [ ] 中国本地食物成分数字访问/授权方案确认，或正式接受 fallback
+- [ ] 最终 Provider privacy profile 冻结
 
 #### E. Domain & safety
 
 - [x] 2026 ACSM resistance training 基线
 - [x] 蛋白质与能量盈余研究基线
-- [x] 运动中危险症状升级原则基线
-- [ ] 对干预阈值进行专业审定
-- [ ] 明确不同适用人群与排除条件
+- [x] “可冻结领域原则 / 不可直接推出的数值阈值”分层
+- [x] 运动中危险症状升级类别
+- [x] severe injury / possible rhabdomyolysis safety baseline
+- [x] 默认适用人群与特殊人群排除边界
+- [ ] 对 production numeric intervention policy 进行专业审定
+- [ ] 决定 public default Program / nutrition / safety 的专业审核机制并完成首轮 review
 
-#### F. Quality
+#### F. Quality & governance
 
 - [x] Information Flow Eval 设计
 - [x] Framing Invariance Eval 设计
 - [x] Abstention / No-change Eval 设计
 - [x] Source Fidelity Eval 设计
-- [ ] Phase 0 Golden Cases 定稿
-- [ ] 建立人工专家审核计划
+- [x] Safety Eval 设计
+- [x] Golden Cases 第一版目录
+- [x] Training Log / Diet Benchmark metric 设计
+- [x] reviewer role / approval matrix
+- [x] Phase 0 Exit Review checklist
+- [ ] Product Owner 审核 Golden Cases
+- [ ] Domain reviewer 审核 domain cases / numeric policy
+- [ ] Safety reviewer 审核 safety cases
+- [ ] 将 Golden Cases 标记 `FROZEN v0.1`
+
+#### G. Privacy & rights
+
+- [x] 数据最小化与 role-specific disclosure
+- [x] 数据 lifecycle 分类与用户控制要求
+- [x] Provider disclosure ledger 需求
+- [x] benchmark 数据与运行数据授权分离
+- [ ] 冻结 raw artifact 默认保留策略
+- [ ] 教程内容权利处理
+- [ ] 中国食物成分数据权利处理
+- [ ] 软件许可证
+
+## 当前真正的下一批 Phase 0 工作
+
+优先级：
+
+1. **Golden Cases review**：不是再增加 case 数量，而是让 Product / Domain / Safety reviewer 逐案确认；
+2. **真实 benchmark pilot 准备**：训练日志和饮食图片，只定义/收集测试资料，不接模型；
+3. **production numeric policy review**：如果无法得到可靠审核，明确 v1 缩减自动调整范围；
+4. **source / rights resolution**：Week 4 Friday 和教程分发权；
+5. **privacy decisions**：raw image retention 与最终 Provider profile；
+6. **Phase 0 Exit Review**。
 
 ## Phase 0 Exit Review
 
-只有 [planning/implementation-handoff.md](./planning/implementation-handoff.md) 中的退出条件被明确审核通过，才允许创建 `src/` 和真实 Plugin 配置。
+只有 [planning/phase0-exit-review.md](./planning/phase0-exit-review.md) 被正式签署为 `APPROVED FOR IMPLEMENTATION`，才允许创建 `src/` 和真实 Plugin 配置。
+
+详细交接条件见 [planning/implementation-handoff.md](./planning/implementation-handoff.md)。
 
 ## 未来阶段（仅规划，不执行）
 
