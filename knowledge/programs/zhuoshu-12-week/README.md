@@ -18,13 +18,15 @@
 
 ## 文档结构
 
-- [overview.md](./overview.md)：课程概览、器械、阶段与周期逻辑
+- [overview.md](./overview.md)：课程概览、器械与三阶段结构
 - [nutrition.md](./nutrition.md)：原教程饮食方案
-- [rules.md](./rules.md)：重量、力竭、恢复、加重与循环规则
+- [rules.md](./rules.md)：重量、力竭、恢复与加重规则
+- [warmup-and-recovery.md](./warmup-and-recovery.md)：统一热身与放松
 - [phase-1-weeks-01-04.md](./phase-1-weeks-01-04.md)：第 1–4 周
 - [phase-2-weeks-05-08.md](./phase-2-weeks-05-08.md)：第 5–8 周
 - [phase-3-weeks-09-12.md](./phase-3-weeks-09-12.md)：第 9–12 周
-- [warmup-and-recovery.md](./warmup-and-recovery.md)：统一热身与放松
+- [cycle.md](./cycle.md)：12 周结束后的 12RM 重测与循环
+- [source-audit.md](./source-audit.md)：源资料完整性、未知项与发布风险审计
 - [program-spec.v0.1.yaml](./program-spec.v0.1.yaml)：机器可读计划草案
 
 ## 重要约束
@@ -39,6 +41,12 @@
 - Program Engine 不得把推测内容当成 canonical program；
 - Agent 必须向用户说明资料缺失，而不是自动生成一个看似合理的训练日。
 
+### 忠实结构化不等于专业背书
+
+原始文件末尾注明“部分内容可能由 AI 生成”。因此当前知识包完成的是对用户提供资料的忠实结构化，不自动代表训练科学、营养学或医疗层面的独立验证。详见 [source-audit.md](./source-audit.md)。
+
 ## 与 Stella Fitness 的关系
 
-该计划是 Stella Fitness 的第一份 canonical program，但项目架构不应与该计划强耦合。未来应允许新增其他训练计划，并通过统一的 `ProgramSpec` 接口供监督引擎使用。
+该计划是 Stella Fitness 的第一份 program package，但在已知阻塞项解决前，`program-spec.v0.1.yaml` 保持 `draft`。
+
+项目架构不应与该计划强耦合。未来应允许新增其他训练计划，并通过统一的 `ProgramSpec` 接口供监督引擎使用。
