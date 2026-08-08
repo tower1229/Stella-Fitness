@@ -4,18 +4,35 @@
 
 ## GAP-001：第 4 周周五训练内容缺失
 
-**状态：OPEN / BLOCKING FOR CANONICAL PROGRAM**
+**状态：OPEN / NEW CANDIDATE EVIDENCE / BLOCKING FOR CANONICAL PROGRAM**
 
-源教程明确写为“周五（资料缺失，待补充）”。
+结构化教程明确写为“周五（资料缺失，待补充）”。
+
+用户随后提供的三阶段训练日志 XLSX 中出现：
+
+```text
+第4周，周五，力量测试
+```
+
+并包含：
+
+- 高脚杯深蹲 12RM 测试重量；
+- 哑铃卧推 12RM 测试重量；
+- 哑铃硬拉 12RM 测试重量；
+- 引体向上第一组最大完成次数。
+
+这是有价值的**候选补充证据**，但目前尚未确认该 workbook 与教程的来源关系，因此不能直接把 canonical ProgramSpec 从 `unresolved` 改成力量测试。
 
 当前处理：
 
-- Markdown 保留缺失；
-- ProgramSpec 保留 `status: unresolved`；
+- ProgramSpec 继续保留 `status: unresolved`；
 - 不根据前几周模式推导；
-- 不允许模型生成后写回 canonical data。
+- workbook 内容登记为 candidate source evidence；
+- 若确认 workbook 来自同一课程/原作者的可靠版本，再进行 source reconciliation。
 
-关闭条件：获得可靠、可追溯的原始来源并完成逐项复核。
+详见 `sources/training-log-template-audit.md`。
+
+关闭条件：确认模板 provenance 足以作为训练处方来源，并完成教程/Markdown/ProgramSpec 的逐项复核。
 
 ## GAP-002：教程版权与再发布许可未知
 
@@ -59,7 +76,7 @@ Phase 0 已建立高层证据边界：
 - 足够蛋白、保守能量盈余和多次体重趋势具有合理证据基础；
 - recovery session 必须从普通 decline signal 中排除。
 
-但以下**个体数值政策**仍不能从这些结论直接推出：
+但以下个体数值政策仍不能从这些结论直接推出：
 
 - plateau 观察窗口；
 - 最低体重采样频率；
@@ -81,7 +98,7 @@ Phase 0 已建立高层证据边界：
 
 - v1 默认面向 `healthy adults, age >= 18` 的一般增肌监督；
 - 不属于医疗/康复护理；
-- 胸部不适、晕厥/接近晕厥、异常严重呼吸困难、严重急性伤害、possible rhabdomyolysis 等进入 `ESCALATE`；
+- 明显危险症状进入 `ESCALATE`；
 - safety precedence 高于训练/饮食优化。
 
 详见：
@@ -106,7 +123,7 @@ Phase 0 已建立高层证据边界：
 - 包装标签、用户确认重量、固定食谱/餐食、权威数据库具有更高证据等级；
 - photo-only 不能单独触发高置信饮食调整。
 
-该限制已经转化成明确产品约束，不需要“等待模型完美”才能继续设计。
+该限制已经转化成明确产品约束。
 
 ## GAP-008：中国本地营养数据库的数字访问与许可
 
@@ -186,19 +203,27 @@ USDA FoodData Central 可作为开放 API / global generic fallback。
 
 ## GAP-014：真实训练日志与饮食图片 Benchmark 尚未准备
 
-**状态：OPEN / BLOCKING BEFORE MODEL SELECTION**
+**状态：PARTIALLY RESOLVED / BLOCKING BEFORE MODEL SELECTION**
 
-Benchmark 规则已经定义，但真实标注 artifacts 尚未准备。
+### 已完成
 
-训练日志详见 `quality/training-log-benchmark.md`，并优先覆盖：
+- v1 训练日志模板已经确定：使用用户提供的三阶段 XLSX；
+- 模板结构审计已完成；
+- 专门的 template benchmark 规范已建立。
 
-```text
-Tier A official printable template
-Tier B noisy/edited official template
-Tier C free-form logs
-```
+详见：
 
-饮食 benchmark 需要覆盖混合中式菜、包装标签、固定个人餐和大份量 stress cases。
+- `product/training-log-template.md`；
+- `quality/training-log-template-benchmark.md`。
+
+### 仍未完成
+
+- 真实填写后的纸质训练日志照片；
+- 不同笔迹/光照/斜拍/涂改样本；
+- 人工 ground truth；
+- 饮食 benchmark artifacts。
+
+因此“模板选择”已解决，但 extraction 模型 benchmark 仍不能开始冻结结果。
 
 ## GAP-015：原始图片默认保留策略未冻结
 
@@ -228,6 +253,26 @@ indefinite retention only by opt-in
 - 审核 source program / nutrition / safety 的哪些部分；
 - reviewer approval 如何和 policy version 绑定。
 
+## GAP-017：训练日志 XLSX 的 provenance 与公开再发布权限
+
+**状态：OPEN / RELEASE-BLOCKING FOR BUNDLING TEMPLATE**
+
+用户已经明确 Stella Fitness 可以采用这份现成模板作为训练日志体验，因此**产品模板选择已完成**。
+
+但仍需区分两个问题：
+
+1. 是否足以作为第 4 周周五训练处方的权威来源；
+2. 是否可以把原始 XLSX 随 public GitHub / ClawHub 包一起再分发。
+
+在确认前：
+
+- 可以依据模板结构设计 extraction；
+- 可以私下打印并准备 benchmark；
+- 不把原始 XLSX 提交公开仓库；
+- 不用模板内容自动关闭 GAP-001。
+
+详见 `sources/training-log-template-audit.md`。
+
 ## 已关闭的 Phase 0 设计问题
 
 ### 默认适用范围
@@ -240,11 +285,25 @@ general hypertrophy supervision,
 not medical / rehabilitation care
 ```
 
-### Offline-first logging interaction
+### Offline-first logging interaction / v1 template choice
 
-已明确推荐官方可打印训练表：ProgramSpec 预填计划，用户训练时只记录 actual data，训练后拍照上传。
+已冻结：
 
-详见 `product/printable-log.md`。
+```text
+supplied three-stage XLSX
+→ print
+→ paper actuals
+→ post-workout photo
+→ extraction
+```
+
+首版不重新发明训练日志表，也不要求先完成 ProgramSpec-driven template generator。
+
+详见：
+
+- `product/training-log-template.md`；
+- `product/printable-log.md`；
+- `decisions/ADR-005-printable-log-first.md`。
 
 ### Safety red-flag category existence
 
