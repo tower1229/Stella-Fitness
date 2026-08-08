@@ -1,0 +1,345 @@
+schema_version: stella-fitness/program/v0.1
+id: zhuoshu-12-week
+version: 0.2.0
+status: draft
+language: zh-CN
+source:
+  title: 卓叔增重 · 结构化增肌增重教程
+  provenance:
+    - user-provided structured tutorial
+    - original-course companion workout-log workbook
+    - user-confirmed course interpretation 2026-08-08
+  fidelity_policy: source-faithful-no-gap-filling
+  source_completeness: complete-for-current-12-week-prescription
+
+known_gaps: []
+
+source_interpretations:
+  - id: initial-a-is-12rm
+    status: confirmed
+    rule: A is the per-exercise initial 12RM for goblet squat, dumbbell bench press, and dumbbell deadlift.
+  - id: week4-retest-becomes-n
+    status: confirmed
+    rule: Week 4 Friday per-exercise 12RM results become the corresponding Phase 2 N loads.
+  - id: pullup-test-assistance
+    status: confirmed
+    rule: Week 4 pull-up first-set max-reps test informs Phase 2 band assistance; choose assistance so each set can preferably reach at least 8 reps while preserving programmed total reps.
+  - id: week4-test-protocol
+    status: confirmed
+    rule: Week 4 12RM testing uses the same protocol as the end-of-cycle 12RM retest.
+  - id: overhead-press-alias
+    status: confirmed
+    rule: 哑铃推举 and 哑铃推肩 are the same exercise; canonical display name is 哑铃推肩 and canonical id is dumbbell-overhead-press.
+  - id: phase1-loading-summary
+    status: confirmed
+    rule: Detailed weekly prescriptions override the long-term 'two-week loading frequency' summary; Phase 1 uses A -> A+1 -> A+2 -> A+2 plus retest.
+
+equipment:
+  required:
+    - adjustable-dumbbells
+    - pull-up-bar
+  optional:
+    - resistance-band
+    - foam-roller
+    - yoga-mat
+
+exercise_aliases:
+  dumbbell-overhead-press:
+    canonical_display_name: 哑铃推肩
+    aliases:
+      - 哑铃推肩
+      - 哑铃推举
+  dumbbell-curl:
+    canonical_display_name: 哑铃弯举
+    aliases:
+      - 哑铃弯举
+
+session_defaults:
+  warmup:
+    - high-knees
+    - worlds-greatest-stretch
+    - side-lunge
+    - band-shoulder-pass-through
+  cooldown:
+    - chest-stretch
+    - iliopsoas-stretch
+    - it-band-release
+    - lat-stretch
+
+load_symbols:
+  A:
+    meaning: 第一阶段起始重量
+    source: per-exercise initial 12RM
+    per_exercise: true
+  A+1:
+    meaning: 第一阶段第一次加重后的重量
+    per_exercise: true
+  A+2:
+    meaning: 第一阶段第二次加重后的重量
+    per_exercise: true
+  N:
+    meaning: 第二阶段起始重量
+    source: Week 4 Friday per-exercise 12RM retest
+    per_exercise: true
+  N+1:
+    meaning: N 基础上的第一次加重，同时作为第三阶段起始节点
+    per_exercise: true
+  N+2:
+    meaning: 第三阶段第二次加重
+    per_exercise: true
+  N+3:
+    meaning: 第三阶段第三次加重
+    per_exercise: true
+  N+4:
+    meaning: 第三阶段第四次加重
+    per_exercise: true
+
+testing_protocols:
+  main-12rm:
+    type: 12RM
+    applies_to:
+      - goblet-squat
+      - dumbbell-bench-press
+      - dumbbell-deadlift
+    protocol:
+      - warm_up_fully
+      - choose_estimated_12_rep_load
+      - perform_one_set_to_failure_and_record_reps
+      - if_exactly_12_and_last_rep_near_failure_accept_load_as_12rm
+      - if_above_12_increase_load_and_retest
+      - if_below_12_reduce_load_and_retest
+  pullup-first-set-max:
+    type: max_reps_first_set
+    exercise: pull-up
+
+phase_transitions:
+  course_start:
+    action: test_main_12rm
+    protocol_ref: main-12rm
+    bind_results_to: A
+  phase1_to_phase2:
+    week: 4
+    day: friday
+    actions:
+      - test_main_12rm
+      - test_pullup_first_set_max
+    main_protocol_ref: main-12rm
+    pullup_protocol_ref: pullup-first-set-max
+    bind_main_results_to: N
+  cycle_end:
+    rest_before_retest_days: [3, 5]
+    action: test_main_12rm
+    protocol_ref: main-12rm
+    bind_results_to_next_cycle: A
+    restart_from_week: 1
+
+phases:
+  - id: phase-1
+    name: 力量积累
+    weeks: [1, 2, 3, 4]
+    frequency_per_week: 3
+    split: full-body
+    progression_authority: detailed_weekly_schedule
+    long_term_frequency_summary: two-week-general-pattern
+  - id: phase-2
+    name: 高效增肌
+    weeks: [5, 6, 7, 8]
+    frequency_per_week: 4
+    split: torso-limbs
+  - id: phase-3
+    name: 全面显壮
+    weeks: [9, 10, 11, 12]
+    frequency_per_week: 4
+    split: torso-limbs
+
+weeks:
+  - week: 1
+    phase: phase-1
+    sessions:
+      - { day: monday, type: full-body, status: resolved, template: phase1-main, load: A, sets: 3, reps: 10, plank_seconds: 30 }
+      - { day: wednesday, type: full-body, status: resolved, template: phase1-main, load: A, sets: 4, reps: 10, plank_seconds: 30 }
+      - { day: friday, type: full-body, status: resolved, template: phase1-main, load: A, sets: 4, reps: 12, plank_seconds: 30 }
+
+  - week: 2
+    phase: phase-1
+    sessions:
+      - { day: monday, type: full-body, status: resolved, template: phase1-main, load: A+1, sets: 4, reps: 10, plank_seconds: 30 }
+      - { day: wednesday, type: full-body, status: resolved, template: phase1-main, load: A+1, sets: 5, reps: 10, plank_seconds: 30 }
+      - { day: friday, type: full-body, status: resolved, template: phase1-main, load: A+1, sets: 5, reps: 12, plank_seconds: 30 }
+
+  - week: 3
+    phase: phase-1
+    sessions:
+      - { day: monday, type: full-body, status: resolved, template: phase1-main, load: A+2, sets: 4, reps: 8, plank_seconds: 45 }
+      - { day: wednesday, type: full-body, status: resolved, template: phase1-main, load: A+2, sets: 4, reps: 10, plank_seconds: 45 }
+      - { day: friday, type: full-body, status: resolved, template: phase1-main, load: A+2, sets: 5, reps: 10, plank_seconds: 45 }
+
+  - week: 4
+    phase: phase-1
+    sessions:
+      - { day: monday, type: full-body, status: resolved, template: phase1-main, load: A+2, sets: 6, reps: 10, plank_seconds: 45 }
+      - { day: wednesday, type: full-body, status: resolved, template: phase1-main, load: A+2, sets: 5, reps: 12, plank_seconds: 45 }
+      - day: friday
+        type: strength-test
+        status: resolved
+        tests:
+          - { exercise: goblet-squat, test: 12RM, protocol_ref: main-12rm, result_binding: N }
+          - { exercise: dumbbell-bench-press, test: 12RM, protocol_ref: main-12rm, result_binding: N }
+          - { exercise: dumbbell-deadlift, test: 12RM, protocol_ref: main-12rm, result_binding: N }
+          - { exercise: pull-up, test: max_reps_first_set, protocol_ref: pullup-first-set-max, result_binding: phase2_pullup_assistance_baseline }
+
+  - week: 5
+    phase: phase-2
+    sessions:
+      - { day: monday, type: torso, status: resolved, template: phase2-torso, load: N, main_sets: 3, main_reps: 10, pullup_total: 20, plank_seconds: 45 }
+      - { day: tuesday, type: limbs, status: resolved, template: phase2-limbs, load: N, main_sets: 3, main_reps: 10, plank_seconds: 45 }
+      - { day: thursday, type: torso, status: resolved, template: phase2-torso, load: N, main_sets: 4, main_reps: 10, pullup_total: 20, plank_seconds: 45 }
+      - { day: friday, type: limbs, status: resolved, template: phase2-limbs, load: N, main_sets: 4, main_reps: 10, plank_seconds: 45 }
+
+  - week: 6
+    phase: phase-2
+    sessions:
+      - { day: monday, type: torso, status: resolved, template: phase2-torso, load: N, main_sets: 5, main_reps: 10, pullup_total: 20, plank_seconds: 45 }
+      - { day: tuesday, type: limbs, status: resolved, template: phase2-limbs, load: N, main_sets: 5, main_reps: 10, plank_seconds: 45 }
+      - { day: thursday, type: torso, status: resolved, template: phase2-torso, load: N, main_sets: 4, main_reps: 12, pullup_total: 20, plank_seconds: 45 }
+      - { day: friday, type: limbs, status: resolved, template: phase2-limbs, load: N, main_sets: 4, main_reps: 12, plank_seconds: 45 }
+
+  - week: 7
+    phase: phase-2
+    sessions:
+      - { day: monday, type: torso, status: resolved, template: phase2-torso, load: N+1, main_sets: 4, main_reps: 8, pullup_total: 25, plank_seconds: 60 }
+      - { day: tuesday, type: limbs, status: resolved, template: phase2-limbs, load: N+1, main_sets: 4, main_reps: 8, plank_seconds: 60 }
+      - { day: thursday, type: torso, status: resolved, template: phase2-torso, load: N+1, main_sets: 4, main_reps: 9, pullup_total: 25, plank_seconds: 60 }
+      - { day: friday, type: limbs, status: resolved, template: phase2-limbs, load: N+1, main_sets: 4, main_reps: 9, plank_seconds: 60 }
+
+  - week: 8
+    phase: phase-2
+    sessions:
+      - { day: monday, type: torso, status: resolved, template: phase2-torso, load: N+1, main_sets: 4, main_reps: 10, pullup_total: 25, plank_seconds: 60 }
+      - { day: tuesday, type: limbs, status: resolved, template: phase2-limbs, load: N+1, main_sets: 4, main_reps: 10, plank_seconds: 60 }
+      - { day: thursday, type: torso-recovery, status: resolved, template: phase2-torso-recovery, load: N, main_sets: 3, main_reps: 8, pullup_total: 15, plank_seconds: 30 }
+      - { day: friday, type: limbs-recovery, status: resolved, template: phase2-limbs-recovery, load: N, main_sets: 3, main_reps: 8, plank_seconds: 30 }
+
+  - week: 9
+    phase: phase-3
+    sessions:
+      - { day: monday, type: torso, status: resolved, template: phase3-torso, load: N+1, main_sets: 4, main_reps: 10, pullup_total: 30, main_rest: [90, 120] }
+      - { day: tuesday, type: limbs, status: resolved, template: phase3-limbs, load: N+1, main_sets: 4, main_reps: 10, main_rest: [90, 120] }
+      - { day: thursday, type: torso, status: resolved, template: phase3-torso, load: N+1, main_sets: 4, main_reps: 10, pullup_total: 30, main_rest: [90, 120] }
+      - { day: friday, type: limbs, status: resolved, template: phase3-limbs, load: N+1, main_sets: 4, main_reps: 10, main_rest: [90, 120] }
+
+  - week: 10
+    phase: phase-3
+    sessions:
+      - { day: monday, type: torso, status: resolved, template: phase3-torso, load: N+2, main_sets: 4, main_reps: 8, pullup_total: 30, main_rest: [90, 120] }
+      - { day: tuesday, type: limbs, status: resolved, template: phase3-limbs, load: N+2, main_sets: 4, main_reps: 8, main_rest: [90, 120] }
+      - { day: thursday, type: torso, status: resolved, template: phase3-torso, load: N+2, main_sets: 4, main_reps: 8, pullup_total: 30, main_rest: [90, 120] }
+      - { day: friday, type: limbs, status: resolved, template: phase3-limbs, load: N+2, main_sets: 4, main_reps: 8, main_rest: [90, 120] }
+
+  - week: 11
+    phase: phase-3
+    sessions:
+      - { day: monday, type: torso, status: resolved, template: phase3-torso, load: N+3, main_sets: 4, main_reps: 6, pullup_total: 40, main_rest: [120, 180] }
+      - { day: tuesday, type: limbs, status: resolved, template: phase3-limbs, load: N+3, main_sets: 4, main_reps: 6, main_rest: [120, 180] }
+      - { day: thursday, type: torso, status: resolved, template: phase3-torso, load: N+3, main_sets: 4, main_reps: 6, pullup_total: 40, main_rest: [120, 180] }
+      - { day: friday, type: limbs, status: resolved, template: phase3-limbs, load: N+3, main_sets: 4, main_reps: 6, main_rest: [120, 180] }
+
+  - week: 12
+    phase: phase-3
+    sessions:
+      - { day: monday, type: torso, status: resolved, template: phase3-torso, load: N+4, main_sets: 5, main_reps: 5, pullup_total: 40, main_rest: [120, 180] }
+      - { day: tuesday, type: limbs, status: resolved, template: phase3-limbs, load: N+4, main_sets: 5, main_reps: 5, main_rest: [120, 180] }
+      - { day: thursday, type: torso-recovery, status: resolved, template: phase3-torso-recovery, load: N, main_sets: 3, main_reps: 12, pullup_total: 20, main_rest: [120, 180] }
+      - { day: friday, type: limbs-recovery, status: resolved, template: phase3-limbs-recovery, load: N, main_sets: 3, main_reps: 12, main_rest: [120, 180] }
+
+templates:
+  phase1-main:
+    exercises:
+      - goblet-squat
+      - dumbbell-bench-press
+      - dumbbell-deadlift
+      - plank
+    main_rest_seconds: [60, 60]
+    main_effort: last_set_to_failure
+    plank_sets: 3
+    plank_rest_seconds: [30, 30]
+    plank_effort: as_long_as_possible
+
+  phase2-torso:
+    pullup_assistance:
+      source_baseline: phase2_pullup_assistance_baseline
+      allowed_modes: [bodyweight, resistance-band-assisted]
+      target_min_reps_per_set: 8
+      target_mode: best_effort
+      preserve_programmed_total_reps: true
+    exercises:
+      - { exercise: pull-up, prescription: total_reps, rest_seconds: [60, 90], sets: self_selected }
+      - { exercise: dumbbell-bench-press, role: main, effort: last_set_to_failure, rest_seconds: [60, 90] }
+      - { exercise: dumbbell-overhead-press, display_name: 哑铃推肩, load: self_selected, prescription: { type: rep_range, sets: 3, min_reps: 8, max_reps: 12 }, effort: every_set_to_failure, rest_seconds: [60, 60], progression: { trigger: reps_above_12, action: increase_load, amount: unspecified } }
+      - { exercise: plank, prescription: duration, sets: 3, rest_seconds: [30, 30], effort: as_long_as_possible }
+
+  phase2-limbs:
+    exercises:
+      - { exercise: goblet-squat, role: main, effort: last_set_to_failure, rest_seconds: [60, 90] }
+      - { exercise: dumbbell-deadlift, role: main, effort: last_set_to_failure, rest_seconds: [60, 90] }
+      - { exercise: dumbbell-lateral-raise, load: self_selected, prescription: { type: rep_range, sets: 3, min_reps: 10, max_reps: 15 }, effort: every_set_to_failure, rest_seconds: [30, 30], progression: { trigger: reps_above_15, action: increase_load, amount: unspecified } }
+      - { exercise: plank, prescription: duration, sets: 3, rest_seconds: [30, 30], effort: as_long_as_possible }
+
+  phase2-torso-recovery:
+    based_on: phase2-torso
+    overrides:
+      pullup_total: 15
+      overhead_press: { sets: 3, reps: 12, load_reference: week-5, effort: complete_prescribed_reps }
+      bench_effort: complete_prescribed_reps
+
+  phase2-limbs-recovery:
+    based_on: phase2-limbs
+    overrides:
+      lateral_raise: { sets: 3, reps: 15, load_reference: week-5, effort: complete_prescribed_reps }
+      main_effort: complete_prescribed_reps
+
+  phase3-torso:
+    exercises:
+      - { exercise: pull-up, prescription: total_reps, sets: self_selected }
+      - { exercise: dumbbell-bench-press, role: main, effort: last_set_to_failure }
+      - { exercise: dumbbell-overhead-press, display_name: 哑铃推肩, load: self_selected, prescription: { type: rep_range, sets: 3, min_reps: 8, max_reps: 12 }, rest_seconds: [60, 60], effort: every_set_to_failure, progression: { trigger: reps_above_12, action: increase_load, amount: unspecified } }
+      - { exercise: push-up, load: none, prescription: { type: to_failure, sets: 3 }, rest_seconds: [60, 60], effort: every_set_to_failure }
+      - { exercise: one-arm-dumbbell-row, load: self_selected, prescription: { type: rep_range, sets: 3, min_reps: 8, max_reps: 12 }, rest_seconds: [60, 60], effort: every_set_to_failure, progression: { trigger: reps_above_12, action: increase_load, amount: unspecified } }
+
+  phase3-limbs:
+    exercises:
+      - { exercise: goblet-squat, role: main, effort: last_set_to_failure }
+      - { exercise: dumbbell-deadlift, role: main, effort: last_set_to_failure }
+      - { exercise: dumbbell-lateral-raise, load: self_selected, prescription: { type: rep_range, sets: 3, min_reps: 10, max_reps: 15 }, rest_seconds: [30, 30], effort: every_set_to_failure, progression: { trigger: reps_above_15, action: increase_load, amount: unspecified } }
+      - { exercise: dumbbell-curl, display_name: 哑铃弯举, load: self_selected, prescription: { type: rep_range, sets: 3, min_reps: 10, max_reps: 15 }, rest_seconds: [30, 30], effort: every_set_to_failure, progression: { trigger: reps_above_15, action: increase_load, amount: unspecified } }
+      - { exercise: dumbbell-hammer-curl, load: self_selected, prescription: { type: rep_range, sets: 3, min_reps: 10, max_reps: 15 }, rest_seconds: [30, 30], effort: every_set_to_failure, progression: { trigger: reps_above_15, action: increase_load, amount: unspecified } }
+
+  phase3-torso-recovery:
+    exercises:
+      - { exercise: pull-up, prescription: { type: total_reps, reps: 20, sets: self_selected }, rest_seconds: [120, 180] }
+      - { exercise: dumbbell-bench-press, load: N, prescription: { type: sets_reps, sets: 3, reps: 12 }, rest_seconds: [120, 180], effort: complete_prescribed_reps }
+      - { exercise: dumbbell-overhead-press, display_name: 哑铃推肩, load: { mode: historical_reference, week: 9 }, prescription: { type: sets_reps, sets: 3, reps: 12 }, rest_seconds: [60, 60], effort: complete_prescribed_reps }
+      - { exercise: push-up, load: none, prescription: { type: sets_reps, sets: 3, reps: 12 }, rest_seconds: [60, 60], effort: complete_prescribed_reps }
+      - { exercise: one-arm-dumbbell-row, load: { mode: historical_reference, week: 9 }, prescription: { type: sets_reps, sets: 3, reps: 12 }, rest_seconds: [60, 60], effort: complete_prescribed_reps }
+
+  phase3-limbs-recovery:
+    exercises:
+      - { exercise: goblet-squat, load: N, prescription: { type: sets_reps, sets: 3, reps: 12 }, rest_seconds: [120, 180], effort: complete_prescribed_reps }
+      - { exercise: dumbbell-deadlift, load: N, prescription: { type: sets_reps, sets: 3, reps: 12 }, rest_seconds: [120, 180], effort: complete_prescribed_reps }
+      - { exercise: dumbbell-lateral-raise, load: { mode: historical_reference, week: 9 }, prescription: { type: sets_reps, sets: 3, reps: 15 }, rest_seconds: [30, 30], effort: complete_prescribed_reps }
+      - { exercise: dumbbell-curl, display_name: 哑铃弯举, load: { mode: historical_reference, week: 9 }, prescription: { type: sets_reps, sets: 3, reps: 15 }, rest_seconds: [30, 30], effort: complete_prescribed_reps }
+      - { exercise: dumbbell-hammer-curl, load: { mode: historical_reference, week: 9 }, prescription: { type: sets_reps, sets: 3, reps: 15 }, rest_seconds: [30, 30], effort: complete_prescribed_reps }
+
+optional_substitutions:
+  - from: goblet-squat
+    to: dumbbell-squat-pull
+    condition: 单个哑铃最大重量已无法满足高脚杯深蹲需求
+    automatic: false
+
+cycle_completion:
+  rest_before_retest_days: [3, 5]
+  retest: 12RM
+  protocol_ref: main-12rm
+  next_cycle_start_load: new_per_exercise_12RM
+  bind_to: A
+  restart_from_week: 1
