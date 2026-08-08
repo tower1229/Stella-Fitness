@@ -1,0 +1,51 @@
+{
+  "name": "@tower1229/stella-fitness",
+  "version": "0.0.0-development",
+  "description": "Evidence-first hypertrophy supervision plugin for OpenClaw.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.22.3"
+  },
+  "files": [
+    "dist/",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node --eval \"import('node:fs').then(({rmSync}) => rmSync('dist', { recursive: true, force: true }))\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test",
+    "pack:check": "npm pack --dry-run"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "openclaw": "2026.7.1-2",
+    "typescript": "^5.9.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
+    },
+    "build": {
+      "openclawVersion": "2026.7.1-2",
+      "pluginSdkVersion": "2026.7.1-2"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tower1229/Stella-Fitness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tower1229/Stella-Fitness/issues"
+  },
+  "homepage": "https://github.com/tower1229/Stella-Fitness#readme"
+}
