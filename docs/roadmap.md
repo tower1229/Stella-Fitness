@@ -24,7 +24,8 @@
 
 - [x] 产品定位与非目标
 - [x] Offline-first 训练交互
-- [x] 官方可打印训练表作为默认记录路径
+- [x] **v1 训练日志模板已确定：复用用户提供的三阶段 XLSX**
+- [x] 不为 v1 强制开发新的 ProgramSpec-driven printable generator
 - [x] 训练日志/体重/饮食输入边界
 - [x] 默认不干预
 - [x] 信息隔离与反迎合原则
@@ -38,8 +39,10 @@
 - [x] source audit
 - [x] 缺失内容保持 unresolved
 - [x] source program 与外部研究分层，不静默改写
-- [ ] 补齐第 4 周周五可靠来源，或决定该 program 不作为完整内置默认计划
+- [x] 获得 Week 4 Friday 新 candidate evidence：XLSX 显示力量测试
+- [ ] 确认 XLSX provenance 是否足以补齐 Week 4 Friday canonical source，否则继续 unresolved
 - [ ] 明确教程再发布许可
+- [ ] 明确 XLSX 模板公开再发布许可，或接受“不随 ClawHub 包分发原文件”的 fallback
 - [ ] 决定 source program 的专业审核范围
 
 #### C. Platform research
@@ -61,8 +64,9 @@
 - [x] Nutrition evidence hierarchy
 - [x] 中国食物成分表 + USDA FoodData Central 候选调研
 - [x] Training Log Benchmark 规范
+- [x] **supplied XLSX 专项 extraction benchmark 规范**
 - [x] Diet Benchmark 规范
-- [ ] 采集并人工标注真实训练日志 pilot benchmark
+- [ ] 采集并人工标注真实填写后的训练日志照片 pilot benchmark
 - [ ] 采集并人工标注真实饮食 pilot benchmark
 - [ ] 中国本地食物成分数字访问/授权方案确认，或正式接受 fallback
 - [ ] 最终 Provider privacy profile 冻结
@@ -102,6 +106,7 @@
 - [x] benchmark 数据与运行数据授权分离
 - [ ] 冻结 raw artifact 默认保留策略
 - [ ] 教程内容权利处理
+- [ ] XLSX 模板公开再分发权处理
 - [ ] 中国食物成分数据权利处理
 - [ ] 软件许可证
 
@@ -109,12 +114,13 @@
 
 优先级：
 
-1. **Golden Cases review**：不是再增加 case 数量，而是让 Product / Domain / Safety reviewer 逐案确认；
-2. **真实 benchmark pilot 准备**：训练日志和饮食图片，只定义/收集测试资料，不接模型；
-3. **production numeric policy review**：如果无法得到可靠审核，明确 v1 缩减自动调整范围；
-4. **source / rights resolution**：Week 4 Friday 和教程分发权；
-5. **privacy decisions**：raw image retention 与最终 Provider profile；
-6. **Phase 0 Exit Review**。
+1. **确认训练日志模板 provenance**：决定它能否同时解决 Week 4 Friday source gap；
+2. **真实 benchmark pilot 准备**：用这份 XLSX 打印并产生真实手写照片与 ground truth；
+3. **Golden Cases review**：让 Product / Domain / Safety reviewer 逐案确认；
+4. **production numeric policy review**：如果无法得到可靠审核，明确 v1 缩减自动调整范围；
+5. **source / rights resolution**：教程与 XLSX 模板分发权；
+6. **privacy decisions**：raw image retention 与最终 Provider profile；
+7. **Phase 0 Exit Review**。
 
 ## Phase 0 Exit Review
 
@@ -124,7 +130,7 @@
 
 ## 未来阶段（仅规划，不执行）
 
-- **Phase 1 — Reliable Data Collection**：训练日志、体重、可选饮食的事实采集；
+- **Phase 1 — Reliable Data Collection**：基于现成 XLSX 的训练日志照片、体重、可选饮食事实采集；
 - **Phase 2 — Deterministic Evidence Layer**：Program / Metrics / Evidence；
 - **Phase 3 — Supervision Pipeline**：Blind Diagnosis / Audit / Policy Gate；
 - **Phase 4 — Periodic Supervision**：Cron、静默监督、异常通知；
