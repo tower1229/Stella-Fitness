@@ -39,12 +39,13 @@
 - [x] 第 4 周周五正式补齐为力量测试
 - [x] source audit
 - [x] source program 与外部研究分层，不静默改写
-- [x] 训练计划剩余解释问题集中登记为 Q1–Q6
-- [ ] 用户确认 Q1–Q6
-- [ ] 基于确认结果生成下一版 ProgramSpec 并完成逐项 source review
+- [x] 训练计划 Q1–Q6 集中确认完成
+- [x] `A = 初始12RM`、Week4 12RM → `N`、引体辅助、测试协议、动作别名、第一阶段加重优先级全部收敛
+- [x] `program-spec.v0.2.yaml` 来源收敛草案生成
+- [ ] 所有训练日与同源资料完成最终逐项 source review
 - [ ] 明确教程再发布许可
 - [ ] 明确 XLSX 模板公开再发布许可，或接受“不随 ClawHub 包分发原文件”的 fallback
-- [ ] 决定 source program 的专业审核范围
+- [ ] 决定 source program 的独立专业审核范围并完成相应 review
 
 #### C. Platform research
 
@@ -81,7 +82,7 @@
 - [x] severe injury / possible rhabdomyolysis safety baseline
 - [x] 默认适用人群与特殊人群排除边界
 - [ ] 对 production numeric intervention policy 进行专业审定
-- [ ] 决定 public default Program / nutrition / safety 的专业审核机制并完成首轮 review
+- [ ] public default Program / nutrition / safety 完成首轮专业 review
 
 #### F. Quality & governance
 
@@ -113,16 +114,15 @@
 
 ## 当前真正的下一批 Phase 0 工作
 
-优先级：
+训练计划本身的主要语义问题已经关闭。当前优先级转为：
 
-1. **训练计划语义确认**：用户一次性回答 `knowledge/programs/zhuoshu-12-week/open-questions.md` 的 Q1–Q6；
-2. **下一版 ProgramSpec 来源审定**：将 Week 4 strength test、A/N 关系和动作命名一次性收敛；
-3. **真实 benchmark pilot 准备**：用现成 XLSX 打印并产生真实手写照片与 ground truth；
-4. **Golden Cases review**：让 Product / Domain / Safety reviewer 逐案确认；
-5. **production numeric policy review**：如果无法得到可靠审核，明确 v1 缩减自动调整范围；
-6. **source / rights resolution**：教程与 XLSX 模板分发权；
-7. **privacy decisions**：raw image retention 与最终 Provider profile；
-8. **Phase 0 Exit Review**。
+1. **最终 source cross-check**：教程、XLSX、Markdown、ProgramSpec v0.2 逐项核对；发现新课程歧义时集中向用户提问；
+2. **真实 benchmark pilot 准备**：用现成 XLSX 打印并产生真实手写照片与 ground truth；
+3. **Golden Cases review**：让 Product / Domain / Safety reviewer 逐案确认；
+4. **production numeric policy review**：如果无法得到可靠审核，明确 v1 缩减自动调整范围；
+5. **source / rights resolution**：教程与 XLSX 模板分发权；
+6. **privacy decisions**：raw image retention 与最终 Provider profile；
+7. **Phase 0 Exit Review**。
 
 ## Phase 0 Exit Review
 
