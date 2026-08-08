@@ -8,12 +8,14 @@
 
 路径：[`programs/zhuoshu-12-week/`](./programs/zhuoshu-12-week/)
 
-状态：`draft / partially resolved`
+状态：`draft / source-reconciled`
 
 - 12 周、3 个阶段；
 - 已完成 Markdown 结构化迁移；
-- 已建立 `ProgramSpec v0.1` 草案；
-- 第 4 周周五仍为来源缺失，不能进入全自动执行状态。
+- 已建立当前 `ProgramSpec v0.2` 草案；
+- 第 4 周周五已由原课程配套 XLSX 补齐；
+- Q1–Q6 已确认，训练处方来源层没有已知缺口；
+- 仍需 Schema validator、fixtures、Program Engine 测试和领域审核后才能进入 production canonical 状态。
 
 ## 原则
 

@@ -194,4 +194,4 @@ Product nutrition label
 
 ## 状态声明
 
-**Stella Fitness 当前不是可运行产品。** 训练计划来源语义已经基本收敛，但项目仍需完成最终 source cross-check、Golden Cases 审核、专业策略审定、隐私/权利决策与 Phase 0 Exit Review，才允许进入真实训练监督实现。
+**Stella Fitness 当前不是可运行产品。** 训练计划最终 source cross-check 已完成，但项目仍需完成 Golden Cases 审核、专业策略审定、隐私/发行权利决策与 Phase 0 Exit Review，才允许进入真实训练监督实现。

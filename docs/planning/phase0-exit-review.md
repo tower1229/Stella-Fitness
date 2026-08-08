@@ -46,10 +46,10 @@ result: PENDING | APPROVED | CHANGES_REQUIRED
 
 ### 仍需在 Phase 0 Exit 前检查
 
-- [ ] 教程、XLSX、Markdown 与 ProgramSpec v0.2 完成最终逐项 source cross-check。
+- [x] 教程、XLSX、Markdown 与 ProgramSpec v0.2 完成最终逐项 source cross-check。
 - [ ] recovery session 语义完成最终核对，且不会因 workbook 使用普通训练块标题而丢失。
-- [ ] 教程公开再分发权已经确认，**或**采用不分发受限内容的明确 fallback。
-- [ ] XLSX 模板公开再分发权已经确认，**或**明确只把模板视为用户侧/private artifact。
+- [ ] ClawHub/npm 等发行包是否捆绑教程 DOCX 已决策，**或**明确只在源码仓库归档。
+- [ ] ClawHub/npm 等发行包是否捆绑 XLSX 模板已决策，**或**明确只在源码仓库归档。
 - [ ] 是否需要专业审核该 source program 已决策并完成对应 review。
 
 ## 4. Workout-log extraction semantics

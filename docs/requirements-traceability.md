@@ -55,8 +55,8 @@
 | 专业结论有 reviewer ownership | `planning/review-governance.md` | governance | signed review/version record |
 | 周期监督默认静默 | Cron design（未来） | OpenClaw Cron capability | NO_REPLY/silence cases |
 | 可公开安装 | release contract | ClawHub research | validate + dry-run + clean install |
-| 首个教程合法发布范围明确 | source governance | rights gap | rights review before artifact inclusion |
-| 训练日志 XLSX 是否可公开分发单独确认 | `sources/training-log-template-audit.md` | 用户允许产品使用 ≠ 自动获得公开再分发权 | rights review before bundling |
+| 首个教程的发行包分发范围明确 | source governance | GitHub 收录已确认；ClawHub/npm bundling 仍需决策 | release review before package bundling |
+| 训练日志 XLSX 的发行包分发范围单独确认 | `sources/training-log-template-audit.md` | GitHub 收录已确认，不自动等于进入 distributable package | release review before package bundling |
 
 ## 需求变更规则
 

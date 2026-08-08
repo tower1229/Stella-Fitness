@@ -121,6 +121,8 @@ pullup-test-assistance
 week4-test-protocol
 overhead-press-alias
 phase1-loading-summary
+pullup-total-reps-rest-self-selected
+warmup-user-discretion
 ```
 
 这样未来可以解释某条机器规则为什么成立。
@@ -237,6 +239,17 @@ pullup_assistance:
 
 这里 `8` 是选择辅助方式的目标，不是覆盖原计划 total-reps 的固定训练处方。
 
+普通引体向上只约束累计总次数；组数和组间休息时间都由用户自行安排：
+
+```yaml
+- exercise: pull-up
+  prescription: total_reps
+  sets: self_selected
+  rest: self_selected
+```
+
+各周 session 的 `main_rest` 只适用于该阶段的负重主项，不适用于引体向上。
+
 ## 8. Exercise alias / identity
 
 动作名称不能只靠模糊文本匹配。
@@ -340,10 +353,9 @@ ProgramSpec schema version 与具体 program version 分开版本化。
 
 v0.2 当前在**训练计划来源语义层面没有已知缺口**，但仍不是 production canonical program。
 
-剩余工作属于：
+最终 source cross-check 已基于仓库归档的 DOCX/XLSX 与用户确认完成。剩余工作属于：
 
-- 最终人工 source cross-check；
-- public redistribution rights；
+- distributable package 是否携带原始 Office 文件的发布决策；
 - 默认 program 的独立领域审核范围；
 - 实施阶段 Schema validator 与 fixtures。
 

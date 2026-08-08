@@ -42,9 +42,9 @@
 - [x] 训练计划 Q1–Q6 集中确认完成
 - [x] `A = 初始12RM`、Week4 12RM → `N`、引体辅助、测试协议、动作别名、第一阶段加重优先级全部收敛
 - [x] `program-spec.v0.2.yaml` 来源收敛草案生成
-- [ ] 所有训练日与同源资料完成最终逐项 source review
-- [ ] 明确教程再发布许可
-- [ ] 明确 XLSX 模板公开再发布许可，或接受“不随 ClawHub 包分发原文件”的 fallback
+- [x] 所有训练日与同源资料完成最终逐项 source review
+- [ ] 明确教程 DOCX 是否随 ClawHub/npm 等发行包分发
+- [ ] 明确 XLSX 模板是否随 ClawHub/npm 等发行包分发，或只在源码仓库归档
 - [ ] 决定 source program 的独立专业审核范围并完成相应 review
 
 #### C. Platform research
@@ -116,7 +116,7 @@
 
 训练计划本身的主要语义问题已经关闭。当前优先级转为：
 
-1. **最终 source cross-check**：教程、XLSX、Markdown、ProgramSpec v0.2 逐项核对；发现新课程歧义时集中向用户提问；
+1. **最终 source cross-check（已完成）**：教程、XLSX、Markdown、ProgramSpec v0.2 已逐项核对并记录 reconciliation；
 2. **真实 benchmark pilot 准备**：用现成 XLSX 打印并产生真实手写照片与 ground truth；
 3. **Golden Cases review**：让 Product / Domain / Safety reviewer 逐案确认；
 4. **production numeric policy review**：如果无法得到可靠审核，明确 v1 缩减自动调整范围；

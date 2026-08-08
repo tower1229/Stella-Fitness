@@ -15,6 +15,13 @@ Canonical raw archive path:
 sources/originals/zhuoshu-workout-log.xlsx
 ```
 
+Audited artifact identity:
+
+```text
+size: 20,964 bytes
+sha256: A113A16F9844CEB518307369BD45979AF3AA703E67DA8EB3BBB6B5E991AEBCCA
+```
+
 The raw XLSX is retained as the immutable source artifact; requirements and `knowledge/` documents are derived layers.
 
 ## Observed workbook structure
@@ -35,7 +42,7 @@ The workbook is adopted as the v1 fixed-layout workout log template.
 
 ## Authoritative Week 4 Friday evidence
 
-The first-stage sheet contains:
+The first-stage sheet contains the authoritative block at `第一阶段!A81:J85`:
 
 ```text
 第4周，周五，力量测试

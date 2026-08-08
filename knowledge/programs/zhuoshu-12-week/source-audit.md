@@ -12,6 +12,7 @@ source_coverage: COMPLETE_FOR_CURRENT_PRESCRIPTION
 source_interpretation: RESOLVED_Q1_Q6
 program_spec_draft: v0.2
 raw_source_archive: COMMITTED_TO_PUBLIC_GITHUB_REPOSITORY
+final_source_cross_check: COMPLETE
 canonical_ready: false
 ```
 
@@ -32,6 +33,16 @@ canonical_ready: false
 ```text
 sources/originals/zhuoshu-hypertrophy-course.docx
 sources/originals/zhuoshu-workout-log.xlsx
+```
+
+本轮核验的文件身份：
+
+```text
+zhuoshu-hypertrophy-course.docx
+sha256: B1E8E156C4C27AF3B130BEE44D9989C27B1926FCE9AB2D0FE111EC400883723F
+
+zhuoshu-workout-log.xlsx
+sha256: A113A16F9844CEB518307369BD45979AF3AA703E67DA8EB3BBB6B5E991AEBCCA
 ```
 
 治理关系：
@@ -167,7 +178,7 @@ known_gaps: []
 - [x] 哑铃推肩/哑铃弯举命名边界已明确；
 - [x] 第一阶段详细周计划优先级已明确；
 - [x] 原始 DOCX/XLSX 已归档到公开 GitHub 仓库；
-- [ ] 所有训练日与同源资料完成最终逐项审阅；
+- [x] 所有训练日与同源资料完成最终逐项审阅；
 - [ ] 默认公开 program 所需的领域审核范围已完成；
 - [ ] ProgramSpec Schema 校验通过；
 - [ ] Program Engine 单元测试覆盖全部 12 周；

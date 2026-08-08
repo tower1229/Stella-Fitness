@@ -79,9 +79,12 @@
 
 ## 5. 资料状态
 
-教程自述覆盖第 1–12 周，但第 4 周周五的具体训练内容在正文中明确标记为缺失。因此当前 knowledge package 的完整性状态为：
+教程 DOCX 的第 4 周周五曾标记为待补充；原课程配套 XLSX 已提供正式力量测试内容，用户也已确认 Q1–Q6 的关系语义。因此当前 knowledge package 的训练处方来源状态为：
 
 ```text
-12-week program: PARTIALLY RESOLVED
-known unresolved item: week-04 / friday
+12-week program: COMPLETE_FOR_CURRENT_PRESCRIPTION
+source interpretation: RESOLVED_Q1_Q6
+program spec: draft v0.2
 ```
+
+该状态只表示来源处方已经收敛，不等于训练科学、医疗审核或生产实现已经完成。

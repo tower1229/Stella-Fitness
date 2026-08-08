@@ -33,6 +33,12 @@ source_interpretations:
   - id: phase1-loading-summary
     status: confirmed
     rule: Detailed weekly prescriptions override the long-term 'two-week loading frequency' summary; Phase 1 uses A -> A+1 -> A+2 -> A+2 plus retest.
+  - id: pullup-total-reps-rest-self-selected
+    status: confirmed
+    rule: Ordinary pull-up sessions constrain total reps only; sets and rest duration are user-selected.
+  - id: warmup-user-discretion
+    status: confirmed
+    rule: Warm-up is optional and user-selected; listed movements are reusable options rather than a mandatory sequence.
 
 equipment:
   required:
@@ -56,10 +62,13 @@ exercise_aliases:
 
 session_defaults:
   warmup:
-    - high-knees
-    - worlds-greatest-stretch
-    - side-lunge
-    - band-shoulder-pass-through
+    required: false
+    selection: user_discretion
+    options:
+      - high-knees
+      - worlds-greatest-stretch
+      - side-lunge
+      - band-shoulder-pass-through
   cooldown:
     - chest-stretch
     - iliopsoas-stretch
@@ -273,7 +282,7 @@ templates:
       target_mode: best_effort
       preserve_programmed_total_reps: true
     exercises:
-      - { exercise: pull-up, prescription: total_reps, rest_seconds: [60, 90], sets: self_selected }
+      - { exercise: pull-up, prescription: total_reps, sets: self_selected, rest: self_selected }
       - { exercise: dumbbell-bench-press, role: main, effort: last_set_to_failure, rest_seconds: [60, 90] }
       - { exercise: dumbbell-overhead-press, display_name: 哑铃推肩, load: self_selected, prescription: { type: rep_range, sets: 3, min_reps: 8, max_reps: 12 }, effort: every_set_to_failure, rest_seconds: [60, 60], progression: { trigger: reps_above_12, action: increase_load, amount: unspecified } }
       - { exercise: plank, prescription: duration, sets: 3, rest_seconds: [30, 30], effort: as_long_as_possible }
@@ -300,7 +309,7 @@ templates:
 
   phase3-torso:
     exercises:
-      - { exercise: pull-up, prescription: total_reps, sets: self_selected }
+      - { exercise: pull-up, prescription: total_reps, sets: self_selected, rest: self_selected }
       - { exercise: dumbbell-bench-press, role: main, effort: last_set_to_failure }
       - { exercise: dumbbell-overhead-press, display_name: 哑铃推肩, load: self_selected, prescription: { type: rep_range, sets: 3, min_reps: 8, max_reps: 12 }, rest_seconds: [60, 60], effort: every_set_to_failure, progression: { trigger: reps_above_12, action: increase_load, amount: unspecified } }
       - { exercise: push-up, load: none, prescription: { type: to_failure, sets: 3 }, rest_seconds: [60, 60], effort: every_set_to_failure }
@@ -316,7 +325,7 @@ templates:
 
   phase3-torso-recovery:
     exercises:
-      - { exercise: pull-up, prescription: { type: total_reps, reps: 20, sets: self_selected }, rest_seconds: [120, 180] }
+      - { exercise: pull-up, prescription: { type: total_reps, reps: 20, sets: self_selected }, rest: self_selected }
       - { exercise: dumbbell-bench-press, load: N, prescription: { type: sets_reps, sets: 3, reps: 12 }, rest_seconds: [120, 180], effort: complete_prescribed_reps }
       - { exercise: dumbbell-overhead-press, display_name: 哑铃推肩, load: { mode: historical_reference, week: 9 }, prescription: { type: sets_reps, sets: 3, reps: 12 }, rest_seconds: [60, 60], effort: complete_prescribed_reps }
       - { exercise: push-up, load: none, prescription: { type: sets_reps, sets: 3, reps: 12 }, rest_seconds: [60, 60], effort: complete_prescribed_reps }

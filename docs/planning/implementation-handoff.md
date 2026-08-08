@@ -29,11 +29,11 @@
 - [x] “哑铃推举 / 哑铃推肩”统一为哑铃推肩；哑铃弯举为独立动作
 - [x] 第一阶段详细逐周处方优先于“两周加重一次”长期概括
 - [x] `program-spec.v0.2.yaml` 已形成 source-reconciled draft
-- [ ] 教程/XLSX/Markdown/ProgramSpec v0.2 完成最终逐项 source cross-check
-- [ ] 教程 / XLSX 公开再发布权明确，或确定不捆绑源内容的 fallback
+- [x] 教程/XLSX/Markdown/ProgramSpec v0.2 完成最终逐项 source cross-check
+- [ ] ClawHub/npm 等发行包是否捆绑教程 / XLSX 已决策，或确定不捆绑源内容
 - [ ] 默认 public program 的专业审核范围已决策并完成相应 review
 
-> 后续如果 source cross-check 发现新的课程内部歧义，必须集中向用户确认，不允许通用运动科学文献或 LLM 反向猜测课程意图。
+> 最终 source cross-check 已完成。未来若新版本原件带来新的课程内部歧义，必须集中向用户确认，不允许通用运动科学文献或 LLM 反向猜测课程意图。
 
 ## C. Platform
 
@@ -125,7 +125,7 @@
 14. 哪些 numeric threshold 已获批准，哪些仍必须保持 Unknown？
 15. 训练日志模板能否公开再分发，还是只作为用户侧/private artifact？
 
-当前第 10 项在课程语义层已可以回答“是”；仍需完成最终 source cross-check 与发布/专业审核。
+当前第 10 项在课程语义层已可以回答“是”，最终 source cross-check 也已完成；仍需完成发布与专业审核。
 
 如果其他关键问题仍依赖“让模型到时候自己判断”，Phase 0 不应结束。
 

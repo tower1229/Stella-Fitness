@@ -104,7 +104,7 @@ ProgramSpec 未来可用于校验模板、支持其他 program 或生成新模�
 
 该内容现已被接受为 source program 的正式组成部分，原先“Week 4 Friday 缺失”问题关闭。
 
-仍待用户确认的是**测试结果与后续符号/目标的关系**，例如 12RM 是否直接成为 `N`。这些问题记录在：
+测试结果与后续符号/目标的关系已经确认：三个主项的 12RM 分别直接成为对应动作的 `N`；引体测试用于辅助方式选择，不改变累计总次数目标。完整确认记录见：
 
 `knowledge/programs/zhuoshu-12-week/open-questions.md`
 

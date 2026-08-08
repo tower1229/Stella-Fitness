@@ -8,13 +8,15 @@
 
 | Artifact | Status | Use |
 |---|---|---|
-| 《卓叔增重 · 结构化增肌增重教程》DOCX | private source artifact | source-faithful program knowledge / ProgramSpec design |
-| 三阶段训练情况记录 XLSX | adopted v1 template candidate; public redistribution not yet established | fixed-layout workout logging / extraction benchmark / candidate evidence for Week 4 Friday |
+| 《卓叔增重 · 结构化增肌增重教程》DOCX | archived source artifact; GitHub inclusion approved; distributable-package decision separate | source-faithful program knowledge / ProgramSpec design |
+| 三阶段训练情况记录 XLSX | adopted v1 template and accepted prescription evidence; GitHub inclusion approved; distributable-package decision separate | fixed-layout workout logging / extraction benchmark / authoritative Week 4 Friday evidence |
 
 详见：
 
 - `knowledge/programs/zhuoshu-12-week/source-audit.md`
 - `sources/training-log-template-audit.md`
+- `sources/originals/zhuoshu-hypertrophy-course.docx`
+- `sources/originals/zhuoshu-workout-log.xlsx`
 
 ## OpenClaw
 
