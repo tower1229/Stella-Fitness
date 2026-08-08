@@ -11,11 +11,11 @@
 3. **`product/`**：用户流程与产品决策语义；
 4. **`architecture.md`**：目标技术架构，仅描述实施目标；
 5. **`research/`**：外部调研基线，可随外部平台与研究更新；
-6. **`quality/`**：安全、隐私与 Eval 要求；
+6. **`quality/`**：安全、隐私、Benchmark 与 Eval 要求；
 7. **`planning/`**：依赖、Phase 0 退出条件及未来实施交接；
 8. **`knowledge/`**：源教程的忠实结构化，不应被外部研究静默改写。
 
-若外部研究与源教程有分歧，应在 `research/domain-evidence.md` 中记录差异，而不是直接修改 `knowledge/`。
+若外部研究与源教程有分歧，应在 `research/` 中记录差异，而不是直接修改 `knowledge/`。
 
 ## 核心需求
 
@@ -28,6 +28,8 @@
 
 - [product/user-flows.md](./product/user-flows.md) — 用户输入与监督流程
 - [product/decision-policy.md](./product/decision-policy.md) — NO_CHANGE / OBSERVE / ADJUST 等决策语义
+- [product/printable-log.md](./product/printable-log.md) — offline-first 可打印训练日志要求
+- [product/applicability.md](./product/applicability.md) — v1 默认适用人群与排除边界
 
 ## 目标架构
 
@@ -43,18 +45,30 @@
 - [research/anti-sycophancy.md](./research/anti-sycophancy.md) — 迎合偏差与工程约束
 - [research/model-strategy.md](./research/model-strategy.md) — 模型角色、候选与选择方法
 - [research/domain-evidence.md](./research/domain-evidence.md) — 运动科学/营养外部证据
+- [research/intervention-thresholds.md](./research/intervention-thresholds.md) — 可冻结原则与不可伪造的个体阈值边界
 - [research/food-image-estimation.md](./research/food-image-estimation.md) — 食物照片营养估算能力边界
+- [research/nutrition-data-sources.md](./research/nutrition-data-sources.md) — 中国食物成分表、USDA、标签与个人餐食库的来源优先级
 
 ## Quality & Safety
 
 - [quality/evaluation-plan.md](./quality/evaluation-plan.md) — 系统级 Eval 设计
+- [quality/golden-cases.md](./quality/golden-cases.md) — 实施前行为真值案例目录
+- [quality/training-log-benchmark.md](./quality/training-log-benchmark.md) — 纸质训练日志图像 Benchmark 规范
 - [quality/privacy-safety.md](./quality/privacy-safety.md) — 数据最小化、Provider 隐私与健康安全边界
+- [quality/safety-escalation.md](./quality/safety-escalation.md) — 明确红旗症状与 ESCALATE 行为优先级
 
 ## Planning
 
 - [planning/dependencies.md](./planning/dependencies.md) — 外部依赖与替换策略
 - [planning/implementation-handoff.md](./planning/implementation-handoff.md) — 实施前交接清单和退出条件
 - [roadmap.md](./roadmap.md) — 阶段路线图
+
+## Decisions
+
+- [decisions/ADR-001-native-plugin.md](./decisions/ADR-001-native-plugin.md)
+- [decisions/ADR-002-evidence-isolation.md](./decisions/ADR-002-evidence-isolation.md)
+- [decisions/ADR-003-provider-neutral-models.md](./decisions/ADR-003-provider-neutral-models.md)
+- [decisions/ADR-004-food-photo-estimate-only.md](./decisions/ADR-004-food-photo-estimate-only.md)
 
 ## Knowledge
 
