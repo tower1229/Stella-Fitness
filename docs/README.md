@@ -12,8 +12,9 @@
 4. **`architecture.md`**：目标技术架构，仅描述实施目标；
 5. **`research/`**：外部调研基线，可随外部平台与研究更新；
 6. **`quality/`**：安全、隐私、Benchmark 与 Eval 要求；
-7. **`planning/`**：依赖、Phase 0 退出条件及未来实施交接；
-8. **`knowledge/`**：源教程的忠实结构化，不应被外部研究静默改写。
+7. **`planning/`**：依赖、review governance、Phase 0 退出条件及未来实施交接；
+8. **`decisions/`**：已经接受的关键架构/产品决策；
+9. **`knowledge/`**：源教程的忠实结构化，不应被外部研究静默改写。
 
 若外部研究与源教程有分歧，应在 `research/` 中记录差异，而不是直接修改 `knowledge/`。
 
@@ -54,21 +55,29 @@
 - [quality/evaluation-plan.md](./quality/evaluation-plan.md) — 系统级 Eval 设计
 - [quality/golden-cases.md](./quality/golden-cases.md) — 实施前行为真值案例目录
 - [quality/training-log-benchmark.md](./quality/training-log-benchmark.md) — 纸质训练日志图像 Benchmark 规范
-- [quality/privacy-safety.md](./quality/privacy-safety.md) — 数据最小化、Provider 隐私与健康安全边界
+- [quality/diet-benchmark.md](./quality/diet-benchmark.md) — 饮食证据与食物照片 Benchmark 规范
+- [quality/privacy-safety.md](./quality/privacy-safety.md) — Provider 隐私与健康安全总原则
+- [quality/data-lifecycle.md](./quality/data-lifecycle.md) — 原图、事实、派生数据与模型运行记录生命周期
 - [quality/safety-escalation.md](./quality/safety-escalation.md) — 明确红旗症状与 ESCALATE 行为优先级
 
-## Planning
+## Planning & Review
 
 - [planning/dependencies.md](./planning/dependencies.md) — 外部依赖与替换策略
-- [planning/implementation-handoff.md](./planning/implementation-handoff.md) — 实施前交接清单和退出条件
+- [planning/review-governance.md](./planning/review-governance.md) — Product / Domain / Safety / Privacy / Platform / Rights reviewer 职责
+- [planning/implementation-handoff.md](./planning/implementation-handoff.md) — 实施前交接清单
+- [planning/phase0-exit-review.md](./planning/phase0-exit-review.md) — 正式开工许可 Review Checklist
 - [roadmap.md](./roadmap.md) — 阶段路线图
 
 ## Decisions
 
-- [decisions/ADR-001-native-plugin.md](./decisions/ADR-001-native-plugin.md)
-- [decisions/ADR-002-evidence-isolation.md](./decisions/ADR-002-evidence-isolation.md)
-- [decisions/ADR-003-provider-neutral-models.md](./decisions/ADR-003-provider-neutral-models.md)
-- [decisions/ADR-004-food-photo-estimate-only.md](./decisions/ADR-004-food-photo-estimate-only.md)
+- [ADR-001 — Native Plugin](./decisions/ADR-001-native-plugin.md)
+- [ADR-002 — Evidence Isolation](./decisions/ADR-002-evidence-isolation.md)
+- [ADR-003 — Provider-neutral Models](./decisions/ADR-003-provider-neutral-models.md)
+- [ADR-004 — Food Photo Is Estimate Only](./decisions/ADR-004-food-photo-estimate-only.md)
+- [ADR-005 — Official Printable Log First](./decisions/ADR-005-printable-log-first.md)
+- [ADR-006 — Healthy Adult V1 Scope](./decisions/ADR-006-healthy-adult-v1-scope.md)
+- [ADR-007 — Nutrition Evidence Hierarchy](./decisions/ADR-007-nutrition-evidence-hierarchy.md)
+- [ADR-008 — No Unreviewed Numeric Thresholds](./decisions/ADR-008-no-unreviewed-numeric-thresholds.md)
 
 ## Knowledge
 
@@ -81,5 +90,9 @@
 
 - [../sources/README.md](../sources/README.md)
 - [../sources/source-register.md](../sources/source-register.md)
+
+## 开工规则
+
+**Phase 0 未通过 `planning/phase0-exit-review.md` 前，不创建 `src/`、Plugin manifest、package scaffold 或可执行实现。**
 
 所有会变化的外部信息应记录 `checked_at` 或明确“实施时必须重新验证”，避免把 2026-08 的平台状态永久写死为事实。
