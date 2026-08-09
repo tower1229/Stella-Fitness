@@ -1,6 +1,6 @@
 # Evaluation Plan
 
-**状态：FRAMEWORK FROZEN / GOLDEN CASE CATALOG DRAFTED / HUMAN REVIEW PENDING**
+**状态：FRAMEWORK FROZEN / PRODUCT REVIEW APPROVED / DOMAIN AND SAFETY REVIEW PENDING**
 
 Stella Fitness 的可靠性不能只用“回答听起来不错”衡量。Eval 必须围绕信息流、证据忠实度、错误干预和安全边界设计。
 
@@ -169,13 +169,13 @@ Auditor 应能识别：
 - Auditor；
 - Longitudinal behavior。
 
-进入实施前仍需要：
+Product Owner 已于 2026-08-09 批准 Expected/Forbidden 产品行为。进入实现前仍需要：
 
-- 产品负责人逐案复核；
-- 领域专业 reviewer 审核训练/营养 cases；
+- Supervision/Nutrition Domain Reviewer 审核训练/营养 cases；
 - safety reviewer 审核危险症状 cases；
-- 将图片类 case 补成真实 benchmark artifacts；
 - 将批准版本标记 `FROZEN v0.1`。
+
+将图片类 case 补成真实 benchmark artifacts 属于 `MODEL-SELECTION-BLOCKED`，不再作为 Phase 0 开工条件。
 
 ## 4. Extraction benchmark
 

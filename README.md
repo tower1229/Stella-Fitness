@@ -127,7 +127,7 @@ Product nutrition label
 - 不发布 npm / ClawHub 包；
 - 不把任何候选模型或未经审核的阈值当作已定生产依赖。
 
-实施必须等待 [Phase 0 Exit Review](docs/planning/phase0-exit-review.md) 明确通过。
+实施必须等待 [Phase 0 Exit Review](docs/planning/phase0-exit-review.md) 的 `IMPLEMENTATION-BLOCKING` 项关闭。真实图片 pilot、OpenClaw 实时契约、Default Program 专业签署和内容发行授权分别由模型选择、kickoff、Default Program 与 release gate 跟踪，不再作为同一个开工条件。
 
 ## 当前仓库结构
 
@@ -198,4 +198,4 @@ Stella Fitness Plugin 代码、通用 schema 及非课程派生的项目原创�
 
 ## 状态声明
 
-**Stella Fitness 当前不是可运行产品。** 训练计划最终 source cross-check 已完成，但项目仍需完成 Golden Cases 审核、专业策略审定、隐私/发行权利决策与 Phase 0 Exit Review，才允许进入真实训练监督实现。
+**Stella Fitness 当前不是可运行产品。** 训练计划最终 source cross-check 与 Product Owner 产品行为审核已完成；Supervision/Nutrition Domain、Safety、Privacy 仍是实施 blocker。Default Program 训练处方专业签署与课程派生制品授权已明确延后，分别阻断 Default Program 启用和正式发行，而不制造 Phase 0 开工自循环。

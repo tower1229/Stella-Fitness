@@ -1,6 +1,6 @@
 # Phase 0 Golden Cases
 
-**状态：DRAFT FROZEN FOR REVIEW**
+**状态：DRAFT — PRODUCT APPROVED / SUPERVISION-NUTRITION DOMAIN AND SAFETY REVIEW PENDING**
 
 本文在任何监督代码出现之前，先定义 Stella Fitness “什么行为算正确”。实现不得通过观察模型表现后反向修改这些案例来让指标变好；需求变化必须显式修改案例并记录原因。
 
@@ -21,17 +21,18 @@ Golden Case 不等于完整测试数据。它定义场景、允许输入、期�
 
 ## 2. Source / Program Cases
 
-### G-SRC-001 — Week 4 Friday unresolved
+### G-SRC-001 — Week 4 Friday strength test remains canonical
 
-**Given**：用户处于第 4 周周五，源计划该 session 明确缺失。
+**Given**：用户处于第 4 周周五；原课程配套 XLSX 已将该 session 补齐为 `strength_test_block`。
 
 **Required**：
 
-- 明确报告 source unresolved；
-- 不生成训练动作、组数、次数或重量；
-- 不根据前三周模式推断。
+- 解析为三个主项各自的 12RM 测试：高脚杯深蹲、哑铃卧推、哑铃硬拉；
+- 三个测试结果分别绑定第二阶段对应动作的 `N`；
+- 引体向上记录第一组最大完成次数，并用于后续辅助带选择；
+- 保留力量测试专用结构，不按普通训练块解释。
 
-**Forbidden**：任何“按规律应该是……”形式的 canonical prescription。
+**Forbidden**：重新报告为 `unresolved`、退化为普通全身训练，或根据前三周模式改写正式测试内容。
 
 ### G-SRC-002 — Symbolic load remains symbolic
 
@@ -316,9 +317,27 @@ Expected：不能继续输出高置信趋势结论；降低 confidence / `COLLEC
 
 在进入实现前：
 
-- [ ] 产品负责人逐案审核 Expected / Forbidden；
-- [ ] 领域专业审核者审核运动营养相关案例；
+- [x] 产品负责人逐案审核 Expected / Forbidden；
+- [ ] Supervision/Nutrition Domain Reviewer 审核训练/营养监督相关案例；
 - [ ] safety reviewer 审核 `G-SAFE-*`；
 - [ ] 确认每类案例都同时包含 positive 和 negative；
-- [ ] 为 extraction cases 准备真实图片 benchmark；
 - [ ] 将批准版本标记 `FROZEN v0.1`。
+
+在选择或宣称默认模型前：
+
+- [ ] `[MODEL-SELECTION-BLOCKED]` 为 extraction cases 准备真实图片 benchmark。
+
+### Product review record
+
+```text
+artifact: docs/quality/golden-cases.md
+version: phase0-exit/v0.1
+reviewer_role: Product Owner
+reviewer_identity/reference: tower1229 / Phase 0 Exit Review user confirmation, 2026-08-09
+review_date: 2026-08-09
+scope: Expected/Forbidden product behavior, framing invariants, non-goals, staged gates
+status: approved
+notes: This approval excludes nutrition/domain validity, safety policy, privacy, Default Program prescription quality, and content rights.
+```
+
+Product approval 本身不会冻结 catalog。只有 Supervision/Nutrition Domain 与 Safety review 完成、review feedback 回写并重新核对案例平衡后，才能标记 `FROZEN v0.1`。

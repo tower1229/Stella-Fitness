@@ -110,7 +110,7 @@ reviewer_role
 reviewer_identity/reference
 review_date
 scope
-status: approved | changes_requested | rejected
+status: pending | approved | changes_requested | rejected
 notes
 ```
 
@@ -153,9 +153,33 @@ LLM 可以帮助整理证据和生成反例，但不计作外部专业签署者�
 实施前至少必须完成：
 
 - Product Owner 批准 requirements + Golden Cases；
-- Domain reviewer 批准 domain Golden Cases 和首版 numeric policy，或明确 v1 不自动给出该类数值调整；
+- Supervision/Nutrition Domain Reviewer 批准 training/nutrition domain Golden Cases、evidence hierarchy 与建议边界；未经审核的 numeric adjustment 继续禁用；
 - Safety reviewer 批准 safety cases；
-- Rights decision 明确首个 Program 如何合法进入 public distribution；
-- Privacy decision 明确 raw artifact 与 provider data flow。
+- Privacy Reviewer 批准 raw artifact、provider payload 与用户控制边界；
+- Rights decision 已明确发行制品边界与待授权范围，实际可核验授权留在 `RELEASE-BLOCKING` gate。
 
 如果无法获得某项专业审核，可以通过**缩小 v1 能力**关闭风险，而不是降低审核标准。
+
+## 12. Staged gate mapping
+
+Phase 0 Exit 只决定是否允许开始真实 Plugin 实现，不要求在实现存在前完成端到端验收，也不把时效性发布核验提前伪造成已完成。
+
+| Gate | Reviewer / evidence | Effect while pending |
+|---|---|---|
+| `IMPLEMENTATION-BLOCKING` | Product、Supervision/Nutrition Domain、Safety、Privacy | 不得创建真实 Plugin 实现 |
+| `MODEL-SELECTION-BLOCKED` | 真实 pilot/ground truth、候选模型 Eval、候选 Provider 条款 | 不得选择或宣称默认模型 |
+| `REVALIDATE_AT_KICKOFF` | Platform Reviewer、ProgramSpec validator/fixture | kickoff 时必须先核验，失败则停止依赖锁定与后续实现 |
+| `DEFAULT-PROGRAM-BLOCKED` | action-bearing 训练处方独立 Domain Review | Candidate 可作实现 fixture，但不得标记或启用为 `Default Program` |
+| `RELEASE-BLOCKING` | Rights Reviewer、发行授权、ClawHub/npm 实时权限 | 不得发布 Built-in Program 或正式制品 |
+
+Product Owner `tower1229` 已于 2026-08-09 批准 requirements 与 Golden Cases 的产品行为；该批准不覆盖 Supervision/Nutrition Domain、Safety、Privacy、Default Program 专业正确性或内容权利。
+
+当前 Default Program Domain Review 明确延后到 `DEFAULT-PROGRAM-BLOCKED` gate。训练/营养监督解释与 Nutrition Policy/domain Golden Cases 因 v1 保留监督归因、饮食记录、营养估算与建议，仍属于 `IMPLEMENTATION-BLOCKING`，不能与 Default Program Review 合并或一并跳过。
+
+每个 pending review packet 继续使用第 7 节的字段，并额外写清：
+
+```text
+gate
+required_questions
+effect_while_pending
+```

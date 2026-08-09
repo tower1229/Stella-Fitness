@@ -342,7 +342,7 @@ progression:
 ## 13. 版本策略
 
 - `program-spec.v0.1.yaml`：来源补全前历史草案，保留审计；
-- `program-spec.v0.2.yaml`：当前 source-reconciled `Default Program Candidate`，也是开发与验收主 fixture；
+- `program-spec.v0.2.yaml`：当前 source-reconciled `Default Program Candidate`，将在 implementation 中作为开发与验收主 fixture；
 - 未来 `program-spec.v1`：经过完整 source review、schema validation、fixtures 与规定范围的独立 Domain Review 后，才能成为 `Default Program`。
 
 ProgramSpec schema version 与具体 program version 分开版本化。
@@ -357,7 +357,7 @@ v0.2 当前在**训练计划来源语义层面没有已知缺口**，但仍不�
 
 - 默认 Program 的独立领域审核与签署；
 - Built-in Program 的派生、修改、署名与分发授权；
-- 实施阶段 Schema validator 与完整 12 周 fixture 验证。
+- implementation kickoff 的 Schema validator，以及实施期完整 12 周 fixture 验证。
 
 独立 Domain Review 的范围已经冻结：审核所有会驱动用户行为的训练处方，包括动作、频率/训练量、负重递进、12RM 测试、恢复周和引体辅助规则。教程饮食内容仅作为来源示例，不能进入自动饮食 Supervision Policy。v0.2 是预定随包提供的 `Built-in Program`，但在合格签署和可核验发行授权完成前仍只能标记为 `Default Program Candidate`，不得发布或驱动自动数值调整。
 

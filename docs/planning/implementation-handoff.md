@@ -14,6 +14,7 @@
 - [x] v1 默认适用范围冻结为健康成年人（18+）的一般增肌监督
 - [x] v1 训练日志模板已选定：复用原课程三阶段 XLSX
 - [x] Phase 0 Golden Case catalog 已起草
+- [x] Product Owner 已批准 requirements 与 Golden Cases 的产品行为
 - [ ] Phase 0 Golden Cases 完成人工/专业复核并标记 `FROZEN v0.1`
 
 ## B. Source program
@@ -32,10 +33,9 @@
 - [x] 教程/XLSX/Markdown/ProgramSpec v0.2 完成最终逐项 source cross-check
 - [x] 卓叔计划确定作为 v1 Built-in Program
 - [x] Built-in Program 的具体发行制品边界已冻结：运行时派生制品随包，原始 DOCX/XLSX 不随包
-- [ ] 已取得并保存覆盖实际发行制品与渠道的可核验授权
-- [ ] 卓叔 `Default Program Candidate` 作为主 fixture 覆盖完整开发与端到端验收
+- [ ] `[RELEASE-BLOCKING]` 已取得并保存覆盖实际发行制品与渠道的可核验授权
 - [x] Default Program 的专业审核范围已决策
-- [ ] action-bearing 训练处方完成独立 Domain Review 并获得合格签署
+- [ ] `[DEFAULT-PROGRAM-BLOCKED]` action-bearing 训练处方完成独立 Domain Review 并获得合格签署
 
 > 最终 source cross-check 已完成。未来若新版本原件带来新的课程内部歧义，必须集中向用户确认，不允许通用运动科学文献或 LLM 反向猜测课程意图。
 
@@ -46,7 +46,7 @@
 - [x] media extraction 可行性确认
 - [x] Cron 可行性确认
 - [x] ClawHub 当前要求已调研
-- [ ] 实施启动日重新核验 OpenClaw stable API / hook semantics / model policy
+- [ ] `[REVALIDATE_AT_KICKOFF]` 实施启动日重新核验 OpenClaw stable API / hook semantics / model policy
 
 ## D. Model & extraction
 
@@ -58,10 +58,10 @@
 - [x] supplied-template 专项 benchmark 规范已定义
 - [x] food-image/diet benchmark 规范已定义
 - [x] diagnosis/framing Golden Case catalog 已建立
-- [ ] workout-log 真实填写照片 pilot 样本集准备并人工标注
-- [ ] food-image 真实 benchmark 样本集准备并人工标注
+- [ ] `[MODEL-SELECTION-BLOCKED]` workout-log 真实填写照片 pilot 样本集准备并人工标注
+- [ ] `[MODEL-SELECTION-BLOCKED]` food-image 真实 benchmark 样本集准备并人工标注
 - [x] OpenClaw 管 Provider/外发、Plugin 管内部编排/选择性披露/角色模型绑定的职责边界冻结
-- [ ] OpenClaw runtime execution metadata 可观测性已核验
+- [ ] `[REVALIDATE_AT_KICKOFF]` OpenClaw runtime execution metadata 可观测性已核验
 
 ## E. Domain policy
 
@@ -74,6 +74,8 @@
 - [x] 中国食物成分表 / USDA / 包装标签 / 个人餐食库的数据优先级完成调研
 - [x] v1 不自动执行未经专业审核的新增数值调整；未来扩展另行版本化审核
 - [x] v1 nutrition fallback 已冻结；未授权的中国食物成分仓库不接入
+- [ ] `[IMPLEMENTATION-BLOCKING]` Supervision/Nutrition Domain Reviewer 批准训练/营养解释、evidence hierarchy、估算置信度与建议边界
+- [ ] `[IMPLEMENTATION-BLOCKING]` Safety Reviewer 批准 red flags、negative controls 与升级文案
 
 ## F. Quality
 
@@ -87,8 +89,8 @@
 - [x] Diet Evidence Benchmark 规范定义
 - [x] 初版 Golden Cases 文档化
 - [x] Product / Domain / Safety / Privacy / Platform / Rights reviewer 角色定义
-- [ ] 所有 Golden Cases 经 reviewer 批准
-- [ ] 图片类 Golden Cases 对应真实 artifacts/ground truth 准备
+- [ ] Supervision/Nutrition Domain 与 Safety Golden Cases 经对应 reviewer 批准
+- [ ] `[MODEL-SELECTION-BLOCKED]` 图片类 Golden Cases 对应真实 artifacts/ground truth 准备
 
 ## G. Privacy & Release
 
@@ -100,18 +102,19 @@
 - [x] v1 不做 Plugin 数据维护功能；Personal Data Directory 通过文件系统管理并支持安全重建
 - [x] 数据生命周期分层与 processing provenance 需求
 - [x] 原图保留问题被明确为产品决策，而非默认永久保留
-- [ ] provider/API 具体数据保留与训练策略按最终候选重新核验并冻结
+- [ ] `[IMPLEMENTATION-BLOCKING]` Privacy Reviewer 批准数据生命周期、payload 与用户控制边界
+- [ ] `[MODEL-SELECTION-BLOCKED]` provider/API 具体数据保留与训练策略按最终候选重新核验并冻结
 - [x] 软件许可证选择：Apache-2.0；课程内容与个人数据明确排除
 - [x] ClawHub canonical identity 已冻结为 `@tower1229/stella-fitness`；实时权限在首次发布前验证
 - [x] 原始训练/饮食图片默认持久保留；用户直接操作目录，Plugin 不提供删除/retention 功能
 - [x] 上传原件字节保真；OpenClaw media payload 使用去 EXIF/GPS 的临时净化副本
 - [x] 三类内容权利模型冻结：内置内容需授权，用户输入与用户派生产出均由用户控制
-- [ ] Built-in Program 派生制品的独立发行授权取得并保存（v1 nutrition 已采用无未授权数据 fallback）
+- [ ] `[RELEASE-BLOCKING]` Built-in Program 派生制品的独立发行授权取得并保存（v1 nutrition 已采用无未授权数据 fallback）
 - [x] 原课程训练日志 XLSX 不随包分发，安装包使用生成式/空白模板
 
 ## Phase transition rule
 
-只有当剩余 `BLOCKING` 项被关闭，或者明确作出“移出 v1 scope / 使用保守 fallback”的产品决策后，才创建 Implementation PR。
+只有当剩余 `IMPLEMENTATION-BLOCKING` 项被关闭，或者明确作出“移出 v1 scope / 使用保守 fallback”的产品决策后，才创建 Implementation PR。模型 pilot、实时平台契约、Default Program 专业签署和发行授权分别由 `MODEL-SELECTION-BLOCKED`、`REVALIDATE_AT_KICKOFF`、`DEFAULT-PROGRAM-BLOCKED` 和 `RELEASE-BLOCKING` 跟踪，不再制造 Phase 0 自循环。
 
 实施 PR 的第一项工作应是重新验证依赖契约，而不是直接照搬 2026-08-08 的 SDK/模型版本。
 
@@ -154,3 +157,11 @@
 ProgramSpec-driven generic template generator 已移出 v1 前置路径；只有未来支持其他 program 时再考虑。
 
 该顺序只是交接建议，Phase 0 不执行。
+
+## Implementation acceptance（不属于 Phase 0 Exit）
+
+- [ ] 卓叔 `Default Program Candidate` 作为主 fixture 覆盖完整开发与端到端验收；
+- [ ] ProgramSpec Schema validator 通过；
+- [ ] Program Engine 行为测试覆盖全部 12 周、recovery session 与 strength-test binding。
+
+这些项目只能在真实实现存在后验收，不得倒置为创建实现前的条件。它们通过也不代表 Default Program 已获专业背书或发行授权。

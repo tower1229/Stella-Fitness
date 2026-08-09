@@ -1,6 +1,6 @@
 # 已知缺口与阻塞项
 
-本文是 Stella Fitness 的未知项登记册。任何 `BLOCKING` / `RELEASE-BLOCKING` 项都不能由 LLM、开发者默认值或“看起来合理”的经验推断悄悄关闭。
+本文是 Stella Fitness 的未知项登记册。任何会阻断后续阶段的未关闭项必须映射到唯一门禁：`IMPLEMENTATION-BLOCKING`、`MODEL-SELECTION-BLOCKED`、`REVALIDATE_AT_KICKOFF`、`DEFAULT-PROGRAM-BLOCKED` 或 `RELEASE-BLOCKING`。已接受的 source-fidelity limitation 或 design constraint 可以保持显式存在，但不冒充门禁。任何门禁都不能由 LLM、开发者默认值或“看起来合理”的经验推断悄悄关闭。
 
 ## GAP-001：第 4 周周五训练内容
 
@@ -20,7 +20,7 @@
 
 ## GAP-002：教程发行包再分发策略
 
-**状态：PARTIALLY RESOLVED / AUTHORIZATION PENDING**
+**状态：RELEASE-BLOCKING / AUTHORIZATION PENDING**
 
 用户已于 2026-08-08 明确确认允许将原始 DOCX 收录到公开 `tower1229/Stella-Fitness` GitHub 仓库，原件已归档至 `sources/originals/`。
 
@@ -30,11 +30,11 @@
 
 ## GAP-003：教程本身存在来源不确定性
 
-**状态：OPEN / CONTENT-REVIEW REQUIRED**
+**状态：DEFAULT-PROGRAM-BLOCKED / DOMAIN REVIEW PENDING**
 
 教程末尾注明“部分内容可能由 AI 生成”。`knowledge/` 表示来源忠实，不等于专业背书。
 
-已冻结处理边界：成为 v1 `Default Program` 前，所有 action-bearing 训练处方必须完成独立 Domain Review；教程饮食内容只保留为来源示例，不进入自动饮食 Supervision Policy。若无法获得合格签署，该 Program 降级为可导入来源样例。
+已冻结处理边界：成为 v1 `Default Program` 前，所有 action-bearing 训练处方必须完成独立 Domain Review；教程饮食内容只保留为来源示例，不进入自动饮食 Supervision Policy。该审核本轮明确延后，因此 v0.2 可作为实现/验收用 `Default Program Candidate`，但不能标记或启用为已审核的 `Default Program`，也不能随正式发行包发布。
 
 ## GAP-004：饮食目标没有连续计算公式
 
@@ -50,9 +50,9 @@ v1 不启用监督性 `ADJUST_DIET`、`ADJUST_TRAINING` 或 `RECOVERY`，也不�
 
 ## GAP-006：健康安全与适用人群边界
 
-**状态：PARTIALLY RESOLVED**
+**状态：IMPLEMENTATION-BLOCKING / SAFETY REVIEW PENDING**
 
-v1 默认仅面向健康成年人 18+ 的一般增肌监督；危险症状优先 `ESCALATE`。特殊疾病、孕期、未成年人、康复等不进入默认普通 Policy。
+v1 默认仅面向健康成年人 18+ 的一般增肌监督；危险症状优先 `ESCALATE`。特殊疾病、孕期、未成年人、康复等不进入默认普通 Policy。类别和负例已文档化，但仍需 Safety Reviewer 批准 red flags、ordinary soreness/DOMS negative controls 与升级文案后才能关闭实施门禁。
 
 ## GAP-007：食物照片无法提供可靠精确宏量营养素
 
@@ -68,15 +68,31 @@ v1 已接受包装标签、用户确认个人餐食、USDA FoodData Central 与�
 
 ## GAP-009：最终模型组合未确定
 
-**状态：OPEN / IMPLEMENTATION-TIME BENCHMARK**
+**状态：MODEL-SELECTION-BLOCKED / BENCHMARK PENDING**
 
 只冻结模型角色契约，不冻结厂商。默认模型必须通过 Stella Fitness 自有 Benchmark/Eval。
 
-## GAP-010：OpenClaw execution metadata 与隐私说明需实施时确认
+## GAP-010：OpenClaw execution metadata、Provider 条款与隐私分阶段确认
 
-**状态：OPEN / PRIVACY REVIEW**
+该 GAP 拆成三个独立门禁，避免一个状态同时承担不同阶段：
 
-OpenClaw 负责 Provider 注册、凭据、endpoint、授权与实际网络外发；Plugin 负责内部多阶段编排、选择性披露，并可在 `allowedModels` 范围内绑定角色模型。Plugin 不另建 privacy profile、route 或 consent 策略。实施时需要核验 OpenClaw runtime 实际向 Plugin 返回哪些 provider/model execution metadata，并据此写清 processing provenance 边界。具体 Provider 数据用途、保留、ZDR 和 region 由用户的 OpenClaw 配置与相应 Provider 条款决定。
+### GAP-010A：Plugin 隐私与 payload 边界
+
+**状态：IMPLEMENTATION-BLOCKING / PRIVACY REVIEW PENDING**
+
+OpenClaw 负责 Provider 注册、凭据、endpoint、授权与实际网络外发；Plugin 负责内部多阶段编排、选择性披露，并可在 `allowedModels` 范围内绑定角色模型。Plugin 不另建 privacy profile、route 或 consent 策略。当前数据生命周期、payload 和用户控制边界仍需 Privacy Reviewer 批准。
+
+### GAP-010B：runtime execution metadata
+
+**状态：REVALIDATE_AT_KICKOFF / LOCKED-VERSION CHECK PENDING**
+
+OpenClaw runtime 实际返回哪些 provider/model execution metadata 必须在 kickoff 按锁定版本核验，并据此确认 processing provenance 能保存哪些字段。
+
+### GAP-010C：候选 Provider 条款
+
+**状态：MODEL-SELECTION-BLOCKED / PROVIDER TERMS CHECK PENDING**
+
+具体候选 Provider 的数据用途、保留、ZDR 和 region 必须在模型选择前核验；Plugin 文档不得替 Provider 或 OpenClaw 声明其无法控制的网络层保证。
 
 ## GAP-011：ClawHub owner / package scope
 
@@ -92,13 +108,13 @@ Plugin 代码、通用 schema 与非课程派生的项目原创材料采用 Apac
 
 ## GAP-013：Golden Cases 已起草但尚未 reviewer approval
 
-**状态：OPEN / BLOCKING FOR IMPLEMENTATION**
+**状态：IMPLEMENTATION-BLOCKING / PRODUCT APPROVED; SUPERVISION/NUTRITION DOMAIN AND SAFETY REVIEW PENDING**
 
-关闭条件：Product / Domain / Safety reviewer 审核并标记 `FROZEN v0.1`。
+Product Owner 已于 2026-08-09 批准 requirements 与 Golden Cases 的产品行为。关闭条件：Supervision/Nutrition Domain Reviewer 与 Safety Reviewer 完成对应案例审核、反馈已回写、案例平衡复核完成并标记 `FROZEN v0.1`。Default Program 处方审核不属于本 GAP。
 
 ## GAP-014：真实训练日志与饮食图片 Benchmark 尚未准备
 
-**状态：PARTIALLY RESOLVED / BLOCKING BEFORE MODEL SELECTION**
+**状态：MODEL-SELECTION-BLOCKED / PILOT AND GROUND TRUTH PENDING**
 
 训练日志固定模板已确定，专项 Benchmark 规范已建立；仍缺真实手写照片、噪声场景和人工 ground truth。饮食 benchmark 同样尚缺真实 artifacts。
 
@@ -110,11 +126,16 @@ Plugin 代码、通用 schema 与非课程派生的项目原创材料采用 Apac
 
 ## GAP-016：外部专业审核机制尚未完成
 
-**状态：PARTIALLY RESOLVED / BLOCKING FOR CLAIMING PROFESSIONAL SUPERVISION**
+**状态：STAGED REVIEW PENDING**
 
-Product / Domain / Safety / Privacy / Platform / Rights reviewer 的职责和签署机制已经定义，但默认 Program、nutrition policy、safety policy 的实际专业审核者和首次签署仍未完成。
+Product / Domain / Safety / Privacy / Platform / Rights reviewer 的职责和签署机制已经定义。Product Owner 已完成产品行为批准；其余角色按阶段跟踪：
 
-Default Program 的 Domain Review 范围已冻结；剩余 blocker 是确定合格 reviewer 并完成实际签署，而不是重新讨论审核边界。
+- Supervision/Nutrition Domain、Safety、Privacy：`IMPLEMENTATION-BLOCKING`；
+- Platform 当前契约：`REVALIDATE_AT_KICKOFF`；
+- Default Program 训练处方 Domain Review：`DEFAULT-PROGRAM-BLOCKED`；
+- 内容授权与 Rights Review：`RELEASE-BLOCKING`。
+
+Default Program 的 Domain Review 范围已冻结且本轮明确延后；剩余工作是确定合格 reviewer 并完成实际签署，不是重新讨论审核边界。
 
 ## GAP-017：训练日志 XLSX 发行包分发策略
 

@@ -18,11 +18,11 @@ canonical_ready: false
 
 `canonical_ready: false` 现在不是因为训练计划内容仍有缺口，也不是因为原始 Office 文件未归档。
 
-当前训练处方来源层已经收敛；剩余阻塞主要属于：
+当前训练处方来源层已经收敛；剩余门禁分别属于：
 
-- `Default Program Candidate` 的独立领域审核与签署；
-- Built-in Program 的派生、修改、署名与分发授权；
-- ProgramSpec schema/fixture 等未来实施验证。
+- `DEFAULT-PROGRAM-BLOCKED`：`Default Program Candidate` 的独立领域审核与签署；
+- `RELEASE-BLOCKING`：Built-in Program 的派生、修改、署名与分发授权；
+- `REVALIDATE_AT_KICKOFF` / implementation acceptance：ProgramSpec schema/fixture 验证。
 
 ## 2. 原始来源归档
 
