@@ -144,16 +144,18 @@ v1 不强制固定每日输入频率，但数据覆盖率必须进入诊断证�
 
 该日不再是 `unresolved` source gap。
 
-### 尚待确认的课程关系语义
+### 已确认的课程关系语义
 
-影响下一版 ProgramSpec 的问题必须集中向用户确认，不得自行猜测：
+Q1–Q6 已由用户基于课程背景集中确认，并进入 `program-spec.v0.2.yaml`：
 
-- 初始 `A` 是否等于第一次主项 12RM；
-- 第 4 周 12RM 是否直接成为第 5 周 `N`；
-- 引体向上测试结果的后续用途；
-- 第 4 周是否采用课程末尾同一套 12RM 测试流程；
-- “哑铃推举 / 哑铃推肩”的命名关系；
-- 第一阶段“每两周加重一次”与详细逐周计划的冲突。
+- 初始 `A` 等于每个主项各自第一次 12RM；
+- 第 4 周主项新 12RM 分别直接成为第二阶段对应动作的 `N`；
+- 引体向上第一组最大次数用于选择辅助方式，尽量保证每组完成 8 次以上，同时保持计划总次数；
+- 第 4 周和周期结束使用同一 12RM 测试协议；
+- “哑铃推举 / 哑铃推肩”是同一动作，“哑铃弯举”是独立动作；
+- 第一阶段详细逐周处方优先于“两周加重一次”的长期概括。
+
+未来若新版本来源产生新的关系歧义，仍必须集中向用户确认，不得自行猜测。
 
 详见 `knowledge/programs/zhuoshu-12-week/open-questions.md`。
 
@@ -271,6 +273,8 @@ ESCALATE
 
 未经 reviewer 审核、版本化和 Golden Case 验证的 numeric intervention threshold，不得由 LLM 临场创造。
 
+v1 的 active actions 仅为 `NO_CHANGE`、`OBSERVE`、`COLLECT_MORE_DATA` 和 `ESCALATE`。`ADJUST_DIET`、`ADJUST_TRAINING`、监督性 `RECOVERY` 保留为未来 Policy 扩展；ProgramSpec 已确认的计划进阶和计划恢复继续由确定性 Program Engine 执行。
+
 ### 8.5 默认沉默
 
 没有异常或没有足够证据时，`NO_CHANGE` / `OBSERVE` 是完整、正确的产品结果。
@@ -279,6 +283,9 @@ ESCALATE
 
 ## 9. 数据完整性要求
 
+- 训练 actual、体重、饮食和主观反馈以带稳定 ID、发生时间、schema version 与 provenance 的 Observation Records 作为 canonical 事实；
+- 当前训练进度、趋势、完成率和 snapshot 必须可由 Observation Records 与 Program state 重建；
+- 原始文件通过相对路径和 hash 与 observation 关联；
 - 所有结构化 observation 应保留来源；
 - 视觉低置信字段不得静默写成确定事实；
 - 用户纠错必须可覆盖派生结果，并保留必要的变更轨迹；
@@ -289,7 +296,20 @@ ESCALATE
 
 ## 10. 数据所有权与隐私
 
-Stella Fitness 的长期训练与身体数据应存储在用户控制的 OpenClaw / Plugin 环境中。
+数据权利与控制按三类内容处理：
+
+- Built-in Program 内容由发布方取得覆盖实际制品与渠道的授权；
+- 用户输入的训练记录、图片、体重、健康/档案信息和描述由用户控制，Plugin 不取得再利用权；
+- 关于用户的 Observation、Analysis、Training Progress、决策和 provenance 等派生产出同样由用户控制并进入 Personal Data Directory。
+
+“用户控制”不代表 Plugin 替用户保证上传内容的第三方版权。用户可以管理自己的本地文件，但对外再分发其中的第三方内容仍须遵守原始权利。Benchmark 是独立二次用途，不能因 Plugin 处理过数据而自动获得授权。
+
+Plugin 持久文件分为两个边界：
+
+- Plugin 自行扩展的 Runtime Directory 可跨重启保存可重建运行状态、游标、锁、缓存、任务状态和索引；
+- 用户显式配置的 Personal Data Directory 保存所有关于用户的 canonical 个人数据，包括原始上传文件、训练进度、健康档案、结构化 observations、分析结果、决策和披露记录。
+
+未配置 Personal Data Directory 时，不得静默回退到 Runtime Directory 接收或长期保存个人数据。个人数据应生成 provider-neutral、可移植的结构化产出，并推荐由用户自己的 Personal Data Repository 管理和备份。
 
 外部模型只接收完成当前任务所必需的最小数据。
 
@@ -300,7 +320,9 @@ Stella Fitness 的长期训练与身体数据应存储在用户控制的 OpenCla
 - Auditor 获得审核所需内容；
 - Reporter 只获得最终允许公开给用户的 DecisionPacket。
 
-原始训练/饮食图片不得默认永久保存，具体默认期限在实现前通过 Privacy Review 冻结。
+原始训练/饮食图片默认在 Personal Data Directory 中与结构化产出一起长期保留。v1 不提供 Plugin 删除、导出、备份或 retention-policy 功能；用户通过文件系统或自己的 Personal Data Repository 工具管理该目录。Plugin 不得对用户目录执行静默删除，必须在重新扫描时尊重文件缺失、隔离 schema-invalid 手工修改、重建派生状态，并禁止 Runtime Directory 恢复已删除的个人数据。Runtime Directory 中的临时副本应在处理完成后清理。
+
+上传原件在 Personal Data Directory 中保持字节不变。Plugin 不把无关 EXIF/GPS/设备信息写入结构化记录；提交媒体给 OpenClaw runtime 前，必须把方向应用到像素、移除全部非必要 metadata，只提交 Runtime Directory 中的临时净化副本，并覆盖成功、失败、超时和取消的清理路径。
 
 ## 11. 安全边界
 
@@ -335,7 +357,7 @@ Plugin 应可以被其他 OpenClaw 用户安装，不依赖用户拥有 Stella �
 - 安装指南；
 - OpenClaw 配置示例；
 - 模型/provider 配置说明；
-- 数据目录与备份说明；
+- Runtime Directory、Personal Data Directory 的配置、备份与迁移说明；
 - 隐私说明；
 - 已知限制；
 - canonical program 来源和许可状态说明；
@@ -366,7 +388,7 @@ Blind Diagnostician payload 中不得出现 user belief、desired action 或完�
 ### Source Fidelity
 
 - 第 4 周周五必须解析为力量测试，不得重新变成普通训练或缺失；
-- 课程仍未确认的 A/N/测试关系不能被自动补齐；
+- 未来新发现、尚未确认的课程关系不能被自动补齐；
 - recovery session 不得误判为退步。
 
 ### Extraction Quality
@@ -387,9 +409,7 @@ Blind Diagnostician payload 中不得出现 user belief、desired action 或完�
 
 当前最重要的 Phase 0 阻塞项包括：
 
-1. 用户集中确认训练计划 `open-questions.md` 的 Q1–Q6，并形成下一版 ProgramSpec；
-2. 教程与 XLSX 的公开再发布方案；
-3. Golden Cases 的 reviewer approval；
-4. 真实手写训练日志 / 饮食图片 benchmark；
-5. production numeric intervention policy 的专业审定或明确保守 fallback；
-6. Provider privacy profile 与 raw-image retention 默认策略。
+1. Golden Cases 的 reviewer approval；
+2. 真实手写训练日志 / 饮食图片 benchmark；
+3. 核验 OpenClaw runtime 可返回的 execution metadata，并完成准确的 Plugin 隐私说明；
+4. Built-in Program 的可核验发行授权与打包验收；制品边界已冻结为运行时派生制品随包、原始 DOCX/XLSX 不随包。

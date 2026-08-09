@@ -20,8 +20,8 @@ canonical_ready: false
 
 当前训练处方来源层已经收敛；剩余阻塞主要属于：
 
-- ClawHub/npm 等发行包是否捆绑原始 Office 文件的独立发布决策；
-- 是否/如何做默认 program 的独立领域审核；
+- `Default Program Candidate` 的独立领域审核与签署；
+- Built-in Program 的派生、修改、署名与分发授权；
 - ProgramSpec schema/fixture 等未来实施验证。
 
 ## 2. 原始来源归档
@@ -160,13 +160,12 @@ known_gaps: []
 - 原始 DOCX 可以收录到本公开 GitHub 仓库；
 - 原始 XLSX 可以收录到本公开 GitHub 仓库。
 
-仍作为未来 release decision 单独处理：
+已确认 v1 发行边界：
 
-1. ClawHub/npm 等发行包是否直接携带原始 Office 文件；
-2. 是否只在源码仓库保留原件、发行包只包含派生 ProgramSpec/文档；
-3. 是否需要额外署名或许可声明。
-
-因此“GitHub 仓库归档权限”和“发行包再分发策略”不再混为同一个问题。
+1. 卓叔计划将作为 v1 `Built-in Program`；
+2. 发行包至少需要运行时 ProgramSpec 与必要知识；
+3. 原始 Office 文件只作公开源码仓库审计原件，不进入发行包；
+4. 发布前必须取得明确授权与专业签署。
 
 ## 9. 审定规则
 
@@ -179,7 +178,9 @@ known_gaps: []
 - [x] 第一阶段详细周计划优先级已明确；
 - [x] 原始 DOCX/XLSX 已归档到公开 GitHub 仓库；
 - [x] 所有训练日与同源资料完成最终逐项审阅；
-- [ ] 默认公开 program 所需的领域审核范围已完成；
+- [x] Default Program 的领域审核范围已冻结；
+- [ ] Default Program Candidate 完成独立 Domain Review 与签署；
 - [ ] ProgramSpec Schema 校验通过；
 - [ ] Program Engine 单元测试覆盖全部 12 周；
-- [ ] 正式发行前明确原始 Office 文件是否进入 distributable package。
+- [x] Built-in Program 的具体发行制品边界已冻结。
+- [ ] 已取得覆盖派生、修改、署名及实际分发渠道的可核验授权。

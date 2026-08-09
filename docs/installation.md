@@ -8,7 +8,7 @@
 
 最终用户应能通过 OpenClaw 支持的 ClawHub package source 安装 Stella Fitness，而不需要克隆源码或手工复制文件。
 
-具体 package scope、命令和最低兼容版本必须在发布前按当时 OpenClaw/ClawHub 官方文档重新验证，当前不冻结假包名。
+canonical package identity 已冻结为 `@tower1229/stella-fitness`，owner 为 `tower1229`。具体安装命令、owner 权限、名称可用性和最低兼容版本仍必须在发布前按当时 OpenClaw/ClawHub 官方文档与 CLI 实测重新验证。
 
 ## 未来发布必须具备
 
@@ -33,14 +33,15 @@
 2. 启用必要的 OpenClaw conversation hook 权限；
 3. 选择/确认可用模型与隐私配置；
 4. 选择训练 program 或导入自己的计划；
-5. 建立最小个人档案；
-6. 开始上传训练日志/体重。
+5. 显式配置 Personal Data Directory，并建议接入用户自己的 Personal Data Repository；
+6. 建立最小个人档案；
+7. 开始上传训练日志/体重。
 
-如果内置训练教程无法获得再发布许可，则安装包不得偷偷携带该教程，onboarding 应改成“用户本地导入 program”。
+v1 安装包内置卓叔计划的运行时 ProgramSpec、必要结构化知识、生成式/空白日志模板及权利声明，不携带原始 Office 文件。安装后无需用户导入默认计划。
 
 ## 发布前禁止事项
 
-- 不使用未经确认的 ClawHub owner 预占正式包名；
+- 使用已决策的 `tower1229` owner；首次发布失败时阻断，不静默切换 owner 或包名；
 - 不把 research snapshot 当作长期兼容保证；
 - 不把包含身体数据的示例真实数据打进 package；
 - 不默认启用会把用户数据发送到未经选择的外部 Provider；

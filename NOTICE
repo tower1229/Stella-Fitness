@@ -1,0 +1,19 @@
+Stella Fitness
+Copyright 2026 tower1229 contributors
+
+The Apache License, Version 2.0 applies to Stella Fitness Plugin source code,
+generic schemas, and project-authored materials that are not derived from the
+Zhuoshu course, unless a file states otherwise.
+
+The following are not licensed under Apache-2.0 by this project:
+
+- raw source artifacts under sources/originals/;
+- the Zhuoshu-derived Built-in Program and related structured knowledge under
+  knowledge/programs/zhuoshu-12-week/, unless and until a separate rights notice
+  expressly grants distribution rights for the relevant artifact and channel;
+- files stored in a user's Personal Data Directory, including uploads, health
+  profiles, observations, analysis records, and training progress.
+
+Those materials retain their existing ownership and require separate rights or
+user authorization. This NOTICE is informational and does not modify the
+Apache License.

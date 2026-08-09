@@ -48,15 +48,25 @@
 | 模型角色可替换 | ADR-003 + role contracts | `research/model-strategy.md` | same benchmark before model swap |
 | 模型选择必须基于项目自有 Benchmark | quality benchmark docs | vendor-neutral principle | locked extraction/diagnosis eval |
 | 敏感数据最小披露 | provider boundary | `quality/privacy-safety.md` | payload-level privacy tests |
-| 原图默认不应永久保存 | `quality/data-lifecycle.md` | privacy/data minimization | retention/deletion tests |
-| 用户可导出/删除/纠错 | data lifecycle | ownership requirement | export/delete/correction acceptance tests |
-| 外部 Provider 数据流可审计 | disclosure ledger（未来） | multi-provider privacy | provider disclosure export |
+| 个人数据只写入用户配置目录 | ADR-012 / data lifecycle | 用户控制数据位置 | missing-config fail-closed + path-boundary tests |
+| Observation canonical、Progress 可重建 | ADR-014 / data lifecycle | 历史、纠错与派生分层 | rebuild + correction lineage tests |
+| 只持久化结构化 Analysis Records | ADR-015 / data lifecycle | 审计性与敏感数据最小化 | persistence allowlist + debug cleanup tests |
+| OpenClaw 管 Provider/外发，Plugin 管编排/披露/角色绑定 | ADR-016 / OpenClaw config contract | 保留信息隔离并避免双重 Provider 配置 | payload isolation + allowedModels + metadata-boundary tests |
+| v1 不执行未审核数值调整 | ADR-017 / ADR-008 | 缩小范围而非降低审核要求 | v1 action allowlist + ProgramSpec progression tests |
+| 原图由用户目录持久保留并由用户通过文件系统管理 | ADR-013 / ADR-020 / data lifecycle | personal-data ownership without duplicate maintenance UI | path-boundary + external-deletion tests |
+| Personal Data Directory 即可移植导出制品 | ADR-020 / data lifecycle | 不引入 Plugin 数据维护子系统 | copy/rescan/schema-validation/rebuild tests |
+| 原件保真但媒体 payload 去除 EXIF/GPS | ADR-022 / privacy requirements | 审计原件与最小披露分离 | byte-integrity + orientation + metadata-strip + cleanup tests |
+| 内置内容需授权，用户输入与派生产出由用户控制 | ADR-023 / privacy + lifecycle | Plugin 不取得个人数据二次使用权 | storage-boundary + no-telemetry + benchmark-separation tests |
+| OpenClaw processing provenance 可追溯 | data lifecycle | Plugin 只记录 runtime 提交与返回元数据 | processing provenance export |
 | Phase 0 Golden Cases 在代码前冻结 | `quality/golden-cases.md` | anti-test-fitting governance | review approval record |
 | 专业结论有 reviewer ownership | `planning/review-governance.md` | governance | signed review/version record |
 | 周期监督默认静默 | Cron design（未来） | OpenClaw Cron capability | NO_REPLY/silence cases |
 | 可公开安装 | release contract | ClawHub research | validate + dry-run + clean install |
-| 首个教程的发行包分发范围明确 | source governance | GitHub 收录已确认；ClawHub/npm bundling 仍需决策 | release review before package bundling |
-| 训练日志 XLSX 的发行包分发范围单独确认 | `sources/training-log-template-audit.md` | GitHub 收录已确认，不自动等于进入 distributable package | release review before package bundling |
+| ClawHub canonical identity 为 `@tower1229/stella-fitness` | ADR-021 / publishing research | owner 与 package scope 一致 | whoami + owner authorization + validate + dry-run |
+| 首个教程作为 Built-in Program | ADR-011 / source governance | 派生运行时制品随包；可核验授权待完成 | package artifact inspection + rights review |
+| 原始训练日志 XLSX 不进入安装包 | `sources/training-log-template-audit.md` / ADR-011 | GitHub 审计归档已确认；安装包使用生成式/空白模板 | package artifact exclusion test |
+| 软件使用 Apache-2.0，内容权利独立 | ADR-018 / `LICENSE` / `NOTICE` | 防止软件许可被误读为课程或个人数据授权 | package license inspection + rights-boundary review |
+| v1 nutrition 使用 label/personal meal/USDA fallback | ADR-019 / nutrition data research | 不以未授权 OCR 数据换取本地覆盖 | provider allowlist + provenance + low-confidence mixed-dish cases |
 
 ## 需求变更规则
 

@@ -15,7 +15,7 @@ Stella Fitness 的核心风险不是缺少更多文档，而是关键结论没�
 - 默认不干预；
 - v1 scope；
 - Golden Cases 中 Expected / Forbidden 的产品语义；
-- 原图保留、数据导出/删除等产品选择。
+- 原图保留、文件系统管理与 Plugin 数据维护范围等产品选择。
 
 Product Owner 不单独批准医学/运动科学阈值。
 
@@ -28,6 +28,21 @@ Product Owner 不单独批准医学/运动科学阈值。
 - 训练量、恢复、负荷、饮食解释是否存在明显专业错误；
 - numeric intervention policy 的适用范围和保守程度；
 - source program 是否适合作为公共默认方案。
+
+### Default Program 审核边界
+
+来源忠实核对不等于专业审核。Program Source 成为 v1 `Default Program` 前，Domain Reviewer 必须审核所有会驱动用户行为的训练处方：
+
+- 动作选择；
+- 频率与训练量；
+- 负重递进；
+- 12RM 测试协议；
+- 恢复周；
+- 引体辅助规则。
+
+教程饮食内容只作为来源示例，不进入自动饮食 Supervision Policy；营养 Policy 另行审核。背景叙述和文案润色不在本次专业审核范围内。
+
+若无法获得合格签署，该 Program 只能作为可导入的来源样例，不能标记为已专业审核的 `Default Program`，也不能驱动自动数值调整。
 
 ### 不要求 reviewer 做什么
 
@@ -53,10 +68,12 @@ Product Owner 不单独批准医学/运动科学阈值。
 
 - raw image retention；
 - provider payload；
-- data export/delete；
+- Personal Data Directory 可移植性、文件系统删除与重建语义；
 - provider retention/ZDR profile；
 - 日志是否泄露健康/身体数据；
 - benchmark dataset 的去身份和使用许可。
+
+Plugin 不提供遥测或自动 Benchmark 贡献功能。Privacy Reviewer 审核的是 Plugin 外独立授权模板、样本去身份和数据集范围，不得把运行时同意替代为研发二次使用授权。
 
 ## 5. Platform Review
 
@@ -105,10 +122,10 @@ Phase 0 不规定未来存 YAML、JSON 还是 Git review metadata，但这些字
 |---|---:|---:|---:|---:|---:|---:|
 | `requirements.md` | required | advisory | advisory | advisory | advisory | advisory |
 | `golden-cases.md` | required | required for domain cases | required for safety cases | - | - | - |
-| numeric intervention policy | required | required | advisory | - | - | - |
+| future numeric intervention policy | required before enabling | required before enabling | advisory | - | - | - |
 | safety escalation policy | advisory | advisory | required | - | - | - |
 | v1 applicability | required | required | required for exclusions | - | - | - |
-| provider privacy profile | advisory | - | - | required | advisory | - |
+| Plugin privacy notice + OpenClaw execution boundary | advisory | - | - | required | required | - |
 | tutorial public distribution | required | advisory | - | - | - | required |
 | nutrition DB integration | advisory | required for semantics | - | advisory | - | required |
 | OpenClaw compatibility snapshot | - | - | - | advisory | required | - |

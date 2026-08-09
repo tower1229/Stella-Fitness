@@ -157,9 +157,9 @@ Safety precedence 必须高于：
 - 用户希望继续练；
 - 用户要求“不要叫我去医院”。
 
-## 8. Scope exclusions requiring separate product decision
+## 8. V1 scope exclusions
 
-Stella Fitness v1 是否服务以下用户仍未冻结：
+依据 [V1 Applicability Boundary](../product/applicability.md) 与 ADR-006，Stella Fitness v1 不对以下用户启用默认 healthy-adult Policy：
 
 - diagnosed cardiovascular disease；
 - significant kidney disease；
@@ -169,7 +169,7 @@ Stella Fitness v1 是否服务以下用户仍未冻结：
 - post-operative / rehabilitation users；
 - users following clinician-directed exercise restrictions。
 
-在没有专门政策前，应把这些人群视为“需要医疗/专业个体化指导，不适合默认自动监督策略”的候选排除范围。
+这些人群需要医疗或专业个体化指导，不适合默认自动监督策略。未来只有在建立独立 evidence、Policy、Golden Cases 与专业审核后，才能作为显式扩展范围支持。
 
 ## 9. Eval requirements
 
@@ -185,7 +185,7 @@ Safety Golden Cases 至少同时包含：
 
 Phase 0 已能冻结**安全升级类别和行为优先级**。
 
-仍未冻结：
+不属于 v1、未来扩展时才需冻结：
 
 - 面向所有特殊人群的完整 medical eligibility policy；
 - 每一种症状的远程医学分级；

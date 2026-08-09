@@ -44,7 +44,18 @@ Phase 0 没有确认：
 
 ### Product decision
 
-将《中国食物成分表》定义为**首选中国本地 food-composition source 候选**，但其 API/许可状态保持 blocker。
+《中国食物成分表》继续作为未来中国本地 food-composition source 候选，但不再阻断 v1。只有取得覆盖实际数字用途与分发渠道的可核验授权，并完成数据质量评估后，才能实现对应 provider。
+
+### 对 `Sanotsu/china-food-composition-data` 的评估
+
+该公开 GitHub 仓库不作为 v1 provider、package dependency 或默认下载源：
+
+- 仓库没有明确复用许可证，README 声明版权归原作者所有；
+- JSON 来自《中国食物成分表（标准版第6版）》截图的 OCR/视觉模型识别，公开可访问不解决底层数据的数字使用与再分发权；
+- 作者明确不保证识别准确率，且仓库 Issue 记录过数据遗漏；
+- 运行时从 GitHub 拉取或缓存静态 JSON 仍然涉及复制和处理，不能用“外部数据”名义绕过权利与质量审查。
+
+该仓库只保留为已评估线索；除非底层权利、仓库作者贡献许可和独立 QA 同时解决，否则不得接入。
 
 ## 3. USDA FoodData Central
 
@@ -173,6 +184,8 @@ IMAGE_ESTIMATE
 UNKNOWN
 ```
 
+`CHINA_FOOD_COMPOSITION` 是为未来合法 provider 保留的 provenance 类型，不表示 v1 已内置或允许从未授权仓库下载数据。
+
 ## 8. Decision policy implication
 
 ### High-confidence data
@@ -207,7 +220,7 @@ getSourceMetadata(foodId)
 候选：
 
 ```text
-China Food Composition provider  // license/access pending
+China Food Composition provider  // future; licensed source + QA required
 USDA FoodData Central provider   // open API baseline
 User Meal Library provider       // local-first
 Product Label provider           // extraction-derived
@@ -215,9 +228,9 @@ Product Label provider           // extraction-derived
 
 ## 10. Open issue
 
-`GAP-NUTRITION-DATA`：中国本地食物成分数据库的**数字访问和再分发许可**仍需在实施前解决。
+v1 的 nutrition-data 路径已冻结：包装标签和用户确认个人餐食优先，USDA FoodData Central 作为开放通用 fallback；中式混合菜无法可靠映射时只形成低置信区间或请求更多数据。
 
-这不会阻止产品需求冻结，但会影响 v1 对中餐饮食监督的精度和默认 provider。
+中国本地食物成分数据库的数字访问、再分发许可与 QA 保留为未来增强项，不阻止 v1 实施，但构成必须公开披露的中餐覆盖限制。
 
 ## Sources
 
@@ -226,5 +239,8 @@ Product Label provider           // extraction-derived
 - NHC GB 28050-2025 Q&A: https://www.nhc.gov.cn/sps/c100087/202509/470fa4ff5de14dd38619223cce9da4e7.shtml
 - USDA FoodData Central API: https://fdc.nal.usda.gov/api-guide/
 - USDA downloads: https://fdc.nal.usda.gov/download-datasets/
+- Evaluated repository: https://github.com/Sanotsu/china-food-composition-data
+- Repository missing-data issue: https://github.com/Sanotsu/china-food-composition-data/issues/3
+- GitHub repository licensing guidance: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository
 - ChatGPT meal-photo validation: https://pubmed.ncbi.nlm.nih.gov/40004936/
 - 40-VLM evaluation: https://pubmed.ncbi.nlm.nih.gov/42350490/

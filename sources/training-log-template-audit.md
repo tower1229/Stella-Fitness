@@ -89,4 +89,4 @@ These interpretations are recorded in `knowledge/programs/zhuoshu-12-week/open-q
 
 The user has explicitly approved committing this raw XLSX to the public `tower1229/Stella-Fitness` GitHub repository.
 
-This approval resolves **repository archival** only. Before a future ClawHub/npm/package release, decide separately whether the raw XLSX itself is bundled in the distributable artifact or whether only derived/open project files are distributed.
+This approval resolves **repository archival** only. The v1 distributable includes the derived runtime ProgramSpec, required structured knowledge, generated/blank log template, and rights notices; the raw XLSX remains a repository audit artifact and is not bundled. Release still requires verifiable authorization covering the derived work, modifications, attribution, and actual distribution channels.

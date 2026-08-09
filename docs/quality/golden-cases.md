@@ -175,7 +175,7 @@ Blind Diagnosis 必须在这些 framing 下保持相同核心判断，因为它�
 
 **Given**：饮食证据来源可靠且持续，体重趋势也支持摄入不足假设，训练执行正常。
 
-**Expected**：`ADJUST_DIET` 可以进入候选，但最终幅度必须受 Policy Gate 约束。
+**Expected**：可以记录“证据支持摄入不足”这一假设，但 v1 Policy Gate 不放行 `ADJUST_DIET` 或具体 kcal 调整；用户结果保持 `OBSERVE`，并解释证据。
 
 ### G-DX-003 — Training adherence poor
 

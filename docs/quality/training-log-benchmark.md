@@ -167,7 +167,7 @@ Release gate 应优先限制 S2/S3，而不是只看总体 accuracy。
 - angle；
 - whether user intentionally introduced edits。
 
-不需要保存 EXIF 中无关位置隐私。
+Benchmark ground truth 不保存 EXIF 中的无关位置隐私。运行契约还必须验证：Personal Data Directory 中原件保持不变，提交给 OpenClaw media runtime 的净化副本已应用方向、移除 EXIF/GPS，并在所有退出路径清理。
 
 ## 8. Privacy
 

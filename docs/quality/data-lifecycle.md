@@ -4,6 +4,27 @@
 
 Stella Fitness 处理训练日志图片、饮食照片、体重、用户主观描述、结构化 observations、派生 metrics 与模型分析记录。数据生命周期必须在实施前定义，不能默认“所有东西永久保存”。
 
+## 0. Storage boundary
+
+### Rights and control model
+
+整个产品只使用三类内容权利模型：
+
+1. Built-in Program 内容：发布方负责取得授权；
+2. User Input Data：用户输入的原件与事实，由用户控制，Plugin 不取得二次使用权；
+3. User Derived Data：关于用户的 observations、分析、进度、决策和 provenance，由用户控制，Plugin 不取得二次使用权。
+
+“用户控制”不是对输入内容底层版权的保证。用户上传第三方材料时仍需自行遵守原始权利；Plugin 不把处理行为解释为授权。
+
+### Technical storage boundary
+
+所有持久文件再按技术用途分流：
+
+- `Runtime Directory`：Plugin 自行扩展，只保存可重建运行状态、锁、缓存、任务状态和可重建索引；
+- `Personal Data Directory`：用户显式配置，保存所有关于用户的个人数据，包括上传原件和结构化产出。
+
+用户未配置 Personal Data Directory 时，Plugin 不得静默把个人数据写入 Runtime Directory。Personal Data Directory 应适合由用户自己的 Personal Data Repository 管理、备份和版本化，但 v1 不强制绑定具体仓库工具。
+
 ## 1. Data classes
 
 ### A. Raw artifacts
@@ -11,6 +32,8 @@ Stella Fitness 处理训练日志图片、饮食照片、体重、用户主观�
 - 训练日志原图；
 - 饮食照片；
 - 未来其他原始附件。
+
+这些原件属于个人数据，进入 Personal Data Directory，而不是 Runtime Directory。
 
 价值：纠错、重新抽取、审计。
 
@@ -25,6 +48,8 @@ Stella Fitness 处理训练日志图片、饮食照片、体重、用户主观�
 - source/provenance。
 
 这是长期监督的主要事实层。
+
+每条 Observation Record 至少包含稳定 ID、发生时间、schema version 与 provenance。原始文件通过相对路径和 hash 关联；纠错显式指向被修正记录。
 
 ### C. Subjective claims
 
@@ -45,75 +70,63 @@ Stella Fitness 处理训练日志图片、饮食照片、体重、用户主观�
 
 应能根据修正后的 facts 重新计算。
 
+当前 `Training Progress`、趋势、完成率及便于阅读的 snapshot 都属于可重建派生视图，不得成为覆盖 Observation Records 的第二事实源。
+
 ### E. Model run records
 
 - role；
 - model/provider id；
-- input hash / evidence reference；
-- structured output；
+- EvidencePacket reference / hash；
+- structured diagnosis / audit / decision；
+- ProgramSpec / Policy version；
+- operation / payload category / runtime-reported execution metadata；
 - timestamps；
 - errors。
 
-不应为了可审计性而默认复制完整敏感 prompt 到无限期日志。
+失败调用只保存角色、时间和错误类别。不得为了可审计性而默认复制完整敏感 prompt、Provider 原始自由文本 response、隐藏推理、schema-invalid 原始输出或 Provider 日志副本到长期记录。显式诊断模式产生的原始交互进入受控临时位置，而不是默认个人历史。
+
+所有 B–E 类关于用户的持久数据同样进入 Personal Data Directory。Runtime Directory 中的派生缓存或索引不得成为第二个 canonical fact store。
 
 ## 2. Default retention principle
 
-推荐默认：
+默认：
 
-> **长期保留已验证的结构化事实；原始图片只保留到验证完成后的有限、可配置窗口。**
+> **Personal Data Directory 长期保留原始上传文件及结构化个人产出，由用户控制删除。**
 
-Phase 0 暂不冻结具体天数，但明确反对默认永久保存全部 raw artifacts。
+Plugin 不对用户目录执行静默的按时限自动删除。v1 不提供 Plugin 删除或 retention-policy 功能；用户通过文件系统或 Personal Data Repository 工具删除内容。Runtime Directory 中的临时副本在处理完成后清理。
 
 ### Why
 
-结构化事实足以支持大多数长期趋势；原图主要用于短期纠错、再抽取与争议审计。
+原图与结构化产出共同构成用户控制的个人记录，可用于纠错、重新抽取和审计。隐私风险通过用户选择保存位置，以及使用自己的文件系统或 Personal Data Repository 工具管理，而不是由 Plugin 静默删改用户仓库。
 
 ## 3. Raw artifact states
 
-未来至少支持：
+原始文件在结构化记录中至少具有以下引用状态：
 
 ```text
-RECEIVED
-EXTRACTED
-NEEDS_CONFIRMATION
-VERIFIED
-SCHEDULED_FOR_DELETION
-DELETED
-PINNED_BY_USER
+AVAILABLE
+source_missing
 ```
 
-如果一个字段尚未确认，关联原图不能在纠错完成前自动删除。
+Plugin 不自动调度用户目录中的删除。用户移除原件后，仍存在的 Observation 保留结构化事实并标记 `source_missing`；Plugin 不得从 Runtime Directory 恢复原件。
 
-## 4. Retention profiles
+## 4. Retention policy
 
-实施期可以实现配置：
-
-### Minimal
-
-验证后尽快删除原图，只保留结构化事实。
-
-### Standard
-
-验证后保留一个有限回溯期，再自动删除。
-
-### Archive
-
-用户显式选择长期保留原图。
-
-默认 profile 应在 Phase 0 Exit Review 中确定。
+默认是用户目录持久保留，不自动删除。需要定时清理、版本历史或安全擦除时，用户使用自己的文件系统或 Personal Data Repository 工具；Plugin 不声称管理备份、Git 历史、远端副本或 Provider 已接收的数据。
 
 ## 5. User controls
 
-用户至少需要：
+v1 通过开放文件格式和目录契约提供：
 
 - 查看已保存 structured data；
 - 查看某条 fact 的来源；
-- 删除单张原图；
-- 删除单条 observation；
-- 修改错误 observation；
-- 导出所有结构化数据；
-- 删除所有 Stella Fitness 数据；
-- 查看哪些数据曾发送到哪些外部 provider。
+- 用普通文件操作复制、移动或删除原件与结构化记录；
+- 通过核心 extraction 纠错流程修正 observation；
+- 对手工修改的结构化文件执行 schema 校验；
+- 在文件缺失后重建 Training Progress 和 runtime index；
+- 查看 Plugin 曾把哪些 payload category 提交给 OpenClaw runtime，以及 runtime 返回的可用执行元数据。
+
+这些是存储契约，不要求 Plugin 提供通用数据管理 UI、删除命令、导出命令、备份或回收站。
 
 ## 6. Correction semantics
 
@@ -133,56 +146,35 @@ recompute derived metrics
 
 审计只需保留“发生过修正”的必要 provenance，不需要把错误数据继续当活跃事实。
 
-## 7. Deletion semantics
+## 7. Filesystem deletion semantics
 
-“删除”不能只隐藏 UI。
+- 只删除 raw artifact：对应 Observation 可继续存在，但其 provenance 标记 `source_missing`；
+- 删除 Observation 文件：该记录不再是 active fact，依赖它的 Training Progress、Analysis Records 和 runtime index 在下次扫描时重建或失效；
+- 删除全部 Personal Data Directory：Plugin fail closed，不回退到 Runtime Directory，也不从缓存恢复；
+- schema-invalid 手工修改：报告具体文件和校验错误，从 active computation 排除，不静默修复或覆盖；
+- Provider、Git、备份或远端副本：不属于 Plugin 的删除能力，必须在文档中明确。
 
-未来产品必须明确：
+## 8. Portability instead of an export feature
 
-- local DB record 删除；
-- raw file 删除；
-- derived metric 重算/删除；
-- local cache 删除；
-- provider 已发送数据无法由本地系统追溯删除时，需要在隐私说明中明确其 provider policy。
+Personal Data Directory 本身就是 v1 的完整导出制品。复制该目录必须带走 profile、program cycles、observations、原件、corrections/provenance 与 Analysis Records，且不依赖特定模型/provider 或 Runtime Directory 才能解释。v1 不另做 export command。
 
-## 8. Export
+## 9. Processing provenance
 
-导出格式应机器可读、与具体模型/provider 无关。
+Plugin 需要能回答：
 
-最低要求：
-
-```text
-profile metadata
-program cycles
-training observations
-body weights
-diet observations
-subjective claims
-corrections/provenance
-decisions (optional but recommended)
-```
-
-原图应作为可选独立 archive，不与结构化 JSON/CSV 强绑定。
-
-## 9. Provider disclosure ledger
-
-由于 Stella Fitness 可能使用多个模型供应商，未来需要能回答：
-
-> “这张训练表/这份 EvidencePacket 发给过谁？”
+> “这张训练表/这份结构化数据是否被 Plugin 提交给 OpenClaw runtime 做过处理？”
 
 至少保存：
 
 ```text
-provider
-model
-role
+operation
 run timestamp
 payload category
-raw image sent? yes/no
-retention/privacy profile reference
+raw image submitted to OpenClaw runtime? yes/no
+runtime-reported provider/model (if available)
 ```
 
-不需要把外部模型看到的所有 token 永久复制一份，但必须能审计数据流。
+Plugin 不复制完整 prompt/token，也不推断 OpenClaw 没有返回的网络层信息。Provider 选择、endpoint、fallback 和实际外发审计属于 OpenClaw。
 
 ## 10. Benchmark data lifecycle
 
@@ -198,6 +190,8 @@ retention/privacy profile reference
 
 不得因为用户上传过训练日志，就自动获得把图片放入公开 benchmark 的许可。
 
+Benchmark 是 User Input Data/User Derived Data 的独立二次用途，不是新的所有权类别。Plugin 不提供遥测、自动贡献数据或 Benchmark 上传能力；任何研发副本都通过 Plugin 之外的独立人工授权流程取得。
+
 ## 11. Security-oriented minimization
 
 以下信息默认不需要进入训练监督数据库：
@@ -209,14 +203,12 @@ retention/privacy profile reference
 - 完整 OpenClaw 对话历史；
 - 其他 Agent 的私人记忆。
 
-## 12. Phase 0 open decisions
+Personal Data Directory 中按原字节保存的 raw artifact 是上述规则的存储例外：文件自身可能带有 EXIF/GPS，但 Plugin 不解析为个人事实，也不直接提交该原件。模型处理只使用已校正方向并移除 metadata 的 `Sanitized Media Copy`；该副本位于 Runtime Directory，处理后清理。
 
-仍需冻结：
+## 12. Remaining implementation/review artifacts
 
-1. Standard profile 的 raw image retention duration；
-2. diagnosis/audit structured output 的默认保留期；
-3. 是否允许完全关闭 raw artifact storage；
-4. provider disclosure ledger 的用户 UI/导出形式；
-5. benchmark consent template。
+- processing provenance 的落盘形式及 OpenClaw metadata 可用边界；
+- 独立 benchmark authorization template；
+- public privacy notice 最终措辞。
 
-这些进入 `known-gaps.md`，但数据生命周期的核心原则已经可以进入实施约束。
+这些是实施或 review artifact，不再是数据所有权的产品歧义。

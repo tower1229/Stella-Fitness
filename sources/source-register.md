@@ -97,6 +97,9 @@
 | USDA FoodData Central API | https://fdc.nal.usda.gov/api-guide/ | open API candidate, CC0 |
 | USDA downloadable datasets | https://fdc.nal.usda.gov/download-datasets/ | local cache/offline data option |
 | USDA data documentation | https://fdc.nal.usda.gov/data-documentation/ | provenance and data type semantics |
+| Sanotsu China food composition repository | https://github.com/Sanotsu/china-food-composition-data | evaluated and rejected for v1: no explicit reuse license, underlying-rights uncertainty, unvalidated OCR/VLM accuracy |
+| Repository missing-data issue | https://github.com/Sanotsu/china-food-composition-data/issues/3 | evidence of extraction omissions and correction risk |
+| GitHub repository licensing guidance | https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository | public visibility does not replace an explicit reuse license |
 
 ## Safety
 

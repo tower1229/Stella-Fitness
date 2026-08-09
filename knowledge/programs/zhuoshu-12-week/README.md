@@ -121,3 +121,7 @@
 该计划是 Stella Fitness 的第一份 program package，训练处方来源已基本收敛，但项目整体仍处于 Phase 0。
 
 项目架构不应与该计划强耦合。未来应允许新增其他训练计划，并通过统一 ProgramSpec 接口供监督引擎使用。
+
+## 权利边界
+
+本目录中的课程派生 ProgramSpec、Markdown 和结构化知识不因仓库代码采用 Apache-2.0 而自动获得该许可。它们作为 Built-in Program 进入发行包前，必须有覆盖具体制品、修改、署名及实际分发渠道的独立书面授权和 rights notice。

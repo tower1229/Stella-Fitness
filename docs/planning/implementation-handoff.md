@@ -30,8 +30,12 @@
 - [x] 第一阶段详细逐周处方优先于“两周加重一次”长期概括
 - [x] `program-spec.v0.2.yaml` 已形成 source-reconciled draft
 - [x] 教程/XLSX/Markdown/ProgramSpec v0.2 完成最终逐项 source cross-check
-- [ ] ClawHub/npm 等发行包是否捆绑教程 / XLSX 已决策，或确定不捆绑源内容
-- [ ] 默认 public program 的专业审核范围已决策并完成相应 review
+- [x] 卓叔计划确定作为 v1 Built-in Program
+- [x] Built-in Program 的具体发行制品边界已冻结：运行时派生制品随包，原始 DOCX/XLSX 不随包
+- [ ] 已取得并保存覆盖实际发行制品与渠道的可核验授权
+- [ ] 卓叔 `Default Program Candidate` 作为主 fixture 覆盖完整开发与端到端验收
+- [x] Default Program 的专业审核范围已决策
+- [ ] action-bearing 训练处方完成独立 Domain Review 并获得合格签署
 
 > 最终 source cross-check 已完成。未来若新版本原件带来新的课程内部歧义，必须集中向用户确认，不允许通用运动科学文献或 LLM 反向猜测课程意图。
 
@@ -56,7 +60,8 @@
 - [x] diagnosis/framing Golden Case catalog 已建立
 - [ ] workout-log 真实填写照片 pilot 样本集准备并人工标注
 - [ ] food-image 真实 benchmark 样本集准备并人工标注
-- [ ] provider privacy profile 选择策略冻结
+- [x] OpenClaw 管 Provider/外发、Plugin 管内部编排/选择性披露/角色模型绑定的职责边界冻结
+- [ ] OpenClaw runtime execution metadata 可观测性已核验
 
 ## E. Domain policy
 
@@ -67,8 +72,8 @@
 - [x] safety escalation 红旗类别与优先级建立
 - [x] v1 默认适用人群/排除范围冻结
 - [x] 中国食物成分表 / USDA / 包装标签 / 个人餐食库的数据优先级完成调研
-- [ ] 体重/训练/饮食具体数值干预阈值获得专业审定并版本化，或明确 v1 不自动执行该类精确调整
-- [ ] 中国食物成分表数字访问/许可方案确认，或冻结 fallback
+- [x] v1 不自动执行未经专业审核的新增数值调整；未来扩展另行版本化审核
+- [x] v1 nutrition fallback 已冻结；未授权的中国食物成分仓库不接入
 
 ## F. Quality
 
@@ -88,16 +93,21 @@
 ## G. Privacy & Release
 
 - [x] 数据最小化原则
+- [x] Runtime Directory 与用户配置的 Personal Data Directory 分离
+- [x] 原始上传文件和结构化个人产出均归入 Personal Data Directory
+- [x] 结构化 Analysis Records 持久化，原始模型交互默认不持久化
 - [x] provider privacy research baseline
-- [x] 用户数据导出/删除需求
-- [x] 数据生命周期分层与 Provider disclosure ledger 需求
+- [x] v1 不做 Plugin 数据维护功能；Personal Data Directory 通过文件系统管理并支持安全重建
+- [x] 数据生命周期分层与 processing provenance 需求
 - [x] 原图保留问题被明确为产品决策，而非默认永久保留
 - [ ] provider/API 具体数据保留与训练策略按最终候选重新核验并冻结
-- [ ] 软件许可证选择
-- [ ] ClawHub owner/scope 确认
-- [ ] 原始训练/饮食图片默认保留时长与删除策略冻结
-- [ ] source program / nutrition data 的公开分发权处理完成
-- [ ] 原课程训练日志 XLSX 的 public redistribution 权限确认，或确定不随 ClawHub 包分发原文件
+- [x] 软件许可证选择：Apache-2.0；课程内容与个人数据明确排除
+- [x] ClawHub canonical identity 已冻结为 `@tower1229/stella-fitness`；实时权限在首次发布前验证
+- [x] 原始训练/饮食图片默认持久保留；用户直接操作目录，Plugin 不提供删除/retention 功能
+- [x] 上传原件字节保真；OpenClaw media payload 使用去 EXIF/GPS 的临时净化副本
+- [x] 三类内容权利模型冻结：内置内容需授权，用户输入与用户派生产出均由用户控制
+- [ ] Built-in Program 派生制品的独立发行授权取得并保存（v1 nutrition 已采用无未授权数据 fallback）
+- [x] 原课程训练日志 XLSX 不随包分发，安装包使用生成式/空白模板
 
 ## Phase transition rule
 
@@ -123,7 +133,7 @@
 12. Golden Cases 是否已经在实现前被批准？
 13. 每一项 domain/safety/privacy 决策由谁批准并如何版本化？
 14. 哪些 numeric threshold 已获批准，哪些仍必须保持 Unknown？
-15. 训练日志模板能否公开再分发，还是只作为用户侧/private artifact？
+15. Built-in Program 的发行包包含哪些来源与派生制品，授权覆盖哪些制品和渠道？
 
 当前第 10 项在课程语义层已可以回答“是”，最终 source cross-check 也已完成；仍需完成发布与专业审核。
 

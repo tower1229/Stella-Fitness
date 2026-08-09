@@ -5,13 +5,17 @@
 
 Stella Fitness 处理体重、饮食、训练表现和潜在健康描述。这些数据虽然不一定构成医疗记录，但应按敏感个人身体数据设计。
 
+权利模型只有三类：Built-in Program 内容由发布方解决授权；User Input Data 与 User Derived Data 均由用户控制，Plugin 不取得再利用、公开、Benchmark 或训练权。Runtime Directory 只是可重建技术状态，不是第四类个人数据权利域。用户控制不等于 Plugin 保证用户对上传的第三方内容拥有公开再分发权。
+
 详细数据生命周期见 [data-lifecycle.md](./data-lifecycle.md)，红旗症状与升级路径见 [safety-escalation.md](./safety-escalation.md)。
 
 ## 1. 数据最小化
 
-### 本地优先长期保存
+### 用户控制的个人数据目录
 
-长期事实库应由用户控制的 Plugin storage 保存，而不是把完整历史永久交给模型 Provider。
+原始上传文件与长期个人事实必须保存到用户显式配置的 Personal Data Directory，而不是 Plugin 自行选择的 Runtime Directory，也不是模型 Provider。该目录生成可移植的结构化产出，并推荐由用户自己的 Personal Data Repository 管理。
+
+Plugin Runtime Directory 只保存可重建的运行状态、锁、缓存和任务状态。包含个人内容的临时副本必须最小化并具备清理语义。
 
 ### Role-specific payload
 
@@ -29,11 +33,11 @@ Stella Fitness 处理体重、饮食、训练表现和潜在健康描述。这�
 
 Phase 0 已冻结原则：
 
-> 长期优先保留 verified structured facts；raw image 应有有限、可配置的保留生命周期，而不是默认永久保存。
+> raw image 是用户 Personal Data Directory 中的 canonical 个人记录，默认与结构化产出一起长期保留。
 
-具体默认时长仍待 Product/Privacy Review。
+Plugin 不对用户目录执行静默的按时限自动删除。v1 不提供 Plugin 删除或 retention-policy 功能；用户通过文件系统或 Personal Data Repository 工具管理原件。Runtime Directory 中的临时副本在处理完成后清理。
 
-如果关联字段仍在 `NEEDS_CONFIRMATION`，原图不能在纠错完成前被自动删除。
+原件保持用户上传时的字节内容，包括其自带 metadata，但 Plugin 不把无关 EXIF/GPS/设备信息提取为结构化记录。提交给 OpenClaw media runtime 的必须是临时净化副本：先应用正确方向，再移除 EXIF、GPS、设备、软件和缩略图 metadata。任何模型角色都不得接收原始 metadata；副本在成功、失败、超时或取消后清理。
 
 ## 2. Provider privacy research snapshot
 
@@ -53,41 +57,41 @@ Google 当前文档明确：Paid Services 的 prompts/responses（含图片/文�
 
 Anthropic 当前商业产品隐私说明：默认不使用商业产品/API inputs/outputs 训练模型，除非用户显式 opt-in/反馈等情况；Anthropic 也有 API Zero Data Retention arrangement 的说明。
 
-**要求：** Auditor provider 也必须经过同等隐私审查，不能因为只做二次审计就降低标准。
+**说明：** Auditor 处理同样遵循最小输入原则；实际 Provider 的选择、隐私条款和外发由 OpenClaw 配置负责，不由 Plugin 再建一套策略。
 
-## 3. Provider-neutral privacy profile
+## 3. OpenClaw owns model and egress configuration
 
-未来建议提供配置级 profile：
+Stella Fitness 不创建第二套 Provider/privacy profile，也不管理网络外发策略。OpenClaw 负责：
+
+- Provider 凭据与 endpoint；
+- 模型目录与 canonical `provider/model`；
+- allowlist / `allowedModels`；
+- 默认模型、fallback 和实际网络请求。
+
+Plugin 负责：
+
+- 编排 Extraction、Blind Diagnosis、Belief Extraction、Audit、Policy Gate 和 Reporting；
+- 明确构造每个处理步骤提交给 OpenClaw runtime 的最小 payload；
+- 保证 diagnosis freeze、选择性披露和 Information Flow Test；
+- 在 operator 授权的 `allowedModels` 范围内为内部角色引用 OpenClaw canonical `provider/model`；
+- 在文档中说明哪些操作会把原图或结构化数据交给 OpenClaw；
+- 保存 OpenClaw runtime 实际返回的可用执行元数据。
+
+`Extractor`、`Auditor` 是内部处理职责，不是用户需要理解或配置的 route。角色模型绑定不等于管理 Provider 凭据、endpoint 或实际网络外发；这些仍属于 OpenClaw。
+
+## 4. Processing provenance
+
+Plugin 至少记录自己执行过的处理操作：
 
 ```text
-privacy_profile: standard | strict | local-preferred
-```
-
-但具体语义必须实施时定义。至少应能表达：
-
-- 允许哪些 Provider；
-- 是否允许图片离开本机；
-- 是否要求 ZDR；
-- 是否允许跨 Provider audit；
-- 原图保留多久。
-
-模型/Provider 选择必须服从 privacy profile，而不是反过来要求用户为了某个模型放弃隐私策略。
-
-## 4. Provider disclosure ledger
-
-未来系统需要能够让用户审计：
-
-```text
-provider
-model
-role
+operation
 run timestamp
 payload category
-raw image sent? yes/no
-privacy profile reference
+raw image submitted to OpenClaw runtime? yes/no
+runtime-reported provider/model (if available)
 ```
 
-这不要求无限期保存完整 prompt 文本，但要能回答“哪些身体数据发给过谁”。
+这能回答“Plugin 把什么交给了 OpenClaw runtime”。只有在 OpenClaw 返回相应元数据时，才能进一步记录实际 provider/model；Plugin 不声称具备网络层外发审计能力。
 
 ## 5. 安全边界
 
@@ -125,21 +129,22 @@ LLM 无权临场降低这些优先级，例如因为用户说“应该只是低�
 
 ## 6. 数据控制要求
 
-未来产品至少需要：
+v1 的数据控制通过 Personal Data Directory 的开放文件契约实现：
 
 - 查看已保存数据；
 - 更正错误 extraction；
-- 删除单条记录；
-- 删除 raw artifact；
-- 导出结构化历史；
-- 删除全部 Stella Fitness 数据；
+- 通过普通文件操作删除或复制 raw artifact、结构化记录或整个目录；
+- 文件缺失后安全重建派生状态，且 runtime 不恢复已删除内容；
+- 对 schema-invalid 手工修改报告错误并 fail closed；
 - 查看模型调用/数据披露日志。
 
-这些能力属于产品需求，而不是“以后有空再做”的后台功能。
+Plugin 不提供通用数据管理 UI、删除/导出命令、备份、回收站或 Git 历史清理；目录复制就是导出。Provider、备份和远端副本的删除由相应系统负责。
 
 ## 7. Benchmark privacy
 
 真实用户训练日志/饮食照片不能因为被上传给 Stella Fitness 就自动进入研发数据集。
+
+Plugin 不提供遥测、“贡献数据”或自动 Benchmark 上传功能。Benchmark 样本只通过 Plugin 之外的独立人工流程取得。
 
 进入 benchmark 前必须：
 
@@ -148,15 +153,13 @@ LLM 无权临场降低这些优先级，例如因为用户说“应该只是低�
 - 明确 public/private dataset 范围；
 - 与 runtime storage 分离。
 
-## 8. 尚未冻结的隐私决策
+## 8. 剩余实施/Review artifact
 
-- raw image Standard profile 的具体默认保留时长；
-- 最终 Provider / endpoint / ZDR 组合；
-- diagnosis/audit structured records 的默认保留周期；
-- benchmark consent template；
+- OpenClaw runtime 实际可提供哪些 processing metadata；
+- 独立 benchmark authorization template；
 - public privacy notice 的最终措辞。
 
-这些必须在 Phase 0 Exit Review 或 release review 中明确，不得由代码默认值静默决定。
+这些必须在 Phase 0 Exit Review 或 release review 中完成，但不再改变已冻结的数据权利分类。
 
 ## Sources
 

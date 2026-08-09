@@ -210,5 +210,5 @@ ProgramSpec → printable template generator
 
 - Phase 0 可以记录结构和字段；
 - Benchmark 可以围绕私有模板样本准备；
-- 原始 XLSX 不提交公开 Git 历史；
-- public release 的模板分发方式另行决策。
+- 原始 XLSX 已作为不可静默改写的审计原件进入公开 Git 历史，但不进入安装包；
+- public release 提供生成式/空白日志模板，不分发 raw XLSX。

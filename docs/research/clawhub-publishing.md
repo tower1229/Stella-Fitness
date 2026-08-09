@@ -18,9 +18,17 @@ clawhub package validate <source>
 clawhub package publish <source> --family code-plugin --dry-run
 ```
 
-正式发布还需选择 ClawHub owner。scoped package 的 scope 必须与选择的 owner 匹配，否则发布会被拒绝。
+scoped package 的 scope 必须与选择的 owner 匹配，否则发布会被拒绝。
 
-因此当前**不冻结** `@tower1229/stella-fitness` 为正式包名；它只能作为候选，直到实际 ClawHub owner 被确认。
+项目已冻结 canonical identity：
+
+```text
+owner: tower1229
+package: @tower1229/stella-fitness
+source: tower1229/Stella-Fitness
+```
+
+这是产品与发布治理决策，不替代实时权限验证。首次发布前仍需以 `clawhub whoami`、package validate 和 publish dry-run 证明当前账号能够以该 owner 发布；失败时不得静默换名。
 
 ## 3. 未来 package contract
 
@@ -39,17 +47,22 @@ clawhub package publish <source> --family code-plugin --dry-run
 
 Plugin 代码许可证与训练教程再分发许可是独立问题。
 
-若教程许可无法确认：
+软件层已选择 Apache-2.0，覆盖 Plugin 代码、通用 schema 与非课程派生的项目原创材料。根目录 `NOTICE` 明确排除课程原件、卓叔派生 Built-in Program 和用户 Personal Data Directory；Apache-2.0 的采用不构成这些内容的授权。
 
-- 公开 package 不包含可还原教程全文的知识包；
-- 用户本地导入 program；或
-- 使用项目有权分发的独立 program。
+v1 已决定采用保守发行边界：
 
-不得因为教程已经被结构化成 YAML/Markdown 就假定获得再发布权。
+- 卓叔计划将作为 v1 `Built-in Program` 直接随包提供；
+- package 包含运行时 ProgramSpec、必要结构化知识、生成式/空白日志模板及权利声明；
+- 原始 DOCX/XLSX 不进入安装包，只作公开源码仓库审计原件；
+- 发布前必须取得覆盖实际制品、版本、渠道、修改和署名要求的可核验授权；
+- 专业签署和 Rights Review 都是发布 gate。
+- package 必须携带标准 `LICENSE`、`NOTICE` 及 Built-in Program 的独立 rights notice。
+
+不得因为教程已经被结构化成 YAML/Markdown 就假定获得再发布权。自动化 package inspection 必须验证受限来源内容没有进入发行产物。
 
 ## 5. 发布策略
 
-建议首次发布后再考虑 trusted publishing/OIDC；Phase 0 不生成 CI 发布 workflow，也不保存 ClawHub token。
+首次发布采用手工/token-authenticated 流程；成功建立 package 后再考虑 trusted publishing/OIDC。Phase 0 不生成 CI 发布 workflow，也不保存 ClawHub token。
 
 ## Sources
 

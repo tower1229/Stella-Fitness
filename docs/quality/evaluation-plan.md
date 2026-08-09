@@ -111,6 +111,7 @@ Auditor 应能识别：
 确定性测试：
 
 - 禁止状态下永不放行；
+- v1 拒绝监督性 `ADJUST_DIET`、`ADJUST_TRAINING` 和 `RECOVERY`，同时不阻断 ProgramSpec 已确认的计划进阶/恢复；
 - low-confidence diet photo 不触发高置信饮食调整；
 - unresolved program 不产生伪 prescription；
 - safety flag 优先于 hypertrophy optimization；

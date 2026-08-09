@@ -5,7 +5,7 @@
 
 用户已明确确认：该 XLSX 是原课程配套资料，来自原作者或其他可靠同源版本；其中第 4 周周五的力量测试就是训练计划正式内容。
 
-原始 XLSX 暂不提交到公开仓库，原因只剩**公开再发布权限尚未确认**，不再是来源可靠性问题。
+用户已明确允许将原始 XLSX 收录到本公开 GitHub 仓库，原件现归档于 `sources/originals/zhuoshu-workout-log.xlsx`。卓叔计划将作为 v1 `Built-in Program`，但 raw XLSX 只作源码审计原件，不进入安装包；安装包提供生成式/空白日志模板。
 
 ## 1. Workbook 结构
 
@@ -167,13 +167,10 @@ Tier A 直接以这份 workbook 的真实打印/填写/拍照结果为主，覆�
 - 模板属于可靠同源课程资料；
 - 模板可用于训练计划来源补全。
 
-仍未确认：
-
-> **是否允许将原始 XLSX 二进制文件随 public GitHub / ClawHub artifact 再分发。**
-
-因此在 rights decision 前：
+已确认的发行边界：
 
 - 可依据模板结构设计 extraction；
 - 可私下打印并准备 benchmark；
-- 不把 raw XLSX 提交公开仓库；
-- public release 是否携带模板文件单独决策。
+- raw XLSX 继续作为公开源码仓库中的不可静默改写来源归档；
+- 不得在可核验授权完成前发布包含该来源计划的发行包；
+- raw XLSX 不进入正式发行包；安装包只携带运行时派生制品和生成式/空白日志模板。

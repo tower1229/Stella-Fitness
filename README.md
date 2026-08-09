@@ -163,6 +163,10 @@ Product nutrition label
 - [Review Governance](docs/planning/review-governance.md)
 - [Phase 0 Exit Review](docs/planning/phase0-exit-review.md)
 
+## 许可证与内容权利
+
+Stella Fitness Plugin 代码、通用 schema 及非课程派生的项目原创材料采用 [Apache License 2.0](LICENSE)。该许可不覆盖 `sources/originals/` 中的原始 DOCX/XLSX、卓叔课程派生的 Built-in Program/结构化知识，也不覆盖用户 Personal Data Directory 中的任何数据；这些内容适用独立权利与授权要求，详见 [NOTICE](NOTICE) 与 [ADR-018](docs/decisions/ADR-018-apache-2-code-separate-content-rights.md)。
+
 ## 首个训练计划资料
 
 当前首个 program source 由两份可靠同源课程资料组成：
@@ -183,7 +187,7 @@ Product nutrition label
 
 目前没有已知、仍需用户解释的训练计划语义问题。后续若交叉核对发现新歧义，会集中整理后向用户确认，不自行猜测。
 
-教程末尾注明部分内容可能由 AI 生成，且教程/XLSX 的公开再分发许可尚未确认。当前工作是**来源忠实的结构化和需求研究**，不是对教程进行专业背书。
+教程末尾注明部分内容可能由 AI 生成。用户已允许将教程/XLSX 原件收录到本公开 GitHub 仓库，并决定将卓叔计划作为 v1 `Built-in Program`。安装包包含运行时派生制品，不包含原始 DOCX/XLSX；覆盖派生、修改、署名和实际分发渠道的可核验授权仍是 release blocker。当前工作是**来源忠实的结构化和需求研究**，不是对教程进行专业背书。
 
 详见：
 

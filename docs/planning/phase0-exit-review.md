@@ -48,9 +48,12 @@ result: PENDING | APPROVED | CHANGES_REQUIRED
 
 - [x] 教程、XLSX、Markdown 与 ProgramSpec v0.2 完成最终逐项 source cross-check。
 - [ ] recovery session 语义完成最终核对，且不会因 workbook 使用普通训练块标题而丢失。
-- [ ] ClawHub/npm 等发行包是否捆绑教程 DOCX 已决策，**或**明确只在源码仓库归档。
-- [ ] ClawHub/npm 等发行包是否捆绑 XLSX 模板已决策，**或**明确只在源码仓库归档。
-- [ ] 是否需要专业审核该 source program 已决策并完成对应 review。
+- [x] 卓叔计划确定作为 v1 Built-in Program。
+- [x] Built-in Program 的具体发行制品边界已冻结：运行时派生制品随包，原始 DOCX/XLSX 不随包。
+- [x] Plugin 代码、通用 schema 与非课程派生原创材料采用 Apache-2.0，课程内容和个人数据适用独立权利边界。
+- [ ] 已取得并保存覆盖实际发行制品与渠道的可核验授权。
+- [x] Default Program 的独立 Domain Review 范围已决策。
+- [ ] Default Program 的 action-bearing 训练处方已完成独立 Domain Review 并获得合格签署。
 
 ## 4. Workout-log extraction semantics
 
@@ -83,16 +86,17 @@ result: PENDING | APPROVED | CHANGES_REQUIRED
 - [ ] diet benchmark 的真实 pilot 数据已经准备并标注。
 - [ ] diagnosis/framing Golden Cases 已冻结。
 - [ ] 候选模型比较指标包含质量、abstention、成本、延迟、隐私，而非只看通用榜单。
-- [ ] Provider privacy profile 已重新核对当前官方政策。
+- [x] OpenClaw 管 Provider/凭据/endpoint/授权与实际外发，Plugin 管内部编排、选择性披露和授权范围内的角色模型绑定。
+- [ ] OpenClaw runtime 向 Plugin 返回的 execution metadata 已按锁定版本核验。
 
 ## 7. Domain policy
 
 - [ ] Program supervision 与 Program critique/override 是两种显式能力，没有混在一起。
 - [ ] 外部运动科学证据不会静默改写 source ProgramSpec。
-- [ ] 所有 production numeric intervention threshold 均有来源、适用人群、reviewer 和 policy version。
-- [ ] 如果 numeric policy 尚未批准，v1 已明确采用何种保守 fallback。
+- [x] v1 不启用未经审核的 numeric intervention，active actions 限于 `NO_CHANGE` / `OBSERVE` / `COLLECT_MORE_DATA` / `ESCALATE`。
+- [x] ProgramSpec 已确认的计划进阶/恢复与监督模型新增干预已明确分离。
 - [ ] Nutrition evidence hierarchy 已批准。
-- [ ] 中国本地营养数据库方案已确认，或 USDA/label/local-meal fallback 已明确接受。
+- [x] 中国本地营养数据库不阻断 v1；USDA/label/local-meal fallback 已接受，未授权仓库不接入。
 - [ ] Diet photo 只产生与证据质量匹配的范围/confidence。
 
 ## 8. Safety
@@ -107,13 +111,17 @@ result: PENDING | APPROVED | CHANGES_REQUIRED
 
 ## 9. Privacy & data lifecycle
 
-- [ ] raw image 默认保留策略已冻结。
-- [ ] 用户可以删除原图和结构化记录。
-- [ ] 用户可以导出个人数据。
-- [ ] correction provenance 与删除语义已明确。
-- [ ] Provider disclosure ledger 需求已接受。
-- [ ] 不保存无关 GPS/EXIF/其他 Agent 私人上下文。
-- [ ] benchmark 图片与真实运行数据的授权路径分离。
+- [x] Runtime Directory 与用户配置的 Personal Data Directory 已明确分离。
+- [x] 原始上传文件和结构化个人产出均归入 Personal Data Directory。
+- [x] Observation Records 是 canonical，Training Progress 与 runtime index 可重建。
+- [x] 结构化 Analysis Records 进入 Personal Data Directory，原始模型交互默认不持久化。
+- [x] raw image 默认保留策略已冻结为 Personal Data Directory 中由用户控制的持久保留。
+- [x] 用户通过文件系统删除原图和结构化记录；Plugin 不提供数据维护 UI/命令。
+- [x] Personal Data Directory 本身是可移植导出制品，不另做 export command。
+- [x] correction provenance、文件缺失、无效手工编辑和派生重建语义已明确。
+- [x] Processing provenance 仅覆盖 Plugin 提交给 OpenClaw runtime 的内容及 runtime 实际返回的元数据；边界已接受。
+- [x] 原件可保留自带 metadata，但 Plugin 不结构化保存或外发无关 GPS/EXIF；媒体调用使用临时净化副本。
+- [x] Plugin 无遥测/自动贡献功能；Benchmark 与真实运行数据采用 Plugin 外独立授权路径。
 
 ## 10. Quality / Golden Cases
 
@@ -136,7 +144,8 @@ result: PENDING | APPROVED | CHANGES_REQUIRED
 - [ ] model override / permission contract 重新核对。
 - [ ] Cron 静默任务能力重新核对。
 - [ ] ClawHub publish/owner/scope 规则重新核对。
-- [ ] 软件 LICENSE 已选择或明确不进入公开发布阶段。
+- [x] ClawHub 目标 owner/package 已冻结为 `tower1229` / `@tower1229/stella-fitness`；实时权限留在发布 gate 核验。
+- [x] 软件 LICENSE 已选择为 Apache-2.0，课程内容与个人数据适用独立权利边界。
 
 ## 12. Blocking GAP review
 
@@ -173,7 +182,7 @@ Review meeting 必须能清楚回答：
 7. 哪些安全信息会强制退出普通增肌路径？
 8. 哪些数字是经过审核的 Policy，哪些仍然只是研究参考？
 9. 首个 12 周计划的所有训练日是否已完整？其 `A/N/12RM` 与引体辅助关系是否均明确？
-10. 用户原图和身体数据多久保存、如何删、发给过谁？
+10. 用户原图和身体数据多久保存、如何删、哪些处理曾提交给 OpenClaw runtime？
 11. 哪个模型坏了/换了以后，需要重跑什么 Eval？
 12. 如果没有任何模型，Program/Metric 层仍能确定哪些事实？
 13. 为什么 v1 直接复用现成 XLSX，而不是重新生成一份表？

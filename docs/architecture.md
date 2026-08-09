@@ -155,6 +155,8 @@ api.runtime.mediaUnderstanding.extractStructuredWithModel(...)
 - instructions；
 - `jsonSchema`。
 
+Plugin 不把 Personal Data Directory 中的原始图片直接作为 media payload。每次媒体调用前生成 `Sanitized Media Copy`：把 EXIF orientation 应用到像素后移除 EXIF、GPS、设备、软件、缩略图等无关 metadata，只把该临时副本提交给 OpenClaw runtime。副本位于 Runtime Directory，并在成功、失败、超时或取消后清理；原始文件保持字节不变。
+
 ### TrainingLogExtraction
 
 输出应包含：
@@ -320,6 +322,8 @@ RECOVERY
 ESCALATE
 ```
 
+该集合是长期 schema。v1 Policy Gate 只激活 `NO_CHANGE`、`OBSERVE`、`COLLECT_MORE_DATA` 和 `ESCALATE`；`ADJUST_DIET`、`ADJUST_TRAINING`、监督性 `RECOVERY` 留待未来经专业审核的版本化 Policy。ProgramSpec 已确认的计划进阶和计划恢复仍由确定性 core 执行。
+
 Gate 应拒绝：
 
 - Schema invalid；
@@ -344,24 +348,34 @@ Template
 
 ## 10. 数据持久化
 
-首版采用 **Plugin-owned SQLite**，具体实现优先使用 Node.js 内置 `node:sqlite`，而不是依赖需要 npm install script / native build 的第三方 SQLite 包。
+权利与控制先按三类内容划分：内置计划内容由发布方取得授权；用户输入数据由用户控制；关于用户的分析、Observation、Training Progress 等派生产出同样由用户控制。Plugin 不因处理这些个人数据而取得再利用、公开、Benchmark 或训练权。用户输入含第三方内容时，其对外再分发仍受原始权利约束。
 
-选择理由：
+持久化再分为两个技术边界。Runtime Directory 不是第四类权利数据，只是可重建技术状态：
 
-- OpenClaw 托管 Plugin 依赖安装使用 `--ignore-scripts`；
-- 项目要求的 Node `>=22.22.3` 已具备 `node:sqlite`；
-- 减少 ClawHub 跨平台安装时的 native binary / postinstall 风险；
-- 数据仍然保持为普通 SQLite 文件，方便备份和迁移。
+### Runtime Directory
 
-领域数据不使用 OpenClaw transcript/session store 作为主数据库，因为：
+Plugin 可自行创建和扩展运行目录，并跨重启持久化可重建的运行状态、游标、锁、缓存、任务状态和物化索引。该目录不是个人数据的 canonical store；删除它不得造成训练进度丢失，最多触发重建或重新调度。任何含个人内容的临时副本都必须最小化并具备清理语义。
 
-- 数据属于长期领域事实，不属于聊天 session；
-- 需要时间序列和聚合查询；
-- 需要版本化 migration；
-- 易于备份和用户迁移；
-- 避免耦合 OpenClaw 内部 transcript/store 实现。
+### Personal Data Directory
 
-建议逻辑表：
+首次接收个人数据前，用户必须显式配置保存位置。该目录保存：
+
+- 用户上传的训练日志、饮食照片等原件；
+- canonical training progress；
+- profile / health-related records；
+- verified observations 与 subjective claims；
+- derived metrics；
+- diagnosis / audit / decision 结构化产出；
+- corrections / provenance；
+- processing provenance。
+
+这些内容生成 provider-neutral、可移植的结构化产出，适合由用户自己的 Personal Data Repository 管理、备份和版本化。Plugin 不得因配置缺失而静默把个人数据写入 Runtime Directory 或 OpenClaw transcript/session store。
+
+v1 不提供 Plugin 层面的删除、导出、备份、retention policy 或回收站；Personal Data Directory 本身就是完整可移植的数据制品。Plugin 必须把用户的文件系统操作视为 canonical 变更：原件缺失标记 `source_missing`；Observation 文件缺失后从 active facts 移除并重建派生状态；schema-invalid 手工修改只报告并隔离，不静默覆盖；Runtime Directory 不得恢复用户已删除的数据。整个配置目录缺失或无效时 fail closed，等待用户重新配置。
+
+具体文件格式、目录 schema 和可选索引实现留到实施设计；如使用 SQLite，只能把它定位为个人目录内的明确数据制品，或 Runtime Directory 中可由 canonical structured artifacts 重建的索引，不能形成第二个隐蔽事实源。
+
+建议逻辑数据集：
 
 ```text
 users / profiles
@@ -378,7 +392,13 @@ audit_runs
 decisions
 ```
 
-每个 diagnosis/audit/decision 保存输入 evidence hash、模型标识、ProgramSpec version 与时间戳，用于复现。
+其中 Observation Records 是 canonical 事实。每条记录至少包含稳定 ID、发生时间、schema version、provenance，并通过相对路径和 hash 关联原始文件。纠错显式关联原记录，不允许只覆盖结果而丢失语义。
+
+`Training Progress`、trend、completion 和 profile/progress snapshot 都是从 Observation Records 与 Program state 计算出的派生视图。Runtime Directory 中的 SQLite/索引可以加速查询，但删除后必须能够从 Personal Data Directory 重建。
+
+每个 diagnosis/audit/decision 形成结构化 Analysis Record，保存 EvidencePacket 引用与 hash、结构化结果、ProgramSpec/Policy version、operation、payload category、OpenClaw runtime 实际返回的可用执行元数据与时间戳。失败调用只保存处理步骤、时间和错误类别。
+
+默认不持久化完整 prompt、Provider 原始自由文本 response、隐藏推理、schema-invalid 原始输出或 Provider 日志副本。显式诊断模式可以短期保存必要原始交互，但必须进入受控临时位置并具备清理语义。
 
 ## 11. 周期监督
 

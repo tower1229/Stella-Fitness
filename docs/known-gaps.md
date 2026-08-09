@@ -20,17 +20,13 @@
 
 ## GAP-002：教程发行包再分发策略
 
-**状态：PARTIALLY RESOLVED / RELEASE DECISION**
+**状态：PARTIALLY RESOLVED / AUTHORIZATION PENDING**
 
 用户已于 2026-08-08 明确确认允许将原始 DOCX 收录到公开 `tower1229/Stella-Fitness` GitHub 仓库，原件已归档至 `sources/originals/`。
 
-仍需在 ClawHub/npm 等正式发行前单独决定：
+已决定：卓叔计划将作为 v1 `Built-in Program` 直接随正式发行包提供，不采用本地导入作为默认产品方案。用户将协调发行授权。
 
-- 是否将原始 DOCX 随发行包捆绑；
-- 是否仅发行派生 ProgramSpec/文档；
-- 是否需要额外署名/许可声明。
-
-GitHub 仓库收录权限与发行包再分发策略分开处理。
+制品边界已冻结：发行包包含运行时 ProgramSpec、必要结构化知识、生成式/空白日志模板及权利声明；原始 DOCX/XLSX 不进入安装包。仍需在发布前取得并保存覆盖派生、修改、署名及实际分发渠道的可核验授权。
 
 ## GAP-003：教程本身存在来源不确定性
 
@@ -38,17 +34,19 @@ GitHub 仓库收录权限与发行包再分发策略分开处理。
 
 教程末尾注明“部分内容可能由 AI 生成”。`knowledge/` 表示来源忠实，不等于专业背书。
 
+已冻结处理边界：成为 v1 `Default Program` 前，所有 action-bearing 训练处方必须完成独立 Domain Review；教程饮食内容只保留为来源示例，不进入自动饮食 Supervision Policy。若无法获得合格签署，该 Program 降级为可导入来源样例。
+
 ## GAP-004：饮食目标没有连续计算公式
 
 **状态：PARTIALLY RESOLVED / SOURCE-FIDELITY LIMITATION**
 
 保留 65/70 kg 示例，不自行发明线性公式，也不默认推广到所有人群。
 
-## GAP-005：生产干预数值阈值尚未审定
+## GAP-005：生产干预数值阈值
 
-**状态：PARTIALLY RESOLVED / BLOCKING FOR PRODUCTION SUPERVISION**
+**状态：CLOSED FOR V1 / REDUCED SCOPE**
 
-已有领域原则研究基线，但 plateau 窗口、体重采样频率、diet coverage、具体加热量/训练量幅度等仍需专业审核和版本化 Policy。
+v1 不启用监督性 `ADJUST_DIET`、`ADJUST_TRAINING` 或 `RECOVERY`，也不新增 plateau 窗口、具体 kcal、负重、组数、减量比例等数值处方。Built-in Program 已确认的计划进阶与计划恢复继续确定性执行。未来扩展仍需专业审核、版本化 Policy 与 Golden Cases。
 
 ## GAP-006：健康安全与适用人群边界
 
@@ -64,9 +62,9 @@ photo-only 只形成估算区间与低/中置信证据，不能单独触发高�
 
 ## GAP-008：中国本地营养数据库的数字访问与许可
 
-**状态：OPEN / QUALITY-BLOCKING FOR STRONG CHINESE-FOOD SUPPORT**
+**状态：CLOSED FOR V1 / FUTURE QUALITY ENHANCEMENT**
 
-《中国食物成分表》是优先候选，但数字访问/API/再分发许可尚未确认。USDA FoodData Central 作为开放 fallback。
+v1 已接受包装标签、用户确认个人餐食、USDA FoodData Central 与低置信图片区间组成的 fallback；无法可靠映射的中式混合菜不得独立触发自动调整。`Sanotsu/china-food-composition-data` 因无明确复用许可、底层数据权利未解决及 OCR/视觉识别质量未验证而不作为 provider、package dependency 或默认下载源。强中国食物覆盖保留为未来增强项，见 ADR-019。
 
 ## GAP-009：最终模型组合未确定
 
@@ -74,23 +72,23 @@ photo-only 只形成估算区间与低/中置信证据，不能单独触发高�
 
 只冻结模型角色契约，不冻结厂商。默认模型必须通过 Stella Fitness 自有 Benchmark/Eval。
 
-## GAP-010：Provider 数据保留策略需部署时确认
+## GAP-010：OpenClaw execution metadata 与隐私说明需实施时确认
 
 **状态：OPEN / PRIVACY REVIEW**
 
-生产前按最终 Provider/endpoint 重新核验数据用途、保留、ZDR、region 和图片传输策略。
+OpenClaw 负责 Provider 注册、凭据、endpoint、授权与实际网络外发；Plugin 负责内部多阶段编排、选择性披露，并可在 `allowedModels` 范围内绑定角色模型。Plugin 不另建 privacy profile、route 或 consent 策略。实施时需要核验 OpenClaw runtime 实际向 Plugin 返回哪些 provider/model execution metadata，并据此写清 processing provenance 边界。具体 Provider 数据用途、保留、ZDR 和 region 由用户的 OpenClaw 配置与相应 Provider 条款决定。
 
-## GAP-011：ClawHub owner / package scope 未确认
+## GAP-011：ClawHub owner / package scope
 
-**状态：OPEN / RELEASE-BLOCKING**
+**状态：CLOSED / TARGET IDENTITY FROZEN**
 
-首次发布前再冻结实际 owner/scope。
+canonical owner 已确定为 `tower1229`，package 为 `@tower1229/stella-fitness`，source 为 `tower1229/Stella-Fitness`。首次真实发布前仍须通过当前 ClawHub CLI 核验登录身份、owner 权限、名称可用性、package validation 与 dry-run；失败时阻断发布，不静默改名。见 ADR-021。
 
-## GAP-012：软件许可证未选择
+## GAP-012：软件许可证
 
-**状态：OPEN / RELEASE-BLOCKING**
+**状态：CLOSED — APACHE-2.0 WITH SEPARATE CONTENT RIGHTS**
 
-代码许可证与课程原始资料的发行策略是独立问题。
+Plugin 代码、通用 schema 与非课程派生的项目原创材料采用 Apache-2.0。课程原件、卓叔派生 Built-in Program 和用户个人数据不在该许可范围内；Built-in Program 的独立授权仍由 GAP-002 阻断发布。见 ADR-018、根目录 `LICENSE` 与 `NOTICE`。
 
 ## GAP-013：Golden Cases 已起草但尚未 reviewer approval
 
@@ -104,11 +102,11 @@ photo-only 只形成估算区间与低/中置信证据，不能单独触发高�
 
 训练日志固定模板已确定，专项 Benchmark 规范已建立；仍缺真实手写照片、噪声场景和人工 ground truth。饮食 benchmark 同样尚缺真实 artifacts。
 
-## GAP-015：原始图片默认保留策略未冻结
+## GAP-015：原始图片默认保留策略
 
-**状态：OPEN / PRIVACY DECISION**
+**状态：CLOSED / USER-CONTROLLED PERSISTENCE**
 
-需要确定默认保留到何时、可配置期限和 opt-in 永久保存规则。
+原始图片进入用户配置的 Personal Data Directory，默认与结构化产出一起长期保留。v1 不提供 Plugin 删除、导出、备份或 retention-policy 功能；用户通过文件系统或 Personal Data Repository 工具管理。Plugin 必须尊重文件缺失、安全重建派生状态，并禁止 Runtime Directory 恢复已删除个人数据。见 ADR-020。
 
 ## GAP-016：外部专业审核机制尚未完成
 
@@ -116,9 +114,11 @@ photo-only 只形成估算区间与低/中置信证据，不能单独触发高�
 
 Product / Domain / Safety / Privacy / Platform / Rights reviewer 的职责和签署机制已经定义，但默认 Program、nutrition policy、safety policy 的实际专业审核者和首次签署仍未完成。
 
+Default Program 的 Domain Review 范围已冻结；剩余 blocker 是确定合格 reviewer 并完成实际签署，而不是重新讨论审核边界。
+
 ## GAP-017：训练日志 XLSX 发行包分发策略
 
-**状态：PARTIALLY RESOLVED / RELEASE DECISION**
+**状态：CLOSED / RAW XLSX EXCLUDED FROM PACKAGE**
 
 已确认：
 
@@ -128,7 +128,7 @@ Product / Domain / Safety / Privacy / Platform / Rights reviewer 的职责和签
 - 用户已明确允许将原始 XLSX 收录到本公开 GitHub 仓库；
 - 原件已归档到 `sources/originals/zhuoshu-workout-log.xlsx`。
 
-仍待 ClawHub/npm 等正式发行前决定：是否将 raw XLSX 本身随发行包捆绑，或仅在源码仓库中保留原始来源。
+raw XLSX 只作公开源码仓库审计原件，不进入安装包。发行包使用派生的运行时 ProgramSpec、必要结构化知识和生成式/空白日志模板；授权 blocker 统一由 GAP-002 跟踪。
 
 ## GAP-018：训练计划关系语义
 
@@ -146,6 +146,18 @@ Q1–Q6 已由用户基于原课程背景一次性确认：
 已同步到 source Markdown、确认记录和 `program-spec.v0.2.yaml`。
 
 目前**没有新的已知训练计划语义问题需要用户确认**。后续发现新冲突时继续采用“集中提问、不自行猜测”原则。
+
+## GAP-019：上传图片 EXIF/GPS 处理边界
+
+**状态：CLOSED / RAW PRESERVED, PAYLOAD SANITIZED**
+
+Personal Data Directory 中的用户上传原件保持字节不变。Plugin 不把无关 EXIF/GPS/设备 metadata 结构化保存；提交 OpenClaw media runtime 前生成已应用方向并移除 metadata 的临时净化副本，且在所有退出路径清理。见 ADR-022。
+
+## GAP-020：数据权利分类与 Benchmark 二次使用
+
+**状态：CLOSED / THREE CONTENT CLASSES**
+
+内置计划内容由发布方取得授权；User Input Data 与 User Derived Data 均由用户控制，Plugin 不取得再利用、公开、Benchmark 或训练权。Runtime Directory 只是可重建技术状态。Plugin 不提供遥测或自动贡献功能，真实样本进入研发 Benchmark 必须走 Plugin 外独立授权流程。见 ADR-023。
 
 ## 已关闭的 Phase 0 设计问题
 

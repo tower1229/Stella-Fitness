@@ -27,7 +27,9 @@ docs/                产品需求、架构、研究、质量与治理
 - `sources/training-log-template-audit.md`
 - `docs/known-gaps.md`
 
-> 本公开 GitHub 仓库收录已获用户明确确认；是否将原始 Office 文件进一步捆绑进 ClawHub、npm 或其他发行包，仍作为独立发布决策处理。
+> 本公开 GitHub 仓库收录已获用户明确确认；卓叔计划将作为 v1 `Built-in Program`。正式发行包包含运行时派生制品，不包含原始 Office 文件，并须取得覆盖派生、修改、署名及实际分发渠道的可核验授权。
+
+本目录中的课程原件及课程派生内容不因仓库根目录采用 Apache-2.0 而获得该许可。公开仓库收录确认不等于派生、修改或安装包再分发授权；适用范围见根目录 `NOTICE` 与 ADR-018。
 
 ## 2. Research Sources
 

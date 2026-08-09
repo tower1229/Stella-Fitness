@@ -28,7 +28,7 @@ XLSX 实际包含：
 - ProgramSpec v0.2 保留 12 weeks、44 sessions、44 resolved sessions、4 个 Week 4 tests，所有 9 个 session template 引用均有定义；
 - 当前训练处方来源层没有未知训练日，不应再写成 `PARTIALLY RESOLVED` 或 Week 4 Friday missing。
 
-这不等于 production-ready。Schema validator、fixtures、Program Engine 行为测试、领域审核以及发行包是否携带原始 Office 文件仍是独立 gate。
+这不等于 production-ready。Schema validator、fixtures、Program Engine 行为测试、领域审核以及 Built-in Program 的可核验发行授权仍是独立 gate；原始 Office 文件已明确不进入安装包。
 
 ## 已解决的文档状态冲突
 

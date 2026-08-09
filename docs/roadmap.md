@@ -43,9 +43,12 @@
 - [x] `A = 初始12RM`、Week4 12RM → `N`、引体辅助、测试协议、动作别名、第一阶段加重优先级全部收敛
 - [x] `program-spec.v0.2.yaml` 来源收敛草案生成
 - [x] 所有训练日与同源资料完成最终逐项 source review
-- [ ] 明确教程 DOCX 是否随 ClawHub/npm 等发行包分发
-- [ ] 明确 XLSX 模板是否随 ClawHub/npm 等发行包分发，或只在源码仓库归档
-- [ ] 决定 source program 的独立专业审核范围并完成相应 review
+- [x] 卓叔计划确定作为 v1 Built-in Program
+- [x] 冻结 Built-in Program 的具体发行制品边界：运行时派生制品随包，原始 DOCX/XLSX 不随包
+- [ ] 取得并保存覆盖实际发行制品与渠道的可核验授权
+- [ ] 卓叔 `Default Program Candidate` 持续作为主开发与端到端测试 fixture
+- [x] 冻结 Default Program 的独立专业审核范围
+- [ ] 完成 action-bearing 训练处方的独立 Domain Review
 
 #### C. Platform research
 
@@ -70,8 +73,9 @@
 - [x] Diet Benchmark 规范
 - [ ] 采集并人工标注真实填写后的训练日志照片 pilot benchmark
 - [ ] 采集并人工标注真实饮食 pilot benchmark
-- [ ] 中国本地食物成分数字访问/授权方案确认，或正式接受 fallback
-- [ ] 最终 Provider privacy profile 冻结
+- [x] v1 正式接受 label / personal meal / USDA fallback；未授权中国食物成分仓库不接入
+- [x] 冻结 OpenClaw 管 Provider/外发、Plugin 管内部编排/选择性披露/角色模型绑定的职责边界
+- [ ] 核验 OpenClaw runtime 可返回的 execution metadata
 
 #### E. Domain & safety
 
@@ -81,7 +85,7 @@
 - [x] 运动中危险症状升级类别
 - [x] severe injury / possible rhabdomyolysis safety baseline
 - [x] 默认适用人群与特殊人群排除边界
-- [ ] 对 production numeric intervention policy 进行专业审定
+- [x] v1 明确移除未经审核的自动数值干预；未来 Policy 扩展另行专业审定
 - [ ] public default Program / nutrition / safety 完成首轮专业 review
 
 #### F. Quality & governance
@@ -104,13 +108,14 @@
 
 - [x] 数据最小化与 role-specific disclosure
 - [x] 数据 lifecycle 分类与用户控制要求
-- [x] Provider disclosure ledger 需求
+- [x] Processing provenance 需求按 OpenClaw 可观测边界收敛
 - [x] benchmark 数据与运行数据授权分离
-- [ ] 冻结 raw artifact 默认保留策略
+- [x] 冻结 raw artifact 策略：用户目录持久保留、文件系统管理，Plugin 不做数据维护功能
+- [x] 冻结媒体 metadata 边界：原件字节保真，OpenClaw payload 去除 EXIF/GPS
 - [ ] 教程内容权利处理
-- [ ] XLSX 模板公开再分发权处理
-- [ ] 中国食物成分数据权利处理
-- [ ] 软件许可证
+- [x] raw XLSX 公开源码仓库收录已确认，且明确不进入安装包
+- [x] v1 不使用未授权中国食物成分数据；合法本地 provider 移为未来增强
+- [x] 软件许可证：代码与通用 schema 采用 Apache-2.0，课程内容和个人数据独立处理
 
 ## 当前真正的下一批 Phase 0 工作
 
@@ -119,10 +124,9 @@
 1. **最终 source cross-check（已完成）**：教程、XLSX、Markdown、ProgramSpec v0.2 已逐项核对并记录 reconciliation；
 2. **真实 benchmark pilot 准备**：用现成 XLSX 打印并产生真实手写照片与 ground truth；
 3. **Golden Cases review**：让 Product / Domain / Safety reviewer 逐案确认；
-4. **production numeric policy review**：如果无法得到可靠审核，明确 v1 缩减自动调整范围；
-5. **source / rights resolution**：教程与 XLSX 模板分发权；
-6. **privacy decisions**：raw image retention 与最终 Provider profile；
-7. **Phase 0 Exit Review**。
+4. **source / rights resolution**：教程与 XLSX 模板分发权；
+5. **privacy decisions**：OpenClaw execution metadata 核验与剩余 privacy notice/consent 细节；
+6. **Phase 0 Exit Review**。
 
 ## Phase 0 Exit Review
 
