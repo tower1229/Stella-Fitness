@@ -91,6 +91,16 @@ describe("ProgramSpec validator", () => {
       "test max_reps_first_set does not match protocol main-12rm type 12RM",
     ],
     [
+      "coordinated rewrite of the main test protocol",
+      (program: Fixture) => {
+        program.testing_protocols["main-12rm"]!.type = "max_reps_first_set";
+        for (const test of program.weeks[3]!.sessions[2]!.tests!.slice(0, 3)) {
+          test.test = "max_reps_first_set";
+        }
+      },
+      "zhuoshu v0.2 main-12rm protocol type must be 12RM",
+    ],
+    [
       "main test bound to the wrong symbol",
       (program: Fixture) => {
         program.weeks[3]!.sessions[2]!.tests![1]!.result_binding = "A";
@@ -109,7 +119,16 @@ describe("ProgramSpec validator", () => {
       (program: Fixture) => {
         program.weeks[3]!.sessions[2]!.tests![3]!.result_binding = "N";
       },
-      "pull-up protocol pullup-first-set-max must bind its assistance relationship",
+      "zhuoshu v0.2 pull-up result must bind phase2_pullup_assistance_baseline",
+    ],
+    [
+      "coordinated rewrite of the pull-up assistance baseline",
+      (program: Fixture) => {
+        program.templates["phase2-torso"]!.pullup_assistance!.source_baseline =
+          "N";
+        program.weeks[3]!.sessions[2]!.tests![3]!.result_binding = "N";
+      },
+      "zhuoshu v0.2 pull-up result must bind phase2_pullup_assistance_baseline",
     ],
     [
       "unresolved test binding",
@@ -132,21 +151,21 @@ describe("ProgramSpec validator", () => {
       (program: Fixture) => {
         program.phase_transitions.course_start!.bind_results_to = "N";
       },
-      "phase_transitions.course_start.bind_results_to must be A",
+      "zhuoshu v0.2 course_start must run main-12rm and bind A",
     ],
     [
       "missing phase transition",
       (program: Fixture) => {
         delete program.phase_transitions.phase1_to_phase2;
       },
-      "phase_transitions.phase1_to_phase2 is required",
+      "zhuoshu v0.2 phase1_to_phase2 transition does not match settled semantics",
     ],
     [
       "transition targeting an ordinary session",
       (program: Fixture) => {
         program.phase_transitions.phase1_to_phase2!.day = "monday";
       },
-      "phase_transitions.phase1_to_phase2 must reference a strength-test session",
+      "zhuoshu v0.2 phase1_to_phase2 transition does not match settled semantics",
     ],
     [
       "transition protocol not represented by its test session",
@@ -154,7 +173,7 @@ describe("ProgramSpec validator", () => {
         program.phase_transitions.phase1_to_phase2!.main_protocol_ref =
           "pullup-first-set-max";
       },
-      "main protocol pullup-first-set-max must bind test results to N",
+      "zhuoshu v0.2 phase1_to_phase2 transition does not match settled semantics",
     ],
     [
       "changed phase transition binding",
@@ -164,7 +183,7 @@ describe("ProgramSpec validator", () => {
           test.result_binding = "A";
         }
       },
-      "phase_transitions.phase1_to_phase2.bind_main_results_to must be N",
+      "zhuoshu v0.2 phase1_to_phase2 transition does not match settled semantics",
     ],
     [
       "non-exercise load symbol",
@@ -205,6 +224,20 @@ describe("ProgramSpec validator", () => {
         program.templates["phase2-torso-recovery"]!.based_on = "phase2-limbs";
       },
       "torso-recovery must inherit the phase-2 torso template phase2-torso",
+    ],
+    [
+      "coordinated rewrite of torso sessions and recovery",
+      (program: Fixture) => {
+        for (const week of program.weeks.slice(4, 8)) {
+          for (const session of week.sessions) {
+            if (session.type === "torso") {
+              session.template = "phase2-limbs";
+            }
+          }
+        }
+        program.templates["phase2-torso-recovery"]!.based_on = "phase2-limbs";
+      },
+      "zhuoshu v0.2 phase-2 torso sessions must use phase2-torso",
     ],
     [
       "invalid weekday",
@@ -418,6 +451,7 @@ type Fixture = {
   weeks: Array<{
     sessions: Array<{
       day: string;
+      type: string;
       status: string;
       template?: string;
       tests?: Array<{
@@ -435,6 +469,7 @@ type Fixture = {
       based_on?: string;
       exercises?: Array<Record<string, unknown>>;
       overrides?: { overhead_press?: { sets: unknown } };
+      pullup_assistance?: { source_baseline: string };
     }
   >;
   phase_transitions: Record<
@@ -446,6 +481,10 @@ type Fixture = {
       main_protocol_ref?: string;
       bind_main_results_to?: string;
     }
+  >;
+  testing_protocols: Record<
+    string,
+    { type: string; applies_to?: string[]; exercise?: string }
   >;
 };
 

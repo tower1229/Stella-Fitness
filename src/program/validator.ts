@@ -4,6 +4,7 @@ import type {
   ProgramSpec,
   ProgramWeek,
 } from "../domain/program.js";
+import { validateZhuoshuV02Fidelity } from "./fidelity/zhuoshu-v0.2.js";
 
 const SUPPORTED_WEEKDAYS = new Set([
   "monday",
@@ -163,6 +164,7 @@ function validateRelationships(program: ProgramSpec): void {
   validateTransitions(program, issues);
   validateCycleCompletion(program, weekNumbers, issues);
   validateAliases(program, issues);
+  issues.push(...validateZhuoshuV02Fidelity(program));
 
   if (issues.length > 0) {
     throw new InvalidProgramSpecError(issues);
@@ -517,15 +519,6 @@ function validateTests(
 }
 
 function validateTransitions(program: ProgramSpec, issues: string[]): void {
-  for (const required of [
-    "course_start",
-    "phase1_to_phase2",
-    "cycle_end",
-  ] as const) {
-    if (program.phaseTransitions[required] === undefined) {
-      issues.push(`phase_transitions.${required} is required`);
-    }
-  }
   for (const [id, transition] of Object.entries(program.phaseTransitions)) {
     const path = `phase_transitions.${id}`;
     for (const field of [
@@ -564,242 +557,9 @@ function validateTransitions(program: ProgramSpec, issues: string[]): void {
         ?.sessions.find(({ day }) => day === transition.day);
       if (session === undefined) {
         issues.push(`${path} references a missing session`);
-      } else if (
-        id === "phase1_to_phase2" &&
-        session.type !== "strength-test"
-      ) {
-        issues.push(`${path} must reference a strength-test session`);
       }
     }
   }
-  validateTransitionSemantics(program, issues);
-}
-
-function validateTransitionSemantics(
-  program: ProgramSpec,
-  issues: string[],
-): void {
-  const courseStart = program.phaseTransitions.course_start;
-  if (courseStart !== undefined) {
-    requireTransitionText(courseStart, "action", "course_start", issues);
-    requireTransitionText(courseStart, "protocol_ref", "course_start", issues);
-    requireTransitionText(
-      courseStart,
-      "bind_results_to",
-      "course_start",
-      issues,
-    );
-    if (courseStart.action !== "test_main_12rm") {
-      issues.push(
-        "phase_transitions.course_start.action must be test_main_12rm",
-      );
-    }
-    if (courseStart.bind_results_to !== "A") {
-      issues.push("phase_transitions.course_start.bind_results_to must be A");
-    }
-  }
-  const phaseChange = program.phaseTransitions.phase1_to_phase2;
-  if (phaseChange !== undefined) {
-    requireTransitionText(
-      phaseChange,
-      "main_protocol_ref",
-      "phase1_to_phase2",
-      issues,
-    );
-    if (phaseChange.week !== 4 || phaseChange.day !== "friday") {
-      issues.push(
-        "phase_transitions.phase1_to_phase2 must occur on week 4 friday",
-      );
-    }
-    if (phaseChange.bind_main_results_to !== "N") {
-      issues.push(
-        "phase_transitions.phase1_to_phase2.bind_main_results_to must be N",
-      );
-    }
-    requireTransitionText(
-      phaseChange,
-      "pullup_protocol_ref",
-      "phase1_to_phase2",
-      issues,
-    );
-    requireTransitionText(
-      phaseChange,
-      "bind_main_results_to",
-      "phase1_to_phase2",
-      issues,
-    );
-    if (
-      !Array.isArray(phaseChange.actions) ||
-      phaseChange.actions.length === 0
-    ) {
-      issues.push("phase_transitions.phase1_to_phase2.actions is required");
-    } else if (
-      phaseChange.actions.length !== 2 ||
-      !phaseChange.actions.includes("test_main_12rm") ||
-      !phaseChange.actions.includes("test_pullup_first_set_max")
-    ) {
-      issues.push(
-        "phase_transitions.phase1_to_phase2.actions must contain the settled main and pull-up tests",
-      );
-    }
-    const session =
-      typeof phaseChange.week === "number" &&
-      typeof phaseChange.day === "string"
-        ? program.weeks
-            .find(({ week }) => week === phaseChange.week)
-            ?.sessions.find(({ day }) => day === phaseChange.day)
-        : undefined;
-    const tests = Array.isArray(session?.tests)
-      ? session.tests
-          .map((test) => safeRecord(test, "", []))
-          .filter((test): test is ProgramRecord => test !== undefined)
-      : [];
-    const mainProtocol = optionalText(phaseChange.main_protocol_ref);
-    const mainBinding = optionalText(phaseChange.bind_main_results_to);
-    if (
-      mainProtocol !== undefined &&
-      mainBinding !== undefined &&
-      !tests.some(
-        (test) =>
-          test.protocol_ref === mainProtocol &&
-          test.result_binding === mainBinding,
-      )
-    ) {
-      issues.push(
-        `phase_transitions.phase1_to_phase2 main protocol ${mainProtocol} must bind test results to ${mainBinding}`,
-      );
-    }
-    const mainDefinition =
-      mainProtocol === undefined
-        ? undefined
-        : program.testingProtocols[mainProtocol];
-    const mainExercises = Array.isArray(mainDefinition?.applies_to)
-      ? mainDefinition.applies_to.filter(
-          (exercise): exercise is string => typeof exercise === "string",
-        )
-      : [];
-    const mainTests = tests.filter(
-      (test) => test.protocol_ref === mainProtocol,
-    );
-    if (mainTests.length !== mainExercises.length) {
-      issues.push(
-        `phase_transitions.phase1_to_phase2 main protocol ${String(mainProtocol)} must have one test per exercise`,
-      );
-    }
-    for (const exercise of mainExercises) {
-      if (
-        !tests.some(
-          (test) =>
-            test.exercise === exercise &&
-            test.protocol_ref === mainProtocol &&
-            test.result_binding === mainBinding,
-        )
-      ) {
-        issues.push(
-          `phase_transitions.phase1_to_phase2 ${exercise} must bind ${mainProtocol} results to ${String(mainBinding)}`,
-        );
-      }
-    }
-    const pullupProtocol = optionalText(phaseChange.pullup_protocol_ref);
-    if (
-      pullupProtocol !== undefined &&
-      !tests.some((test) => test.protocol_ref === pullupProtocol)
-    ) {
-      issues.push(
-        `phase_transitions.phase1_to_phase2 pull-up protocol ${pullupProtocol} is missing from its test session`,
-      );
-    }
-    const assistanceBindings = new Set(
-      Object.values(program.templates)
-        .map((template) =>
-          optionalText(
-            safeRecord(template.pullup_assistance, "", [])?.source_baseline,
-          ),
-        )
-        .filter((binding): binding is string => binding !== undefined),
-    );
-    const pullupTests = tests.filter(
-      (test) => test.protocol_ref === pullupProtocol,
-    );
-    if (
-      pullupProtocol !== undefined &&
-      (pullupTests.length !== 1 ||
-        !assistanceBindings.has(
-          optionalText(pullupTests[0]?.result_binding) ?? "",
-        ))
-    ) {
-      issues.push(
-        `phase_transitions.phase1_to_phase2 pull-up protocol ${pullupProtocol} must bind its assistance relationship`,
-      );
-    }
-    if (
-      courseStart !== undefined &&
-      courseStart.protocol_ref !== mainProtocol
-    ) {
-      issues.push(
-        "phase_transitions.course_start.protocol_ref must match the phase main protocol",
-      );
-    }
-  }
-  const cycleEnd = program.phaseTransitions.cycle_end;
-  if (cycleEnd !== undefined) {
-    requireTransitionText(cycleEnd, "action", "cycle_end", issues);
-    requireTransitionText(cycleEnd, "protocol_ref", "cycle_end", issues);
-    requireTransitionText(
-      cycleEnd,
-      "bind_results_to_next_cycle",
-      "cycle_end",
-      issues,
-    );
-    if (cycleEnd.action !== "test_main_12rm") {
-      issues.push("phase_transitions.cycle_end.action must be test_main_12rm");
-    }
-    if (cycleEnd.bind_results_to_next_cycle !== "A") {
-      issues.push(
-        "phase_transitions.cycle_end.bind_results_to_next_cycle must be A",
-      );
-    }
-    if (
-      cycleEnd.restart_from_week !== program.cycleCompletion.restart_from_week
-    ) {
-      issues.push(
-        "phase_transitions.cycle_end.restart_from_week must match cycle_completion",
-      );
-    }
-    if (cycleEnd.protocol_ref !== program.cycleCompletion.protocol_ref) {
-      issues.push(
-        "phase_transitions.cycle_end.protocol_ref must match cycle_completion",
-      );
-    }
-    if (
-      phaseChange !== undefined &&
-      cycleEnd.protocol_ref !== phaseChange.main_protocol_ref
-    ) {
-      issues.push(
-        "phase_transitions.cycle_end.protocol_ref must match the phase main protocol",
-      );
-    }
-    if (
-      cycleEnd.bind_results_to_next_cycle !== program.cycleCompletion.bind_to
-    ) {
-      issues.push(
-        "phase_transitions.cycle_end binding must match cycle_completion.bind_to",
-      );
-    }
-  }
-}
-
-function requireTransitionText(
-  transition: ProgramRecord,
-  field: string,
-  transitionId: string,
-  issues: string[],
-): void {
-  safeText(
-    transition[field],
-    `phase_transitions.${transitionId}.${field}`,
-    issues,
-  );
 }
 
 function validateCycleCompletion(
