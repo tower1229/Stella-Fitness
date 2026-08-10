@@ -19,6 +19,13 @@ export async function persistBodyWeightObservation(options: {
   source: ObservationSource;
   recordedAt: string;
 }): Promise<BodyWeightObservation> {
+  const directory = join(options.personalDataDirectory, OBSERVATION_DIRECTORY);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const existing = await observationWithSameSource(directory, options.source);
+  if (existing !== undefined) {
+    assertSameRecordedFact(existing, options);
+    return existing;
+  }
   const observation: BodyWeightObservation = {
     schemaVersion: "stella-fitness/observation/body-weight/v0.1",
     id: randomUUID(),
@@ -31,8 +38,6 @@ export async function persistBodyWeightObservation(options: {
       recordedAt: options.recordedAt,
     },
   };
-  const directory = join(options.personalDataDirectory, OBSERVATION_DIRECTORY);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
   await writeFile(
     join(directory, `${observation.id}.json`),
     `${JSON.stringify(observation, null, 2)}\n`,
@@ -51,6 +56,11 @@ export async function persistBodyWeightCorrection(options: {
   recordedAt: string;
 }): Promise<BodyWeightObservation> {
   const directory = join(options.personalDataDirectory, OBSERVATION_DIRECTORY);
+  const existing = await observationWithSameSource(directory, options.source);
+  if (existing !== undefined) {
+    assertSameCorrection(existing, options);
+    return existing;
+  }
   const view = await rebuildBodyWeightView(options.personalDataDirectory);
   if (
     !view.points.some(
@@ -184,6 +194,9 @@ function parseBodyWeightObservation(source: string): BodyWeightObservation {
     (value.source.messageId !== undefined &&
       (typeof value.source.messageId !== "string" ||
         value.source.messageId.trim().length === 0)) ||
+    (value.source.runId !== undefined &&
+      (typeof value.source.runId !== "string" ||
+        value.source.runId.trim().length === 0)) ||
     !isRecord(value.provenance) ||
     typeof value.provenance.recordedAt !== "string" ||
     !isCanonicalTimestamp(value.provenance.recordedAt) ||
@@ -197,6 +210,93 @@ function parseBodyWeightObservation(source: string): BodyWeightObservation {
     throw new Error("Body-weight Observation is schema-invalid");
   }
   return value as BodyWeightObservation;
+}
+
+async function observationWithSameSource(
+  directory: string,
+  source: ObservationSource,
+): Promise<BodyWeightObservation | undefined> {
+  const identity = sourceIdentity(source);
+  if (identity === undefined) {
+    return undefined;
+  }
+  const files = await readdir(directory).catch((error: unknown) => {
+    if (isMissing(error)) {
+      return [];
+    }
+    throw error;
+  });
+  const matches: BodyWeightObservation[] = [];
+  for (const file of files.filter((name) => name.endsWith(".json"))) {
+    try {
+      const observation = parseBodyWeightObservation(
+        await readFile(join(directory, file), "utf8"),
+      );
+      if (
+        file === `${observation.id}.json` &&
+        sourceIdentity(observation.source) === identity
+      ) {
+        matches.push(observation);
+      }
+    } catch {
+      continue;
+    }
+  }
+  if (matches.length > 1) {
+    throw new Error("Body-weight source identity identifies multiple records");
+  }
+  return matches[0];
+}
+
+function sourceIdentity(source: ObservationSource): string | undefined {
+  if (source.messageId !== undefined) {
+    return `message:${source.channel ?? ""}:${source.messageId}`;
+  }
+  return source.runId === undefined ? undefined : `run:${source.runId}`;
+}
+
+function assertSameRecordedFact(
+  existing: BodyWeightObservation,
+  requested: {
+    amount: number;
+    unit: BodyWeightUnit;
+    occurredAt: string;
+    source: ObservationSource;
+  },
+): void {
+  if (
+    existing.provenance.kind !== "body-weight-recording" ||
+    existing.value.amount !== requested.amount ||
+    existing.value.unit !== requested.unit ||
+    existing.occurredAt !== requested.occurredAt ||
+    existing.source.text !== requested.source.text
+  ) {
+    throw new Error("Body-weight source identity was reused for different facts");
+  }
+}
+
+function assertSameCorrection(
+  existing: BodyWeightObservation,
+  requested: {
+    replacesObservationId: string;
+    amount: number;
+    unit: BodyWeightUnit;
+    occurredAt?: string;
+    source: ObservationSource;
+  },
+): void {
+  if (
+    existing.provenance.kind !== "body-weight-correction" ||
+    existing.provenance.replacesObservationId !==
+      requested.replacesObservationId ||
+    existing.value.amount !== requested.amount ||
+    existing.value.unit !== requested.unit ||
+    (requested.occurredAt !== undefined &&
+      existing.occurredAt !== requested.occurredAt) ||
+    existing.source.text !== requested.source.text
+  ) {
+    throw new Error("Body-weight source identity was reused for different facts");
+  }
 }
 
 function hasValidCorrectionLineage(

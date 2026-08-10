@@ -435,6 +435,72 @@ describe("scenario-level Plugin harness", () => {
     expect(restartedView).toEqual(corrected.view);
   });
 
+  it("deduplicates the same source identity across restart", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const options = {
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      personalDataDirectory: () => personalDataDirectory,
+      preflight: (): ConfigurationPreflightResult => ({
+        readiness: "READY_FOR_SETUP",
+        reasons: [],
+      }),
+    };
+    const input = {
+      text: "今天体重 68.4 kg",
+      receivedAt: "2026-08-10T07:30:00.000Z",
+      source: { channel: "test", messageId: "message-dedupe" },
+    };
+
+    const first = await createScenarioHarness(options).recordBodyWeight(input);
+    const retried = await createScenarioHarness(options).recordBodyWeight(input);
+
+    expect(retried).toEqual(first);
+    expect(
+      readdirSync(join(personalDataDirectory, "observations", "body-weight")),
+    ).toHaveLength(1);
+    await expect(
+      createScenarioHarness(options).recordBodyWeight({
+        ...input,
+        text: "今天体重 69.0 kg",
+      }),
+    ).rejects.toThrow("source identity was reused for different facts");
+  });
+
+  it("respects external Observation deletion when rebuilding after restart", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const options = {
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      personalDataDirectory: () => personalDataDirectory,
+      preflight: (): ConfigurationPreflightResult => ({
+        readiness: "READY_FOR_SETUP",
+        reasons: [],
+      }),
+    };
+    const recorded = await createScenarioHarness(options).recordBodyWeight({
+      text: "今天体重 68.4 kg",
+      receivedAt: "2026-08-10T07:30:00.000Z",
+    });
+    if (recorded.status !== "recorded") {
+      throw new Error("Expected the body weight to be recorded");
+    }
+    rmSync(
+      join(
+        personalDataDirectory,
+        "observations",
+        "body-weight",
+        `${recorded.observation.id}.json`,
+      ),
+    );
+
+    await expect(
+      createScenarioHarness(options).bodyWeightTimeline(),
+    ).resolves.toEqual({
+      schemaVersion: "stella-fitness/view/body-weight/v0.1",
+      points: [],
+      errors: [],
+    });
+  });
+
   it("corrects an occurrence time through the same explicit lineage", async () => {
     const personalDataDirectory = temporaryPersonalDataDirectory();
     const harness = readyHarness(

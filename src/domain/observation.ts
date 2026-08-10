@@ -5,6 +5,7 @@ export type ObservationSource = {
   readonly text: string;
   readonly channel?: string;
   readonly messageId?: string;
+  readonly runId?: string;
 };
 
 export type BodyWeightObservation = {

@@ -113,10 +113,16 @@ export function registerStellaFitnessPlugin(
         return;
       }
       const receivedAt = new Date().toISOString();
-      const source =
-        context.messageProvider === undefined
+      const sourceIdentity = {
+        ...(context.messageProvider === undefined
           ? {}
-          : { source: { channel: context.messageProvider } };
+          : { channel: context.messageProvider }),
+        ...(context.runId === undefined ? {} : { runId: context.runId }),
+      };
+      const source =
+        Object.keys(sourceIdentity).length === 0
+          ? {}
+          : { source: sourceIdentity };
       const correctionId = bodyWeightCorrectionId(event.cleanedBody);
       const result =
         correctionId === undefined

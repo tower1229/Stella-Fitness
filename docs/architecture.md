@@ -156,7 +156,7 @@ Runtime Directory 不得成为个人数据 fallback，也不得恢复用户已�
 
 ### Body-weight Observation 文件
 
-体重事实逐条保存在 `observations/body-weight/<observation-id>.json`。文件名必须与记录内的 UUID `id` 一致；schema version 是 `stella-fitness/observation/body-weight/v0.1`。记录包含原始 `value`/`unit`、RFC 3339 `occurredAt`、用户文字 `source` 和写入 `provenance`。
+体重事实逐条保存在 `observations/body-weight/<observation-id>.json`。文件名必须与记录内的 UUID `id` 一致；schema version 是 `stella-fitness/observation/body-weight/v0.1`。记录包含原始 `value`/`unit`、RFC 3339 `occurredAt`、用户文字 `source` 和写入 `provenance`。相同 `source.messageId`（同 channel）或 OpenClaw `source.runId` 的重试返回已有记录；同一 source identity 不得指向不同事实。
 
 纠错也创建新的同版本 Observation；`provenance.kind` 为 `body-weight-correction`，并由 `replacesObservationId` 指向被替代记录。旧文件不覆盖。重建时，缺失引用、循环引用、非法 UUID、非 canonical 时间、非正数值或字段类型错误都会作为相对文件路径错误报告，并从事实时间序列排除。
 
