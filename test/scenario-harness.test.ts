@@ -262,7 +262,7 @@ describe("scenario-level Plugin harness", () => {
     const setup = await harness.selectProgram(await programFixture());
 
     expect(setup).toMatchObject({
-      schemaVersion: "stella-fitness/program-setup/v0.1",
+      schemaVersion: "stella-fitness/program-selection/v0.1",
       id: expect.stringMatching(/^[0-9a-f-]{36}$/),
       program: {
         id: "zhuoshu-12-week",
@@ -278,7 +278,10 @@ describe("scenario-level Plugin harness", () => {
     expect(readdirSync(personalDataDirectory)).toEqual(["program"]);
     expect(
       JSON.parse(
-        readFileSync(join(personalDataDirectory, "program", "setup.json"), "utf8"),
+        readFileSync(
+          join(personalDataDirectory, "program", "selection.json"),
+          "utf8",
+        ),
       ),
     ).toEqual(setup);
   });
@@ -329,8 +332,8 @@ describe("scenario-level Plugin harness", () => {
       cycle: { startDate: "2026-08-10" },
       symbolicLoadBindings: {},
       provenance: {
-        kind: "confirmed-program-setup",
-        setupId: interruptedSetup.id,
+        kind: "program-selection-confirmation",
+        selectionId: interruptedSetup.id,
         selectedAt: interruptedSetup.provenance.selectedAt,
         cycleStartConfirmedAt: expect.any(String),
       },
@@ -367,7 +370,7 @@ describe("scenario-level Plugin harness", () => {
       "Cycle start must be a Monday",
     );
     expect(readdirSync(join(personalDataDirectory, "program"))).toEqual([
-      "setup.json",
+      "selection.json",
     ]);
   });
 });

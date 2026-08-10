@@ -6,11 +6,11 @@ import type { ProgramSpec } from "../domain/program.js";
 import { validateProgramSpec } from "./validator.js";
 
 const PROGRAM_DIRECTORY = "program";
-const SETUP_FILE = "setup.json";
+const SELECTION_FILE = "selection.json";
 const STATE_FILE = "state.json";
 
-export type ProgramSetup = {
-  readonly schemaVersion: "stella-fitness/program-setup/v0.1";
+export type PendingProgramSelection = {
+  readonly schemaVersion: "stella-fitness/program-selection/v0.1";
   readonly id: string;
   readonly program: {
     readonly id: string;
@@ -27,12 +27,12 @@ export type ProgramSetup = {
 export type ProgramState = {
   readonly schemaVersion: "stella-fitness/program-state/v0.1";
   readonly id: string;
-  readonly program: ProgramSetup["program"];
+  readonly program: PendingProgramSelection["program"];
   readonly cycle: { readonly startDate: string };
   readonly symbolicLoadBindings: Readonly<Record<string, unknown>>;
   readonly provenance: {
-    readonly kind: "confirmed-program-setup";
-    readonly setupId: string;
+    readonly kind: "program-selection-confirmation";
+    readonly selectionId: string;
     readonly selectedAt: string;
     readonly cycleStartConfirmedAt: string;
   };
@@ -41,17 +41,17 @@ export type ProgramState = {
 export async function selectProgramForSetup(options: {
   personalDataDirectory: string;
   programSpec: unknown;
-}): Promise<ProgramSetup> {
+}): Promise<PendingProgramSelection> {
   const program = validateProgramSpec(options.programSpec);
-  const setupDirectory = join(options.personalDataDirectory, PROGRAM_DIRECTORY);
-  const setupPath = join(setupDirectory, SETUP_FILE);
-  const statePath = join(setupDirectory, STATE_FILE);
+  const programDirectory = join(options.personalDataDirectory, PROGRAM_DIRECTORY);
+  const selectionPath = join(programDirectory, SELECTION_FILE);
+  const statePath = join(programDirectory, STATE_FILE);
   const selectedProgram = programIdentity(program);
   const state = await readStateIfPresent(statePath);
   if (state !== undefined) {
     assertSameProgramIdentity(state.program, selectedProgram);
     return {
-      schemaVersion: "stella-fitness/program-setup/v0.1",
+      schemaVersion: "stella-fitness/program-selection/v0.1",
       id: state.id,
       program: state.program,
       provenance: {
@@ -60,14 +60,14 @@ export async function selectProgramForSetup(options: {
       },
     };
   }
-  const existing = await readSetupIfPresent(setupPath);
+  const existing = await readSelectionIfPresent(selectionPath);
   if (existing !== undefined) {
     assertSameProgram(existing, selectedProgram);
     return existing;
   }
 
-  const setup: ProgramSetup = {
-    schemaVersion: "stella-fitness/program-setup/v0.1",
+  const selection: PendingProgramSelection = {
+    schemaVersion: "stella-fitness/program-selection/v0.1",
     id: randomUUID(),
     program: selectedProgram,
     provenance: {
@@ -75,8 +75,13 @@ export async function selectProgramForSetup(options: {
       selectedAt: new Date().toISOString(),
     },
   };
-  await mkdir(setupDirectory, { recursive: true, mode: 0o700 });
-  return await createSetupFile(setupPath, setup);
+  await mkdir(programDirectory, { recursive: true, mode: 0o700 });
+  return await createCanonicalFile(selectionPath, selection, {
+    parse: parseSelection,
+    assertCompatible(existingSelection) {
+      assertSameProgram(existingSelection, selection.program);
+    },
+  });
 }
 
 export async function confirmProgramSetup(options: {
@@ -84,36 +89,43 @@ export async function confirmProgramSetup(options: {
   cycleStart: string;
 }): Promise<ProgramState> {
   assertCycleStart(options.cycleStart);
-  const setupDirectory = join(options.personalDataDirectory, PROGRAM_DIRECTORY);
-  const setupPath = join(setupDirectory, SETUP_FILE);
-  const statePath = join(setupDirectory, STATE_FILE);
+  const programDirectory = join(options.personalDataDirectory, PROGRAM_DIRECTORY);
+  const selectionPath = join(programDirectory, SELECTION_FILE);
+  const statePath = join(programDirectory, STATE_FILE);
   const existingState = await readStateIfPresent(statePath);
   if (existingState !== undefined) {
     assertSameCycleStart(existingState, options.cycleStart);
-    await removeIfPresent(setupPath);
+    await removeIfPresent(selectionPath);
     return existingState;
   }
 
-  const setup = await readRequiredSetup(setupPath);
+  const selection = await readRequiredSelection(selectionPath);
   const state: ProgramState = {
     schemaVersion: "stella-fitness/program-state/v0.1",
-    id: setup.id,
-    program: setup.program,
+    id: selection.id,
+    program: selection.program,
     cycle: { startDate: options.cycleStart },
     symbolicLoadBindings: {},
     provenance: {
-      kind: "confirmed-program-setup",
-      setupId: setup.id,
-      selectedAt: setup.provenance.selectedAt,
+      kind: "program-selection-confirmation",
+      selectionId: selection.id,
+      selectedAt: selection.provenance.selectedAt,
       cycleStartConfirmedAt: new Date().toISOString(),
     },
   };
-  const persisted = await createStateFile(statePath, state);
-  await removeIfPresent(setupPath);
+  const persisted = await createCanonicalFile(statePath, state, {
+    parse: parseState,
+    assertCompatible(existingState) {
+      assertSameCycleStart(existingState, state.cycle.startDate);
+    },
+  });
+  await removeIfPresent(selectionPath);
   return persisted;
 }
 
-function programIdentity(program: ProgramSpec): ProgramSetup["program"] {
+function programIdentity(
+  program: ProgramSpec,
+): PendingProgramSelection["program"] {
   return {
     id: program.id,
     version: program.version,
@@ -124,57 +136,30 @@ function programIdentity(program: ProgramSpec): ProgramSetup["program"] {
   };
 }
 
-async function createSetupFile(
-  setupPath: string,
-  setup: ProgramSetup,
-): Promise<ProgramSetup> {
-  const temporaryPath = `${setupPath}.${randomUUID()}.tmp`;
+async function createCanonicalFile<T>(
+  canonicalPath: string,
+  value: T,
+  policy: {
+    readonly parse: (source: string) => T;
+    readonly assertCompatible: (existing: T) => void;
+  },
+): Promise<T> {
+  const temporaryPath = `${canonicalPath}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporaryPath, `${JSON.stringify(setup, null, 2)}\n`, {
+    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
     });
     try {
-      await link(temporaryPath, setupPath);
-      return setup;
+      await link(temporaryPath, canonicalPath);
+      return value;
     } catch (error) {
       if (!isAlreadyExists(error)) {
         throw error;
       }
-      const existing = await readRequiredSetup(setupPath);
-      assertSameProgram(existing, setup.program);
-      return existing;
-    }
-  } finally {
-    await unlink(temporaryPath).catch((error: unknown) => {
-      if (!isMissing(error)) {
-        throw error;
-      }
-    });
-  }
-}
-
-async function createStateFile(
-  statePath: string,
-  state: ProgramState,
-): Promise<ProgramState> {
-  const temporaryPath = `${statePath}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: 0o600,
-    });
-    try {
-      await link(temporaryPath, statePath);
-      return state;
-    } catch (error) {
-      if (!isAlreadyExists(error)) {
-        throw error;
-      }
-      const existing = await readRequiredState(statePath);
-      assertSameCycleStart(existing, state.cycle.startDate);
+      const existing = policy.parse(await readFile(canonicalPath, "utf8"));
+      policy.assertCompatible(existing);
       return existing;
     }
   } finally {
@@ -182,9 +167,11 @@ async function createStateFile(
   }
 }
 
-async function readSetupIfPresent(path: string): Promise<ProgramSetup | undefined> {
+async function readSelectionIfPresent(
+  path: string,
+): Promise<PendingProgramSelection | undefined> {
   try {
-    return parseSetup(await readFile(path, "utf8"));
+    return parseSelection(await readFile(path, "utf8"));
   } catch (error) {
     if (isMissing(error)) {
       return undefined;
@@ -193,8 +180,10 @@ async function readSetupIfPresent(path: string): Promise<ProgramSetup | undefine
   }
 }
 
-async function readRequiredSetup(path: string): Promise<ProgramSetup> {
-  return parseSetup(await readFile(path, "utf8"));
+async function readRequiredSelection(
+  path: string,
+): Promise<PendingProgramSelection> {
+  return parseSelection(await readFile(path, "utf8"));
 }
 
 async function readStateIfPresent(path: string): Promise<ProgramState | undefined> {
@@ -208,15 +197,11 @@ async function readStateIfPresent(path: string): Promise<ProgramState | undefine
   }
 }
 
-async function readRequiredState(path: string): Promise<ProgramState> {
-  return parseState(await readFile(path, "utf8"));
-}
-
-function parseSetup(source: string): ProgramSetup {
+function parseSelection(source: string): PendingProgramSelection {
   const value: unknown = JSON.parse(source);
   if (
     !isRecord(value) ||
-    value.schemaVersion !== "stella-fitness/program-setup/v0.1" ||
+    value.schemaVersion !== "stella-fitness/program-selection/v0.1" ||
     typeof value.id !== "string" ||
     !isRecord(value.program) ||
     typeof value.program.id !== "string" ||
@@ -227,9 +212,9 @@ function parseSetup(source: string): ProgramSetup {
     value.provenance.kind !== "program-spec-selection" ||
     typeof value.provenance.selectedAt !== "string"
   ) {
-    throw new Error("Program setup is schema-invalid");
+    throw new Error("Pending Program selection is schema-invalid");
   }
-  return value as ProgramSetup;
+  return value as PendingProgramSelection;
 }
 
 function parseState(source: string): ProgramState {
@@ -243,8 +228,8 @@ function parseState(source: string): ProgramState {
     typeof value.cycle.startDate !== "string" ||
     !isRecord(value.symbolicLoadBindings) ||
     !isRecord(value.provenance) ||
-    value.provenance.kind !== "confirmed-program-setup" ||
-    typeof value.provenance.setupId !== "string" ||
+    value.provenance.kind !== "program-selection-confirmation" ||
+    typeof value.provenance.selectionId !== "string" ||
     typeof value.provenance.selectedAt !== "string" ||
     typeof value.provenance.cycleStartConfirmedAt !== "string"
   ) {
@@ -253,7 +238,9 @@ function parseState(source: string): ProgramState {
   return value as ProgramState;
 }
 
-function isProgramIdentity(value: unknown): value is ProgramSetup["program"] {
+function isProgramIdentity(
+  value: unknown,
+): value is PendingProgramSelection["program"] {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
@@ -264,15 +251,15 @@ function isProgramIdentity(value: unknown): value is ProgramSetup["program"] {
 }
 
 function assertSameProgram(
-  setup: ProgramSetup,
-  program: ProgramSetup["program"],
+  selection: PendingProgramSelection,
+  program: PendingProgramSelection["program"],
 ): void {
-  assertSameProgramIdentity(setup.program, program);
+  assertSameProgramIdentity(selection.program, program);
 }
 
 function assertSameProgramIdentity(
-  existing: ProgramSetup["program"],
-  requested: ProgramSetup["program"],
+  existing: PendingProgramSelection["program"],
+  requested: PendingProgramSelection["program"],
 ): void {
   if (JSON.stringify(existing) !== JSON.stringify(requested)) {
     throw new Error("Program setup already selected a different ProgramSpec");

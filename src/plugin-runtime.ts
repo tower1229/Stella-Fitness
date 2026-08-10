@@ -20,7 +20,7 @@ import { validateProgramSpec } from "./program/validator.js";
 import {
   confirmProgramSetup,
   selectProgramForSetup,
-  type ProgramSetup,
+  type PendingProgramSelection,
   type ProgramState,
 } from "./program/state.js";
 
@@ -32,7 +32,7 @@ export type PluginExtractionOutput = {
 
 export type StellaFitnessRuntime = {
   preflight(): ConfigurationPreflightResult;
-  selectProgram(programSpec: unknown): Promise<ProgramSetup>;
+  selectProgram(programSpec: unknown): Promise<PendingProgramSelection>;
   confirmCycleStart(cycleStart: string): Promise<ProgramState>;
   resolvePlannedSession(
     input: Omit<ProgramResolutionInput, "program"> & { programSpec: unknown },
