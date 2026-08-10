@@ -77,15 +77,7 @@ ProgramSpec → dynamically generate printable PDF/XLSX
 
 ### 问题备注
 
-允许记录身体不适、动作问题、训练过轻或其他情况。
-
-该字段可能同时包含：
-
-- 普通用户观点；
-- 恢复感受；
-- 潜在安全红旗。
-
-因此其安全信息与用户 belief 需要在系统中分流，而不是整段原文直接送入 Blind Diagnosis。
+允许记录用户希望保留的训练情况。Plugin 只抽取、确认和保存原文，不把备注转换为训练表现、原因、健康风险或行动建议。
 
 ## 4. 特殊力量测试块
 
@@ -135,7 +127,7 @@ strength_test_block
 
 ## 6. v1 不额外增加高摩擦字段
 
-当前模板已经包含足够的监督信号。
+当前模板已经包含足够的记录字段。
 
 首版默认不要求增加：
 
@@ -186,7 +178,7 @@ strength_test_block
 v1：
 
 ```text
-ProgramSpec = plan semantics / supervision baseline
+ProgramSpec = plan semantics
 Existing XLSX = human execution / logging interface
 ```
 
@@ -208,7 +200,7 @@ ProgramSpec → printable template generator
 
 在模板来源/版权状态明确之前：
 
-- Phase 0 可以记录结构和字段；
+- 仓库可以记录结构和字段；
 - Benchmark 可以围绕私有模板样本准备；
 - 原始 XLSX 已作为不可静默改写的审计原件进入公开 Git 历史，但不进入安装包；
 - public release 提供生成式/空白日志模板，不分发 raw XLSX。

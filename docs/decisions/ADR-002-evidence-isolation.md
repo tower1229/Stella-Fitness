@@ -1,21 +1,7 @@
-# ADR-002：Evidence 与 User Belief 分离
+---
+status: superseded by ADR-024
+---
 
-**Status: Accepted**
+# ADR-002：诊断信息隔离（已取代）
 
-## Context
-
-模型存在 sycophancy 风险；用户 framing 会影响输出。
-
-## Decision
-
-- objective observations 与 subjective claims 分库存储/建模；
-- Blind Diagnostician 只接收 EvidencePacket；
-- diagnosis 先冻结；
-- User Belief 后披露给 Auditor；
-- 最终行动通过 deterministic Policy Gate。
-
-## Rejected alternative
-
-“把全部上下文给同一个模型，并在 Prompt 中要求忽略用户观点。”
-
-原因：不可验证真正忽略，也无法提供强信息流保证。
+原决策为 Blind Diagnosis、User Belief、Audit 和 Policy Gate 设计信息隔离。ADR-024 已将完整训练监督流水线移出产品范围，本 ADR 不得作为恢复相关实现的依据。

@@ -1,97 +1,42 @@
-# 外部依赖与依赖策略
+# 外部依赖与策略
 
-**状态：RESEARCH BASELINE / NO IMPLEMENTATION DEPENDENCIES INSTALLED**
+## OpenClaw
 
-Phase 0 只冻结“需要哪类依赖”和“选择标准”，不创建 package lock，不提前安装 SDK。
+角色：Native Plugin 宿主、conversation hooks、structured media runtime、model permission 和 ClawHub 分发入口。
 
-## 1. OpenClaw
+kickoff 必须锁定并验证实际 stable 版本，不能依赖 research snapshot。
 
-角色：宿主运行时、Plugin hooks、model runtime、media runtime、Cron、分发入口。
+## Extraction model
 
-当前已确认目标能力：
+唯一模型角色是训练日志结构化抽取。Domain contract 不出现厂商名称；候选模型必须支持 image input、schema output、显式 uncertainty 和 timeout/cancellation。
 
-- conversation interception；
-- isolated LLM completions；
-- structured media extraction；
-- model allowlist/operator policy；
-- Cron silent jobs；
-- Native Plugin / ClawHub distribution。
+选择依据：
 
-**实施时动作：** 重新核验稳定 OpenClaw 版本、Plugin API、Node 支持、manifest 与 ClawHub contract。
+- critical numeric accuracy；
+- handwriting/table/layout accuracy；
+- blank preservation；
+- load/reps/duration semantic accuracy；
+- abstention/calibration；
+- latency/cost；
+- operator permission 与 Provider 数据条款。
 
-## 2. LLM Providers
+CI 使用 deterministic fake/recorded outputs，不依赖 live provider。
 
-不是硬编码依赖，而是 role candidates。
+## Local persistence
 
-| Role | 当前候选 | 选择标准 |
-|---|---|---|
-| Workout log extraction | Gemini 3.6 Flash / other multimodal | handwriting field accuracy, abstention, cost |
-| Diet extraction | Gemini 3.6 Flash / other multimodal | range calibration, food recognition |
-| Belief extraction | low-cost structured model | schema validity, claim extraction |
-| Blind diagnosis | GPT-5.6 Sol/Terra or equivalent | diagnosis quality, framing invariance |
-| Auditor | Claude Sonnet 5 or independent equivalent | critique quality, false-overturn rate |
-| Reporter | template first | no model needed when possible |
+优先开放、provider-neutral、可由用户直接检查和复制的文件格式。Runtime index 必须可重建，不引入第二个 canonical database。
 
-任何 provider 还必须通过 privacy review。
+## Media processing
 
-## 3. Nutrition database
+需要可靠支持 orientation apply、metadata strip、byte-integrity verification 和所有退出路径清理。具体库在实现切片中通过目标测试选择。
 
-v1 默认外部候选：USDA FoodData Central / FNDDS。
+## Release
 
-优点：
+目标 package 为 `@tower1229/stella-fitness`。首次发布需要课程派生制品授权、package validation、clean install 和 ClawHub live permission。
 
-- 官方 REST API；
-- Food Search / Food Details；
-- CC0；
-- 可作为 RAG/grounding source。
+## 明确不存在的依赖
 
-包装标签和用户确认个人餐食优先于数据库匹配。对无法可靠映射的中式混合菜，只允许低置信区间或请求更多数据，不把 USDA 映射包装成中国本地权威值。
-
-`Sanotsu/china-food-composition-data` 已评估但不采用：无明确复用许可、底层书籍数据权利未解决，且 OCR/视觉识别准确率未验证。未来中国本地 provider 必须同时通过 rights review 与独立数据 QA。
-
-## 4. Persistent storage
-
-需求：
-
-- local-first；
-- Runtime Directory 与用户配置的 Personal Data Directory 分离；
-- 原始上传文件和结构化个人产出都进入 Personal Data Directory；
-- Observation Records 是 canonical，Training Progress 与查询索引可重建；
-- transactions；
-- schema migrations；
-- auditability；
-- filesystem-managed portability/deletion + deterministic rebuild；
-- 无需云服务即可运行。
-
-Personal Data Directory 是个人数据的 canonical boundary，并推荐与用户自己的 Personal Data Repository 配合。具体结构化文件格式、事务策略和可选索引实现不在 Phase 0 静默冻结；如使用 SQLite，必须明确它是个人数据制品还是可重建索引，不能形成隐藏的第二事实源。
-
-## 5. Image/OCR
-
-当前不引入独立 OCR 作为必需依赖，因为 OpenClaw media runtime 已支持 model-based structured extraction。
-
-如果真实手写日志 benchmark 证明 VLM 不够可靠，再评估：
-
-- OCR + VLM hybrid；
-- template-aware parsing；
-- 用户自定义打印表格带定位标记。
-
-技术应由失败数据驱动，而不是先堆依赖。
-
-## 6. ClawHub
-
-仅作为未来发布依赖。canonical identity 已冻结为 `@tower1229/stella-fitness`（owner `tower1229`）；Phase 0 不需要 ClawHub token 或 CI workflow，首次发布前按当前 CLI 核验权限、validate 与 dry-run。
-
-## 7. 依赖选择规则
-
-每个外部依赖必须回答：
-
-1. 它解决什么不可替代问题？
-2. 数据会发到哪里？
-3. 失败时系统怎样降级？
-4. 是否可以替换？
-5. 版本/API 是否容易变化？
-6. 有什么成本？
-7. 是否需要用户单独配置凭证？
-8. 是否影响 ClawHub 安装体验？
-
-无法回答以上问题的依赖不得在实施初期成为核心路径。
+- nutrition database；
+- diagnosis/audit/reporter models；
+- medical or safety classifier；
+- Cron supervision runtime。

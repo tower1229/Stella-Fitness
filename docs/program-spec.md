@@ -14,7 +14,7 @@ Markdown 知识文档负责**解释与审阅**；ProgramSpec 负责**确定性�
 当前实例：
 
 - `program-spec.v0.1.yaml`：历史草案；
-- `program-spec.v0.2.yaml`：吸收原课程配套 XLSX 和用户 Q1–Q6 确认后的当前 `Default Program Candidate`。
+- `program-spec.v0.2.yaml`：吸收原课程配套 XLSX 和用户 Q1–Q6 确认后的当前 source-reconciled draft。
 
 ## 2. 设计原则
 
@@ -94,19 +94,16 @@ v0.2 新增明确需求：训练计划中的测试可以改变后续 symbolic-lo
 
 这样可避免把“引体向上共 30 次”或“平板支撑 60 秒”错误转换成普通 reps。
 
-### 2.6 Program rule != supervisor recommendation
+### 2.6 Program rule 与实际记录分离
 
 运行时必须同时保留：
 
 ```text
 planned prescription
 actual execution
-supervisor recommendation
 ```
 
-三者不能相互覆盖。
-
-课程本身的 `A/N` 绑定、加重、恢复规则属于 planned prescription；监督模型不能修改 source program 后再假装那是原计划。
+二者不能相互覆盖。课程本身的 `A/N` 绑定、加重和恢复规则属于 planned prescription；实际记录不能反向修改 source program。
 
 ## 3. Source interpretation record
 
@@ -342,23 +339,22 @@ progression:
 ## 13. 版本策略
 
 - `program-spec.v0.1.yaml`：来源补全前历史草案，保留审计；
-- `program-spec.v0.2.yaml`：当前 source-reconciled `Default Program Candidate`，将在 implementation 中作为开发与验收主 fixture；
-- 未来 `program-spec.v1`：经过完整 source review、schema validation、fixtures 与规定范围的独立 Domain Review 后，才能成为 `Default Program`。
+- `program-spec.v0.2.yaml`：当前 source-reconciled draft，将在 implementation 中作为开发与验收主 fixture；
+- 未来 `program-spec.v1`：经过完整 source review、schema validation 与 fixtures 后成为 production program version。
 
 ProgramSpec schema version 与具体 program version 分开版本化。
 
 任何改变用户原计划处方的来源修订都必须提升 program version，并留下来源记录。
 
-## 14. Phase 0 状态
+## 14. 当前状态
 
-v0.2 当前在**训练计划来源语义层面没有已知缺口**，但仍不是 production canonical program。
+v0.2 当前在**训练计划来源语义层面没有已知缺口**，但仍未通过可执行 schema/fixture validation。
 
 最终 source cross-check 已基于仓库归档的 DOCX/XLSX 与用户确认完成。剩余工作属于：
 
-- 默认 Program 的独立领域审核与签署；
 - Built-in Program 的派生、修改、署名与分发授权；
 - implementation kickoff 的 Schema validator，以及实施期完整 12 周 fixture 验证。
 
-独立 Domain Review 的范围已经冻结：审核所有会驱动用户行为的训练处方，包括动作、频率/训练量、负重递进、12RM 测试、恢复周和引体辅助规则。教程饮食内容仅作为来源示例，不能进入自动饮食 Supervision Policy。v0.2 是预定随包提供的 `Built-in Program`，但在合格签署和可核验发行授权完成前仍只能标记为 `Default Program Candidate`，不得发布或驱动自动数值调整。
+Stella Fitness 只保证来源忠实和确定性执行，不对训练处方作专业评价或背书，也不根据用户实际记录修改处方。Built-in Program 公开发行仍需可核验授权。
 
 这些不应重新被描述成“训练计划本身未知”。

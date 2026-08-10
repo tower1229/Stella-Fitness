@@ -1,21 +1,3 @@
-# ADR-003：模型按角色选择，不锁定单一厂商
+# ADR-003：抽取模型保持 Provider-neutral
 
-**Status: Accepted**
-
-## Decision
-
-核心 domain schema 只定义能力契约，不定义 GPT/Gemini/Claude 类型。
-
-当前模型名称只是 research baseline candidate。
-
-## Rationale
-
-- 模型更新快；
-- 不同角色成本/质量要求不同；
-- 视觉识别和复杂诊断未必由同一模型最优；
-- 跨厂商 Auditor 可以作为降低相关性错误的一种工程手段；
-- privacy/availability 可能决定实际选择。
-
-## Requirement
-
-替换模型必须重跑该角色对应 Eval。
+训练日志抽取通过 provider-neutral contract 接入 OpenClaw runtime，领域 schema 不包含厂商类型。默认模型只能在真实手写日志 benchmark 和 operator permission 验证后选择；CI 使用 deterministic fake/recorded outputs。

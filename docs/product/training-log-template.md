@@ -56,9 +56,7 @@ ProgramSpec 未来可用于校验模板、支持其他 program 或生成新模�
 
 ## 4. 问题备注
 
-可记录膝盖或其他部位不适、感觉过轻、动作异常或其他训练情况。
-
-`问题备注` 必须进入 Subjective Claim / Safety pre-screen 流程，而不是整段混入 Blind Diagnosis 的 objective EvidencePacket。
+可记录用户希望保留的任何训练情况。Plugin 按原文保存该字段，只允许做版面识别与用户确认，不解释其训练表现、原因或健康含义。
 
 ## 5. `重量` 字段是多态值
 

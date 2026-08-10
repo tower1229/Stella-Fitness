@@ -1,6 +1,6 @@
 # Stella Fitness 技术架构
 
-> 本文描述 Stella Fitness 的目标架构。OpenClaw 相关接口以 2026-08-08 当前官方 Plugin SDK 文档为依据；实现时仍需用锁定版本的类型定义再次校验。
+> 本文描述记录型 v1 的目标架构。OpenClaw 接口必须在 implementation kickoff 按锁定版本重新核验。
 
 ## 1. 总体结构
 
@@ -15,496 +15,204 @@ OpenClaw channel / dedicated Agent
       └───────┬────────┘
               │
       ┌───────▼────────┐
-      │ Extraction     │  image / text → observations
+      │ Media Sanitizer│ raw preserved; payload metadata removed
       └───────┬────────┘
               │
       ┌───────▼────────┐
-      │ Plugin DB      │  raw / facts / beliefs / metrics
+      │ Extraction     │ image / text → typed candidate fields
       └───────┬────────┘
               │
-     Program Engine + Metrics Engine
-              │
-              ▼
-        EvidencePacket
-              │
-      ┌───────┴────────┐
-      ▼                ▼
-Blind Diagnostician  Belief Extractor
-(isolated runtime)   (isolated step)
-      │                │
+      ┌───────▼────────┐
+      │ Confirmation   │ critical ambiguity → minimal question
       └───────┬────────┘
-              ▼
-      Adversarial Auditor
-       (isolated runtime)
+              │
+      ┌───────▼────────┐
+      │ Personal Data  │ Raw Artifact / Observation / Processing
+      └───────┬────────┘
+              │
+      Program Engine + deterministic rebuild
               │
               ▼
-        Policy Gate (code)
-              │
-              ▼
-      FinalDecisionPacket
-              │
-       Template / Reporter
-              │
-              ▼
-             User
+      Training Record View
 ```
 
-核心原则：**自然语言聊天是输入输出界面，不是决策上下文。**
+核心原则：**模型只抽取候选事实；确定性代码验证、确认、保存和重建。**
 
-## 2. 为什么主体必须是 Plugin
+## 2. 为什么使用 Native Plugin
 
-Skill 的内容最终会进入同一个 Agent 上下文，无法为 Blind Diagnosis 建立可信的信息边界。
+本项目需要：
 
-本项目依赖以下 Plugin 级能力：
+- 在默认 Agent 回复前接管训练记录输入；
+- 调用 structured media extraction；
+- 精确控制媒体 payload 和临时文件生命周期；
+- 写入用户显式配置的 Personal Data Directory；
+- 运行确定性 Program Engine；
+- 返回 synthetic status、confirmation 和 recording reply。
 
-- 在默认 Agent 模型调用前接管 / 阻断 turn；
-- 读取媒体并执行结构化提取；
-- 由 Plugin 明确构造每次内部模型调用的 payload；
-- 运行 fresh isolated model context；
-- 持久化领域数据；
-- 定期执行监督任务；
-- 直接返回 synthetic reply 或 silence。
+这些是 Plugin 集成与数据边界需求，不是训练诊断或风险控制需求。Skill 可以辅助说明，但不能替代持久化和媒体处理边界。
 
-因此 Skill 最多用于辅助说明，不能成为监督决策的安全边界。
+## 3. 输入路由
 
-## 3. OpenClaw 对话拦截
-
-OpenClaw Plugin hooks 提供：
-
-- `before_agent_reply`：在默认 LLM turn 前返回 synthetic reply 或 silence；
-- `before_agent_run`：在最终 prompt/session messages 提交给模型前检查并可 block；
-- `before_prompt_build`：可调整上下文/工具面，但 Stella Fitness 不把它作为主要隔离手段；
-- `before_agent_finalize`：适用于普通 Agent 回复的最终修订，但不作为核心监督路径。
-
-### 推荐路径
-
-对于 Stella Fitness 识别为“领域监督输入”的 turn：
+对于 Stella Fitness 明确认领的记录型输入：
 
 ```text
 inbound message
-  ↓
-before_agent_reply
-  ↓
-Plugin claims domain workflow
-  ↓
-run controlled supervision pipeline
-  ↓
-return synthetic final reply / silence
+  → before_agent_reply
+  → Plugin claims recording workflow
+  → extract / confirm / persist / rebuild
+  → synthetic reply
 ```
 
-普通聊天 Agent 不参与核心诊断。
+`before_agent_run` 作为路由保险，防止已认领输入重复进入普通 Agent。Plugin 不接管普通健身聊天，也不把普通聊天内容保存为训练事实。
 
-### 第二道保险
+non-bundled Plugin 所需 conversation-access 权限必须由 operator 显式启用，不得绕过。
 
-`before_agent_run` 用于防止本应由 Stella Fitness 接管的领域 turn 因路由错误落入普通 Agent。
+## 4. 媒体处理
 
-如果 Plugin 已将当前 turn 标记为“claimed by supervisor”但默认模型仍准备运行，则 `before_agent_run` 应 fail closed：
+原始上传先按字节写入 Personal Data Directory。模型调用使用 Runtime Directory 中的 `Sanitized Media Copy`：
+
+1. 应用 EXIF orientation 到像素；
+2. 移除 EXIF、GPS、设备、软件、缩略图等非必要 metadata；
+3. 只提交完成当前抽取所需的图片与最小文字上下文；
+4. 在成功、失败、超时和取消路径清理副本。
+
+所有调用必须有显式 timeout、`AbortController` 和幂等 run ID。
+
+## 5. 训练日志抽取
+
+抽取输出是候选事实，不是评价：
 
 ```text
-outcome: block
-```
-
-OpenClaw 当前文档明确说明该 hook 在模型读取输入之前运行；block 后原始用户文本不会作为未来 transcript context 被保留。
-
-### Conversation access 配置
-
-Stella Fitness 属于 non-bundled Plugin，并需要 `before_agent_reply` / `before_agent_run` 等 raw conversation hooks，因此安装文档必须指导用户显式启用：
-
-```json
-{
-  "plugins": {
-    "entries": {
-      "stella-fitness": {
-        "hooks": {
-          "allowConversationAccess": true
-        }
-      }
-    }
-  }
-}
-```
-
-这是显式权限，不应尝试绕过。
-
-## 4. Hook 超时与长任务
-
-OpenClaw hook 有 await budget；配置允许按 hook 设置更长 timeout，最高可到当前官方文档规定的上限。
-
-Stella Fitness 不应假设 hook timeout 会取消 Plugin 自己发出的网络工作。因此所有模型/媒体调用应：
-
-- 自己持有 `AbortController`；
-- 设置显式 timeout；
-- 在 Plugin shutdown / request cancel 时中止；
-- 使用幂等 run id，避免超时后后台结果重复写库。
-
-如果监督 pipeline 的实时耗时在真实环境中不可接受，后续可演进为“快速接管 + 后台任务 + 完成后主动消息”，但 v1 优先保持单 turn 可理解性。
-
-## 5. 媒体结构化
-
-训练日志图片优先通过 OpenClaw Plugin runtime：
-
-```text
-api.runtime.mediaUnderstanding.extractStructuredWithModel(...)
-```
-
-该接口支持由 Plugin 提供：
-
-- provider / model；
-- 图片输入；
-- supplemental text；
-- instructions；
-- `jsonSchema`。
-
-Plugin 不把 Personal Data Directory 中的原始图片直接作为 media payload。每次媒体调用前生成 `Sanitized Media Copy`：把 EXIF orientation 应用到像素后移除 EXIF、GPS、设备、软件、缩略图等无关 metadata，只把该临时副本提交给 OpenClaw runtime。副本位于 Runtime Directory，并在成功、失败、超时或取消后清理；原始文件保持字节不变。
-
-### TrainingLogExtraction
-
-输出应包含：
-
-```text
-date?
-program week/day?
+layout / stage / week / weekday / session type
 exercises[]
   normalized exercise id?
   raw label
-  load?
-  reps?
-notes?
+  load semantic + value?
+  set values + reps|duration semantic
+action quality raw value?
+note raw text?
 uncertain_fields[]
 ```
 
-每个不可靠字段保留 confidence / uncertainty；不能因为 Schema 要求就猜测不存在的信息。
+规则：
 
-### 饮食图片
+- 空白 actual 保持空白；
+- 关键数字低置信时必须确认；
+- `重量` 不强制为 number；
+- 第 4 周力量测试使用独立 schema；
+- recovery session 不因普通布局标题丢失计划身份；
+- 备注按原始用户记录保存，不作表现、心理或健康解释。
 
-饮食照片也可使用该能力，但 Schema 应表达范围和不确定性，而不是强迫模型返回伪精确宏量营养值。
+## 6. 体重输入
 
-## 6. 内部 LLM：真正的信息隔离
+明确的体重文本可通过确定性 parser 转换为 Observation。歧义单位或时间必须确认。系统只展示事实时间序列，不计算“是否健康”“是否理想”或调整建议。
 
-OpenClaw 当前 `api.runtime.llm.complete()` 支持：
+## 7. Deterministic Core
 
-```ts
-execution: {
-  mode: "isolated-agent-runtime"
-}
-```
+### Program Validator
 
-官方语义包括：
-
-- 只接受一条 user message；
-- fresh context；
-- 0 个 model-callable tools；
-- 不回退到普通 direct provider transport；
-- unsupported runtime 在 inference 前失败。
-
-这正是 Blind Diagnostician / Auditor 的首选隔离边界。
-
-### Blind Diagnostician payload
-
-只允许：
-
-```text
-Program facts
-Derived metrics
-Objective observations
-Evidence coverage
-Relevant safety flags
-```
-
-禁止：
-
-```text
-raw conversation history
-user belief
-user desired action
-user emotional reaction
-previous reporter wording
-```
-
-### Belief Extractor
-
-单独处理用户原始陈述，输出：
-
-```text
-claims[]
-desired_actions[]
-certainty_of_user_statement
-```
-
-它不产生训练诊断。
-
-### Adversarial Auditor
-
-只有 Blind Diagnosis 已冻结后才获得：
-
-```text
-EvidencePacket
-FrozenDiagnosis
-UserBelief
-```
-
-任务是寻找反证、证据不足、过度推断及 framing 风险。
-
-## 7. 模型权限
-
-模型 override 需要 OpenClaw operator 显式 opt-in。
-
-安装配置需要使用：
-
-```text
-plugins.entries.stella-fitness.llm.allowModelOverride
-plugins.entries.stella-fitness.llm.allowedModels
-plugins.entries.stella-fitness.llm.allowedCompletionModels
-```
-
-原则：
-
-- 默认给出推荐白名单；
-- Plugin 不能任意调用用户未授权的模型；
-- Blind / Audit 的模型角色由配置解析，不由聊天 Agent 临时选择；
-- 模型降级必须经过 Eval。
-
-如果使用独立 `model@profile` / auth profile，还需要遵守 OpenClaw 对 auth profile override 的显式授权要求。
-
-## 8. Deterministic Core
+在任何 ProgramSpec 驱动用户视图前验证 schema、引用、符号绑定和 session 完整性。无效或 unresolved 关系 fail closed。
 
 ### Program Engine
 
-输入：
+输入 ProgramSpec、Program State 和目标日期，输出 Planned Session。它只解释来源计划，不评价计划。
 
-```text
-program_id
-program_version
-cycle_start
-current date / target session
-```
+### Record Rebuilder
 
-输出：
+从 Observation Records、纠错关系与 Program State 重建：
 
-```text
-ProgramSession
-```
+- 当前周期与 planned session；
+- 每个训练日记录了哪些 actual；
+- missing / uncertain / corrected 字段；
+- strength-test result 到符号重量的确定性绑定；
+- 去重后的事实时间线。
 
-职责仅限解释 ProgramSpec。
+不得派生训练表现评分、趋势诊断、原因假设或健康风险。
 
-遇到 `status: unresolved` 必须返回显式错误 / unresolved 结果，不允许推导。
-
-### Metrics Engine
-
-只处理结构化事实，计算：
-
-- completion；
-- volume/load trend；
-- body-weight trend；
-- diet data coverage；
-- missing-data rate；
-- deviation from planned session。
-
-所有数学计算用代码完成，LLM 只看到结果。
-
-### Evidence Builder
-
-采用字段白名单构造 Blind Diagnostician payload；这是 Information Flow Test 的直接测试目标。
-
-### Policy Gate
-
-模型输出只是候选判断。
-
-最终决策类型：
-
-```text
-NO_CHANGE
-OBSERVE
-COLLECT_MORE_DATA
-ADJUST_DIET
-ADJUST_TRAINING
-RECOVERY
-ESCALATE
-```
-
-该集合是长期 schema。v1 Policy Gate 只激活 `NO_CHANGE`、`OBSERVE`、`COLLECT_MORE_DATA` 和 `ESCALATE`；`ADJUST_DIET`、`ADJUST_TRAINING`、监督性 `RECOVERY` 留待未来经专业审核的版本化 Policy。ProgramSpec 已确认的计划进阶和计划恢复仍由确定性 core 执行。
-
-Gate 应拒绝：
-
-- Schema invalid；
-- evidence reference 不存在；
-- 关键数据覆盖不足却给出高置信调整；
-- 超出训练监督安全边界的建议；
-- unresolved ProgramSpec 被当成确定事实。
-
-## 9. Reporter
-
-Reporter 只读取 FinalDecisionPacket。
-
-优先级：
-
-```text
-Template
-  > low-cost isolated LLM rewrite
-  > full conversational Agent（不使用）
-```
-
-这样可避免在最后一步重新把完整会话历史混入决策结果。
-
-## 10. 数据持久化
-
-权利与控制先按三类内容划分：内置计划内容由发布方取得授权；用户输入数据由用户控制；关于用户的分析、Observation、Training Progress 等派生产出同样由用户控制。Plugin 不因处理这些个人数据而取得再利用、公开、Benchmark 或训练权。用户输入含第三方内容时，其对外再分发仍受原始权利约束。
-
-持久化再分为两个技术边界。Runtime Directory 不是第四类权利数据，只是可重建技术状态：
-
-### Runtime Directory
-
-Plugin 可自行创建和扩展运行目录，并跨重启持久化可重建的运行状态、游标、锁、缓存、任务状态和物化索引。该目录不是个人数据的 canonical store；删除它不得造成训练进度丢失，最多触发重建或重新调度。任何含个人内容的临时副本都必须最小化并具备清理语义。
+## 8. 持久化边界
 
 ### Personal Data Directory
 
-首次接收个人数据前，用户必须显式配置保存位置。该目录保存：
-
-- 用户上传的训练日志、饮食照片等原件；
-- canonical training progress；
-- profile / health-related records；
-- verified observations 与 subjective claims；
-- derived metrics；
-- diagnosis / audit / decision 结构化产出；
-- corrections / provenance；
-- processing provenance。
-
-这些内容生成 provider-neutral、可移植的结构化产出，适合由用户自己的 Personal Data Repository 管理、备份和版本化。Plugin 不得因配置缺失而静默把个人数据写入 Runtime Directory 或 OpenClaw transcript/session store。
-
-v1 不提供 Plugin 层面的删除、导出、备份、retention policy 或回收站；Personal Data Directory 本身就是完整可移植的数据制品。Plugin 必须把用户的文件系统操作视为 canonical 变更：原件缺失标记 `source_missing`；Observation 文件缺失后从 active facts 移除并重建派生状态；schema-invalid 手工修改只报告并隔离，不静默覆盖；Runtime Directory 不得恢复用户已删除的数据。整个配置目录缺失或无效时 fail closed，等待用户重新配置。
-
-具体文件格式、目录 schema 和可选索引实现留到实施设计；如使用 SQLite，只能把它定位为个人目录内的明确数据制品，或 Runtime Directory 中可由 canonical structured artifacts 重建的索引，不能形成第二个隐蔽事实源。
-
-建议逻辑数据集：
+canonical：
 
 ```text
-users / profiles
-program_cycles
-raw_artifacts
-training_sessions
-exercise_observations
-body_weights
-diet_observations
-subjective_claims
-derived_metrics
-diagnosis_runs
-audit_runs
-decisions
+raw artifacts
+observation records
+correction records
+program state
+processing records
+rebuildable record snapshots
 ```
 
-其中 Observation Records 是 canonical 事实。每条记录至少包含稳定 ID、发生时间、schema version、provenance，并通过相对路径和 hash 关联原始文件。纠错显式关联原记录，不允许只覆盖结果而丢失语义。
+### Runtime Directory
 
-`Training Progress`、trend、completion 和 profile/progress snapshot 都是从 Observation Records 与 Program state 计算出的派生视图。Runtime Directory 中的 SQLite/索引可以加速查询，但删除后必须能够从 Personal Data Directory 重建。
-
-每个 diagnosis/audit/decision 形成结构化 Analysis Record，保存 EvidencePacket 引用与 hash、结构化结果、ProgramSpec/Policy version、operation、payload category、OpenClaw runtime 实际返回的可用执行元数据与时间戳。失败调用只保存处理步骤、时间和错误类别。
-
-默认不持久化完整 prompt、Provider 原始自由文本 response、隐藏推理、schema-invalid 原始输出或 Provider 日志副本。显式诊断模式可以短期保存必要原始交互，但必须进入受控临时位置并具备清理语义。
-
-## 11. 周期监督
-
-OpenClaw Cron 运行在 Gateway 内并持久化任务。
-
-推荐两层：
-
-### Deterministic cron
-
-先执行纯代码任务：
+仅保存：
 
 ```text
-update metrics
-check evidence coverage
-check whether review is due
+locks / cursors / temporary sanitized media / rebuildable indexes / task state
 ```
 
-无事项：输出 `NO_REPLY` / 无消息。
+Runtime Directory 不得成为个人数据 fallback，也不得恢复用户已删除的 canonical 文件。
 
-### Model analysis
+## 9. Provider 与模型权限
 
-只有满足 review 条件时才启动诊断 pipeline。
+OpenClaw 管理 Provider、凭据、endpoint、模型 allowlist 和实际外发。Plugin 只引用 operator 已授权的 extraction model，并记录 runtime 实际返回的可用执行元数据。
 
-这样可同时降低：
+v1 不需要 Blind Diagnostician、Belief Extractor、Auditor、Reporter 或多模型监督角色。
 
-- 模型成本；
-- 不必要通知；
-- “为了每周汇报而生成建议”的行为偏差。
+## 10. 失败语义
 
-## 12. 失败策略
-
-核心原则：**fail closed for decisions, fail soft for data collection**。
-
-| 故障 | 行为 |
+| 失败 | 行为 |
 |---|---|
-| 图片提取失败 | 保存 raw artifact；请求必要补充，不写假 observation |
-| Blind model 失败 | 不给调整建议；记录 run failure |
-| Auditor 失败 | 不产生高风险自动调整；可降级为 OBSERVE |
-| Policy schema invalid | 拒绝 decision |
-| ProgramSpec unresolved | 显式告知缺口 |
-| Cron 失败 | 记录失败；不制造正常状态 |
+| Personal Data Directory 无效 | 拒绝接收个人输入 |
+| ProgramSpec 无效或 unresolved | 不解析对应 session |
+| 图片不可读 | 请求重新拍摄或最小补充 |
+| 关键字段低置信 | 请求字段确认，不写成确定事实 |
+| 模型失败/超时 | 清理临时文件，记录失败类别，不写 Observation |
+| 重复上传 | 返回已有记录引用，不重复计入 |
+| schema-invalid 手工编辑 | 隔离并报告，不污染重建结果 |
+| 原始文件被用户删除 | 尊重删除并重建，不从 runtime 恢复 |
 
-## 13. Eval 架构
+## 11. 测试边界
 
-### 程序级
+最高价值 seam 是 scenario-level Plugin harness：给定 ProgramSpec、隔离的 Personal/Runtime 目录、输入 artifact 和受控 extraction result，观察确认请求、canonical records、重建视图和精确 payload。
 
-- ProgramSpec fixtures；
-- unresolved fail-closed；
-- recovery semantic；
-- metrics calculations；
-- Evidence whitelist / information leak。
+必须覆盖：
 
-### 模型级
+- clean install / enable / load / deterministic status；
+- ProgramSpec 全 12 周、阶段转换、recovery 和 strength-test bindings；
+- 固定 XLSX 三阶段布局、裁剪/模糊、空白保留、load 多态、reps/duration；
+- correction、dedupe、restart、external deletion 和 invalid edit；
+- 原件字节保真、orientation、metadata strip 和全部退出路径清理；
+- payload 最小化与 operator model permission；
+- 发行包排除原始 Office 文件、用户数据和未授权内容。
 
-- real handwritten extraction set；
-- Framing Invariance；
-- Evidence Fidelity；
-- Abstention；
-- adversarial audit usefulness；
-- model replacement regression。
+不建立 diagnosis、nutrition、safety、framing invariance、Policy Gate 或 periodic supervision 测试分支。
 
-同一 EvidencePacket 的 Blind Diagnosis 应在不同 user framing 下保持稳定。
-
-## 14. 推荐代码边界
+## 12. 目标代码结构
 
 ```text
 src/
-├── index.ts
-├── plugin/
-│   ├── hooks.ts
-│   ├── config.ts
-│   └── runtime.ts
-├── ingress/
-│   ├── router.ts
-│   ├── training-log.ts
-│   ├── diet.ts
+├── plugin.ts
+├── config/
+├── domain/
+│   ├── program.ts
+│   ├── observation.ts
+│   ├── correction.ts
+│   └── processing.ts
+├── program/
+│   ├── validator.ts
+│   ├── engine.ts
+│   └── state.ts
+├── extraction/
+│   ├── workout-log.ts
 │   └── body-weight.ts
-├── engines/
-│   ├── program-engine.ts
-│   ├── metrics-engine.ts
-│   └── evidence-builder.ts
-├── llm/
-│   ├── blind-diagnostician.ts
-│   ├── belief-extractor.ts
-│   ├── adversarial-auditor.ts
-│   └── reporter.ts
-├── policy/
-│   ├── gate.ts
-│   └── safety.ts
+├── media/
+│   └── sanitizer.ts
 ├── storage/
-│   ├── db.ts
-│   ├── schema.ts
-│   └── migrations/
-└── domain/
-    ├── program.ts
-    ├── evidence.ts
-    └── decision.ts
+│   ├── personal-data.ts
+│   ├── runtime-state.ts
+│   └── rebuild.ts
+└── reporting/
+    └── recording-reply.ts
 ```
-
-## 15. 官方接口依据
-
-实现时优先核对：
-
-- OpenClaw Plugin hooks：`https://docs.openclaw.ai/plugins/hooks`
-- Plugin runtime helpers：`https://docs.openclaw.ai/plugins/sdk-runtime`
-- Plugin architecture internals：`https://docs.openclaw.ai/plugins/architecture-internals`
-- Cron：`https://docs.openclaw.ai/cron-jobs`
-
-不得从 OpenClaw host internals 私有路径直接 import；应使用公开 `openclaw/plugin-sdk/*` contract。

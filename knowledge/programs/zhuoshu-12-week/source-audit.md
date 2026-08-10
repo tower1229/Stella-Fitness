@@ -13,14 +13,13 @@ source_interpretation: RESOLVED_Q1_Q6
 program_spec_draft: v0.2
 raw_source_archive: COMMITTED_TO_PUBLIC_GITHUB_REPOSITORY
 final_source_cross_check: COMPLETE
-canonical_ready: false
+runtime_ready: false
 ```
 
-`canonical_ready: false` 现在不是因为训练计划内容仍有缺口，也不是因为原始 Office 文件未归档。
+`runtime_ready: false` 现在不是因为训练计划内容仍有缺口，也不是因为原始 Office 文件未归档。
 
 当前训练处方来源层已经收敛；剩余门禁分别属于：
 
-- `DEFAULT-PROGRAM-BLOCKED`：`Default Program Candidate` 的独立领域审核与签署；
 - `RELEASE-BLOCKING`：Built-in Program 的派生、修改、署名与分发授权；
 - `REVALIDATE_AT_KICKOFF` / implementation acceptance：ProgramSpec schema/fixture 验证。
 
@@ -169,7 +168,7 @@ known_gaps: []
 
 ## 9. 审定规则
 
-未来 `program-spec.v1` 标记为 canonical 前至少需要：
+未来 `program-spec.v1` 标记为 runtime-ready 前至少需要：
 
 - [x] 第 4 周周五来源缺口已解决；
 - [x] Q1–Q6 训练计划语义已确认；
@@ -178,9 +177,9 @@ known_gaps: []
 - [x] 第一阶段详细周计划优先级已明确；
 - [x] 原始 DOCX/XLSX 已归档到公开 GitHub 仓库；
 - [x] 所有训练日与同源资料完成最终逐项审阅；
-- [x] Default Program 的领域审核范围已冻结；
-- [ ] Default Program Candidate 完成独立 Domain Review 与签署；
 - [ ] ProgramSpec Schema 校验通过；
 - [ ] Program Engine 单元测试覆盖全部 12 周；
 - [x] Built-in Program 的具体发行制品边界已冻结。
 - [ ] 已取得覆盖派生、修改、署名及实际分发渠道的可核验授权。
+
+Stella Fitness 不对训练计划作专业评价或背书；专业 Domain Review 已不再是项目 gate。

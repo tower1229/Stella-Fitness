@@ -10,7 +10,7 @@ Stella Fitness v1 does not provide Plugin-level delete, export, backup, retentio
 The Plugin must nevertheless honor filesystem changes as part of its data contract:
 
 - missing raw artifacts are reported as `source_missing`; their structured Observation Records remain unless the user also removes those records;
-- missing Observation Records cease to be active facts, and derived Training Progress, analyses, and runtime indexes are rebuilt without them;
+- missing Observation Records cease to be active facts, and Training Record Views and runtime indexes are rebuilt without them;
 - Runtime Directory caches or indexes never restore personal data removed from the Personal Data Directory;
 - schema-invalid manual edits are reported and excluded from active computation, not silently overwritten or repaired;
 - deleting or moving the entire configured directory fails closed until the user supplies a valid Personal Data Directory.

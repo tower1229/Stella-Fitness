@@ -5,7 +5,7 @@
 
 ## Decision
 
-User-uploaded images are preserved byte-for-byte in the user-configured Personal Data Directory, including metadata already present in the file. The Plugin does not extract unrelated EXIF/GPS/device metadata into Observation Records or Analysis Records.
+User-uploaded images are preserved byte-for-byte in the user-configured Personal Data Directory, including metadata already present in the file. The Plugin does not extract unrelated EXIF/GPS/device metadata into Observation Records or Processing Records.
 
 Before an image is submitted to the OpenClaw media runtime, the Plugin creates a temporary sanitized media copy that:
 
@@ -13,7 +13,7 @@ Before an image is submitted to the OpenClaw media runtime, the Plugin creates a
 - removes EXIF, GPS, device, software, thumbnail, and other non-image metadata;
 - contains only the pixels and encoding required for the extraction task.
 
-Only the sanitized copy is submitted to OpenClaw. It lives in the Runtime Directory for the minimum processing window and is cleaned after success, failure, timeout, or cancellation. No model role receives EXIF/GPS unless a future version adds a reviewed feature that explicitly requires it.
+Only the sanitized copy is submitted to OpenClaw. It lives in the Runtime Directory for the minimum processing window and is cleaned after success, failure, timeout, or cancellation. No extraction call receives EXIF/GPS.
 
 ## Consequences
 

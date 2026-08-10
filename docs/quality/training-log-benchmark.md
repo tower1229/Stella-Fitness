@@ -141,11 +141,11 @@ field_visibility:
 
 动作名称略有偏差但可由模板位置与 program 唯一解析。
 
-### S2 — Decision-affecting
+### S2 — Record-affecting
 
-关键训练事实识别错误，但尚未触发健康安全风险。
+关键训练事实识别错误并进入候选记录。
 
-### S3 — Safety / integrity critical
+### S3 — Integrity critical
 
 - 对空白/不可见字段制造高置信事实；
 - 语义类型错误导致错误入库；

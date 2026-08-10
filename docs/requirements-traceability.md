@@ -1,78 +1,34 @@
 # 需求追踪矩阵
 
-目标：让每项关键需求都有明确的来源、设计落点和未来验收方式，避免实施时只凭 README 印象开发。
+| Requirement | 设计落点 | 未来验收 |
+|---|---|---|
+| 训练中零手机依赖 | `product/user-flows.md` | 不要求 set-by-set 手机输入 |
+| 复用现成三阶段 XLSX | `product/training-log-template.md`, ADR-005 | supplied-template benchmark |
+| 训练后照片录入 | extraction contract | scenario harness |
+| 空白 actual 不补齐 | extraction schema | blank-preservation case |
+| load 多态语义 | template + observation schema | semantic classification cases |
+| reps/duration 分离 | ProgramSpec + extraction schema | plank regression case |
+| strength test 独立处理 | ProgramSpec + extraction schema | Week 4 binding fixture |
+| 原始备注不作解释 | Observation schema, ADR-024 | G-LOG-006 |
+| 低置信最小确认 | confirmation flow | ambiguous/cropped cases |
+| 用户纠错可追溯 | correction records | rebuild case |
+| 重复上传不重复计入 | artifact hash/idempotency | duplicate case |
+| 体重只作事实记录 | Observation schema, ADR-024 | no-evaluation case |
+| Program Engine 确定性 | ProgramSpec | full 12-week fixtures |
+| `A/N` 每个动作独立 | Program State | binding fixtures |
+| recovery 保持计划身份 | ProgramSpec | recovery fixture |
+| unresolved fail closed | validator | invalid fixture |
+| Observation canonical | ADR-014 | restart/rebuild tests |
+| Personal Data Directory 显式配置 | ADR-012 | missing-config fail closed |
+| Runtime 不保存 canonical 用户数据 | ADR-012/020 | path-boundary tests |
+| 原件保真、payload 去 metadata | ADR-022 | byte/orientation/metadata tests |
+| 用户删除有效 | ADR-020 | external deletion test |
+| 无遥测与隐式数据复用 | ADR-023 | package/config inspection |
+| 不评价训练表现 | ADR-024 | G-SCOPE-001 |
+| 不处理饮食营养 | ADR-024 | G-SCOPE-003 |
+| 不处理健康风险 | ADR-024 | G-SCOPE-002 |
+| 不保留隐藏监督分支 | ADR-024 | G-SCOPE-004 + code search |
+| 软件与内容权利分离 | ADR-018 | package inspection |
+| raw Office 文件不入包 | ADR-010/011 | artifact exclusion test |
 
-| Requirement | 设计落点 | 依据/研究 | 未来验收 |
-|---|---|---|---|
-| 训练中零手机依赖 | `product/user-flows.md` | 用户场景约束 | 训练流程不要求 set-by-set 手机输入 |
-| v1 复用现成三阶段 XLSX 训练日志 | `product/training-log-template.md`, ADR-005 | 原课程配套模板 + offline-first UX | supplied-template Tier A benchmark |
-| 不为 v1 强制开发 ProgramSpec 模板生成器 | ADR-005 | 避免无必要实现成本 | v1 scope review |
-| 训练后照片录入 | ingestion contract（未来） | `research/openclaw-platform.md` | `quality/training-log-template-benchmark.md` |
-| 空白实际值不得根据计划补齐 | extraction schema | evidence integrity | blank preservation / inferred-actual rate |
-| `重量` 支持 kg / 辅助 / 动作变式等多态语义 | `product/training-log-template.md` | supplied workbook semantics | load semantic classification accuracy |
-| 组格按动作区分 reps / duration | extraction schema + ProgramSpec | 平板支撑等动作语义 | set-value semantic accuracy |
-| 第 4 周周五力量测试需要独立 layout | template extraction contract | original-course workbook | strength-test layout classification |
-| 动作质量高/中/低不映射为固定 RPE/RIR | subjective evidence policy | supplied workbook + measurement caution | schema/Golden Cases |
-| 识别不确定时最小补充 | extraction uncertainty flow | low-friction principle | ambiguous/cropped Golden Cases |
-| 用户纠错优先于模型 extraction | observation provenance | data integrity | correction case + metric recompute |
-| 体重定期输入 | evidence model（未来） | 产品需求 | 时间序列可追溯、支持修正 |
-| 单次体重变化不直接触发调整 | trend policy | `research/intervention-thresholds.md` | transient-noise Golden Cases |
-| 饮食输入可选 | diet evidence model | 产品需求 | 缺失饮食不阻塞正常训练监督 |
-| Food photo 不制造精确数字 | diet evidence policy, ADR-004/007 | food-image validation research | range/calibration/false-precision eval |
-| 营养证据按来源分级 | ADR-007 | `research/nutrition-data-sources.md` | source-selection accuracy |
-| 包装标签优先于图像猜测 | nutrition source hierarchy | NHC label context + product integrity | packaged-label Golden Cases |
-| Personal Meal 可复用但可纠错 | local meal profile（未来） | private-agent continuity | fixed-meal benchmark cases |
-| 原计划确定性解释 | Program Engine（未来） | ProgramSpec | 相同 program state 得到相同 prescription |
-| `A` 是每个主项各自初始 12RM | `rules.md`, `program-spec.v0.2.yaml` | 用户课程背景确认 Q1 | course-start binding fixture |
-| Week 4 三主项新 12RM 分别绑定 `N` | ProgramSpec phase transition | original-course XLSX + Q2 | strength-test → N binding fixture |
-| Week 4 引体测试影响 Phase 2 辅助带选择 | phase2 pull-up rule | Q3 | assistance-selection Golden Cases |
-| 引体辅助尽量支持每组 ≥8 次但不覆盖 total reps | phase2 template | Q3 | assistance rule + total-reps invariant |
-| Week 4 与周期末使用同一 12RM 测试协议 | testing protocol | Q4 + source cycle method | protocol reference fixture |
-| 哑铃推举 / 哑铃推肩归一为同一 exercise ID | exercise aliases | Q5 + XLSX/source naming | normalization fixture |
-| 哑铃弯举必须与哑铃推肩保持不同 exercise ID | exercise aliases | Q5 + third-stage source | false-merge regression case |
-| 第一阶段详细周计划优先于“两周加重一次”概括 | progression authority | Q6 + source detailed schedule | week 2/3 load-node fixtures |
-| Symbolic load 不解释成固定公斤 | ProgramSpec | source fidelity | symbolic-load fixture |
-| Recovery 不误判为退步 | Program/Metric semantics | source plan | recovery eval |
-| Source unknown 必须 fail closed | ProgramSpec design | source-governance principle | future unresolved-program fixture |
-| 源计划与外部证据分层 | source/program critique boundary | `research/domain-evidence.md` | external evidence 不静默改 ProgramSpec |
-| 用户观点不进入盲诊 | Blind Diagnosis boundary, ADR-002 | sycophancy research + OpenClaw isolated runtime | Information Flow Test |
-| 诊断冻结后再披露 belief | diagnosis/audit protocol | architecture | trajectory / payload audit |
-| 同证据不同 framing 同诊断 | Blind isolation + Golden Cases | anti-sycophancy requirement | Framing Invariance Eval |
-| Auditor 寻找反证但不无理由推翻 | audit contract | `quality/golden-cases.md` | Auditor effectiveness cases |
-| 默认不干预 | decision policy | 产品定位 + balanced eval principle | No-change / Abstention Eval |
-| 未经审定的 numeric threshold 禁止运行时创造 | ADR-008 | `research/intervention-thresholds.md` | Policy Gate / Golden Cases |
-| Safety red flag 优先于增肌优化 | `quality/safety-escalation.md` | AHA/CDC/MedlinePlus research | Safety escalation cases |
-| 普通 DOMS 不自动 emergency | safety negative controls | safety research | benign-soreness cases |
-| v1 只面向健康成年人 18+ 的普通增肌监督 | `product/applicability.md`, ADR-006 | scope control + ACSM evidence population | onboarding/scope cases |
-| 特殊人群不默认套普通 Policy | applicability policy | safety boundary | scope exclusion cases |
-| 模型角色可替换 | ADR-003 + role contracts | `research/model-strategy.md` | same benchmark before model swap |
-| 模型选择必须基于项目自有 Benchmark | quality benchmark docs | vendor-neutral principle | locked extraction/diagnosis eval |
-| 敏感数据最小披露 | provider boundary | `quality/privacy-safety.md` | payload-level privacy tests |
-| 个人数据只写入用户配置目录 | ADR-012 / data lifecycle | 用户控制数据位置 | missing-config fail-closed + path-boundary tests |
-| Observation canonical、Progress 可重建 | ADR-014 / data lifecycle | 历史、纠错与派生分层 | rebuild + correction lineage tests |
-| 只持久化结构化 Analysis Records | ADR-015 / data lifecycle | 审计性与敏感数据最小化 | persistence allowlist + debug cleanup tests |
-| OpenClaw 管 Provider/外发，Plugin 管编排/披露/角色绑定 | ADR-016 / OpenClaw config contract | 保留信息隔离并避免双重 Provider 配置 | payload isolation + allowedModels + metadata-boundary tests |
-| v1 不执行未审核数值调整 | ADR-017 / ADR-008 | 缩小范围而非降低审核要求 | v1 action allowlist + ProgramSpec progression tests |
-| 原图由用户目录持久保留并由用户通过文件系统管理 | ADR-013 / ADR-020 / data lifecycle | personal-data ownership without duplicate maintenance UI | path-boundary + external-deletion tests |
-| Personal Data Directory 即可移植导出制品 | ADR-020 / data lifecycle | 不引入 Plugin 数据维护子系统 | copy/rescan/schema-validation/rebuild tests |
-| 原件保真但媒体 payload 去除 EXIF/GPS | ADR-022 / privacy requirements | 审计原件与最小披露分离 | byte-integrity + orientation + metadata-strip + cleanup tests |
-| 内置内容需授权，用户输入与派生产出由用户控制 | ADR-023 / privacy + lifecycle | Plugin 不取得个人数据二次使用权 | storage-boundary + no-telemetry + benchmark-separation tests |
-| OpenClaw processing provenance 可追溯 | data lifecycle | Plugin 只记录 runtime 提交与返回元数据 | processing provenance export |
-| Phase 0 Golden Cases 在代码前冻结 | `quality/golden-cases.md` | anti-test-fitting governance | review approval record |
-| 专业结论有 reviewer ownership | `planning/review-governance.md` | governance | signed review/version record |
-| 周期监督默认静默 | Cron design（未来） | OpenClaw Cron capability | NO_REPLY/silence cases |
-| 可公开安装 | release contract | ClawHub research | validate + dry-run + clean install |
-| ClawHub canonical identity 为 `@tower1229/stella-fitness` | ADR-021 / publishing research | owner 与 package scope 一致 | whoami + owner authorization + validate + dry-run |
-| 首个教程作为 Built-in Program | ADR-011 / source governance | 派生运行时制品随包；可核验授权待完成 | package artifact inspection + rights review |
-| 原始训练日志 XLSX 不进入安装包 | `sources/training-log-template-audit.md` / ADR-011 | GitHub 审计归档已确认；安装包使用生成式/空白模板 | package artifact exclusion test |
-| 软件使用 Apache-2.0，内容权利独立 | ADR-018 / `LICENSE` / `NOTICE` | 防止软件许可被误读为课程或个人数据授权 | package license inspection + rights-boundary review |
-| v1 nutrition 使用 label/personal meal/USDA fallback | ADR-019 / nutrition data research | 不以未授权 OCR 数据换取本地覆盖 | provider allowlist + provenance + low-confidence mixed-dish cases |
-
-## 需求变更规则
-
-- 修改 `FROZEN` 需求时，必须同时修改本矩阵；
-- 实施中发现平台能力与设计不符，先回到需求/架构层记录，不通过代码 workaround 偷偷改变产品语义；
-- 一项能力没有未来可验证的方法时，默认认为需求还没有定义完整；
-- reviewer 无法确认的专业阈值保持 Unknown，不能用模型意见替代批准；
-- 新模型、数据源或特殊人群支持必须先补“依据 → 设计落点 → 验收”，再进入实现；
-- 后续若发现新的课程内部歧义，必须先记录并集中向用户确认，再修改 ProgramSpec。
+冻结需求变更时必须同步本矩阵、Golden Cases 和适用 ADR。

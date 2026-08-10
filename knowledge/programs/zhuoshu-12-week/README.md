@@ -92,10 +92,10 @@
 
 `program-spec.v0.2.yaml` 已吸收上述同源资料和用户确认，当前在**训练处方来源层面没有已知缺口**。
 
-它仍保持 `draft`，原因不是训练计划内容未知，而是 Stella Fitness 尚处于 Phase 0：
+它仍保持 `draft`，原因不是训练计划内容未知，而是可执行实现尚未完成：
 
 - ProgramSpec schema 尚未实施验证；
-- public default program 仍需决定专业审核范围；
+- ProgramSpec validator 与完整 fixture test 尚未实现；
 - 教程/XLSX 的公开再发布权仍需单独处理；
 - 任何实现代码尚未开始。
 
@@ -118,9 +118,9 @@
 
 ## 与 Stella Fitness 的关系
 
-该计划是 Stella Fitness 的第一份 program package，训练处方来源已基本收敛，但项目整体仍处于 Phase 0。
+该计划是 Stella Fitness 的第一份 program package，训练处方来源已收敛。项目只保证来源忠实和确定性执行，不评价计划质量。
 
-项目架构不应与该计划强耦合。未来应允许新增其他训练计划，并通过统一 ProgramSpec 接口供监督引擎使用。
+项目架构不应与该计划强耦合。未来应允许新增其他训练计划，并通过统一 ProgramSpec 接口供 Program Engine 使用。
 
 ## 权利边界
 

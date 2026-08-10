@@ -33,7 +33,7 @@ docs/                产品需求、架构、研究、质量与治理
 
 ## 2. Research Sources
 
-OpenClaw、模型 Provider、运动科学、营养识别、隐私与安全研究登记在 [source-register.md](./source-register.md)。
+OpenClaw、训练日志 extraction model、隐私与发布研究登记在 [source-register.md](./source-register.md)。
 
 ## 来源治理规则
 
@@ -43,6 +43,5 @@ OpenClaw、模型 Provider、运动科学、营养识别、隐私与安全研究
 4. 平台/价格/模型属于易变事实，记录检查日期；
 5. 实施开始和正式发布前重新核验易变依赖；
 6. 技术平台优先官方文档；
-7. 运动/营养结论优先 position stand、系统综述、meta-analysis、同行评议论文；
-8. `knowledge/` 不通过 research source 静默改写；
-9. 不确定或冲突的资料进入 `known-gaps.md`。
+7. `knowledge/` 不通过 research source 静默改写；
+8. 不确定或冲突的资料进入 `known-gaps.md`。
