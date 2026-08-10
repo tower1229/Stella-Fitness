@@ -13,6 +13,7 @@ type HarnessInput = Omit<ExtractionRequest, "signal"> & {
 
 type ScenarioHarnessOptions = {
   extractionRuntime: ExtractionRuntime;
+  personalDataDirectory?: () => string | undefined;
   preflight: () => ConfigurationPreflightResult;
 };
 
@@ -20,6 +21,12 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
   const pluginRuntime = createStellaFitnessRuntime(options);
 
   return {
+    selectProgram(programSpec: unknown) {
+      return pluginRuntime.selectProgram(programSpec);
+    },
+    confirmCycleStart(cycleStart: string) {
+      return pluginRuntime.confirmCycleStart(cycleStart);
+    },
     resolvePlannedSession(
       input: Parameters<typeof pluginRuntime.resolvePlannedSession>[0],
     ) {

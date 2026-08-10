@@ -74,6 +74,9 @@ try {
   if (!inspection.plugin.commands.includes("stella-status")) {
     throw new Error("Plugin command stella-status was not registered");
   }
+  if (!inspection.plugin.commands.includes("stella-setup")) {
+    throw new Error("Plugin command stella-setup was not registered");
+  }
   if (inspection.diagnostics.length !== 0) {
     throw new Error(
       `Plugin diagnostics are not empty: ${JSON.stringify(inspection.diagnostics)}`,

@@ -17,6 +17,12 @@ import {
   type ProgramResolutionInput,
 } from "./program/engine.js";
 import { validateProgramSpec } from "./program/validator.js";
+import {
+  confirmProgramSetup,
+  selectProgramForSetup,
+  type ProgramSetup,
+  type ProgramState,
+} from "./program/state.js";
 
 export type PluginExtractionOutput = {
   status: "candidate";
@@ -26,6 +32,8 @@ export type PluginExtractionOutput = {
 
 export type StellaFitnessRuntime = {
   preflight(): ConfigurationPreflightResult;
+  selectProgram(programSpec: unknown): Promise<ProgramSetup>;
+  confirmCycleStart(cycleStart: string): Promise<ProgramState>;
   resolvePlannedSession(
     input: Omit<ProgramResolutionInput, "program"> & { programSpec: unknown },
   ): PlannedSession | null;
@@ -44,6 +52,7 @@ type RunEntry = {
 
 export function createStellaFitnessRuntime(options: {
   extractionRuntime: ExtractionRuntime;
+  personalDataDirectory?: () => string | undefined;
   preflight: () => ConfigurationPreflightResult;
 }): StellaFitnessRuntime {
   const runs = new Map<string, RunEntry>();
@@ -51,6 +60,25 @@ export function createStellaFitnessRuntime(options: {
 
   return {
     preflight,
+    async selectProgram(programSpec) {
+      assertSetupPreflight(preflight());
+      const personalDataDirectory = options.personalDataDirectory?.();
+      if (personalDataDirectory === undefined) {
+        throw new Error("Personal Data Directory is unavailable after preflight");
+      }
+      return await selectProgramForSetup({
+        personalDataDirectory,
+        programSpec,
+      });
+    },
+    async confirmCycleStart(cycleStart) {
+      assertSetupPreflight(preflight());
+      const personalDataDirectory = options.personalDataDirectory?.();
+      if (personalDataDirectory === undefined) {
+        throw new Error("Personal Data Directory is unavailable after preflight");
+      }
+      return await confirmProgramSetup({ personalDataDirectory, cycleStart });
+    },
     resolvePlannedSession(input) {
       return resolvePlannedSession({
         program: validateProgramSpec(input.programSpec),
@@ -98,6 +126,16 @@ export function createStellaFitnessRuntime(options: {
       return rejectOnAbort(entry.promise, request.signal);
     },
   };
+}
+
+function assertSetupPreflight(preflight: ConfigurationPreflightResult): void {
+  if (preflight.readiness === "BLOCKED_CONFIGURATION") {
+    throw new Error(
+      `Stella Fitness cannot start setup in ${preflight.readiness}: ${preflight.reasons
+        .map(({ code }) => code)
+        .join(", ")}`,
+    );
+  }
 }
 
 function fingerprintRequest(request: ExtractionRequest): string {

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -5,6 +6,7 @@ import {
   type OpenClawConfig,
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
+import { parse } from "yaml";
 
 import { assertOperatorModelPermission } from "./contracts/openclaw.js";
 import { createOpenClawExtractionRuntime } from "./extraction/openclaw.js";
@@ -49,6 +51,10 @@ export function registerStellaFitnessPlugin(
   preflight();
   const stellaRuntime = createStellaFitnessRuntime({
     extractionRuntime: createCurrentExtractionRuntime(api),
+    personalDataDirectory: () =>
+      resolvePersonalDataDirectory(
+        currentPluginConfig(currentOpenClawConfig(api)),
+      ),
     preflight,
   });
 
@@ -59,6 +65,39 @@ export function registerStellaFitnessPlugin(
     requireAuth: true,
     async handler() {
       return createStatusResponse(preflight());
+    },
+  });
+
+  api.registerCommand({
+    name: "stella-setup",
+    description: "Select a ProgramSpec and confirm the cycle start date",
+    acceptsArgs: true,
+    requireAuth: true,
+    async handler(context) {
+      const input = parseSetupCommand(context.args);
+      if (input.kind === "help") {
+        return { text: setupHelp() };
+      }
+      if (input.kind === "select") {
+        const setup = await stellaRuntime.selectProgram(
+          parse(await readFile(input.programSpecPath, "utf8")),
+        );
+        return {
+          text: [
+            `ProgramSpec selected: ${setup.program.id}@${setup.program.version}`,
+            `setup: ${setup.id}`,
+            "Confirm the cycle start date with /stella-setup confirm YYYY-MM-DD",
+          ].join("\n"),
+        };
+      }
+      const state = await stellaRuntime.confirmCycleStart(input.cycleStart);
+      return {
+        text: [
+          `Program State initialized: ${state.id}`,
+          `program: ${state.program.id}@${state.program.version}`,
+          `cycle-start: ${state.cycle.startDate}`,
+        ].join("\n"),
+      };
     },
   });
 
@@ -244,4 +283,44 @@ function resolveExtractionConfig(
     return undefined;
   }
   return { provider: record.provider, model: record.model };
+}
+
+type SetupCommandInput =
+  | { readonly kind: "help" }
+  | { readonly kind: "select"; readonly programSpecPath: string }
+  | { readonly kind: "confirm"; readonly cycleStart: string };
+
+function parseSetupCommand(args: string | undefined): SetupCommandInput {
+  const input = args?.trim() ?? "";
+  if (input === "" || input === "help") {
+    return { kind: "help" };
+  }
+  if (input.startsWith("select ")) {
+    const programSpecPath = input.slice("select ".length).trim();
+    if (programSpecPath.length === 0) {
+      return { kind: "help" };
+    }
+    return { kind: "select", programSpecPath };
+  }
+  const confirm = /^confirm\s+(\S+)$/.exec(input);
+  if (confirm?.[1] !== undefined) {
+    return { kind: "confirm", cycleStart: confirm[1] };
+  }
+  return { kind: "help" };
+}
+
+function setupHelp(): string {
+  return [
+    "Usage:",
+    "/stella-setup select <ProgramSpec YAML or JSON path>",
+    "/stella-setup confirm <YYYY-MM-DD>",
+  ].join("\n");
+}
+
+function resolvePersonalDataDirectory(
+  pluginConfig: Record<string, unknown> | undefined,
+): string | undefined {
+  return typeof pluginConfig?.personalDataDirectory === "string"
+    ? pluginConfig.personalDataDirectory
+    : undefined;
 }

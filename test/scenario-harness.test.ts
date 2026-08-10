@@ -1,4 +1,16 @@
-import { describe, expect, it } from "vitest";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
+import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 import {
   ControlledExtractionRuntime,
@@ -6,6 +18,14 @@ import {
 } from "../src/scenario/harness.js";
 import type { ConfigurationPreflightResult } from "../src/preflight.js";
 import { sanitizedMediaFixture } from "./support/sanitized-media.js";
+
+const temporaryRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("scenario-level Plugin harness", () => {
   it("injects a controlled extraction result without a live provider", async () => {
@@ -208,6 +228,148 @@ describe("scenario-level Plugin harness", () => {
     ).rejects.toThrow("PERSONAL_DATA_DIRECTORY_REQUIRED");
     expect(runtime.requests).toEqual([]);
   });
+
+  it("does not start Program setup while configuration preflight is blocked", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      personalDataDirectory: () => personalDataDirectory,
+      preflight: () => ({
+        readiness: "BLOCKED_CONFIGURATION",
+        reasons: [
+          {
+            code: "CONVERSATION_ACCESS_REQUIRED",
+            message: "Enable Plugin conversation access",
+          },
+        ],
+      }),
+    });
+
+    await expect(harness.selectProgram({ id: "program" })).rejects.toThrow(
+      "CONVERSATION_ACCESS_REQUIRED",
+    );
+    expect(readdirSync(personalDataDirectory)).toEqual([]);
+  });
+
+  it("validates the selected ProgramSpec and stores a resumable setup only in Personal Data Directory", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      personalDataDirectory: () => personalDataDirectory,
+      preflight: () => ({ readiness: "READY_FOR_SETUP", reasons: [] }),
+    });
+
+    const setup = await harness.selectProgram(await programFixture());
+
+    expect(setup).toMatchObject({
+      schemaVersion: "stella-fitness/program-setup/v0.1",
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      program: {
+        id: "zhuoshu-12-week",
+        version: "0.2.0",
+        schemaVersion: "stella-fitness/program/v0.1",
+        specSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+      provenance: {
+        kind: "program-spec-selection",
+        selectedAt: expect.any(String),
+      },
+    });
+    expect(readdirSync(personalDataDirectory)).toEqual(["program"]);
+    expect(
+      JSON.parse(
+        readFileSync(join(personalDataDirectory, "program", "setup.json"), "utf8"),
+      ),
+    ).toEqual(setup);
+  });
+
+  it("fails closed on an invalid ProgramSpec without creating setup state", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const programSpec = (await programFixture()) as {
+      weeks: Array<{ sessions: Array<{ status: string }> }>;
+    };
+    programSpec.weeks[0]!.sessions[0]!.status = "unresolved";
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      personalDataDirectory: () => personalDataDirectory,
+      preflight: () => ({ readiness: "READY_FOR_SETUP", reasons: [] }),
+    });
+
+    await expect(harness.selectProgram(programSpec)).rejects.toThrow(
+      "status must be resolved",
+    );
+    expect(readdirSync(personalDataDirectory)).toEqual([]);
+  });
+
+  it("resumes interrupted setup idempotently and confirms the canonical Program State", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const options = {
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      personalDataDirectory: () => personalDataDirectory,
+      preflight: (): ConfigurationPreflightResult => ({
+        readiness: "READY_FOR_SETUP",
+        reasons: [],
+      }),
+    };
+    const programSpec = await programFixture();
+    const interruptedSetup = await createScenarioHarness(options).selectProgram(
+      programSpec,
+    );
+
+    const resumedHarness = createScenarioHarness(options);
+    expect(await resumedHarness.selectProgram(programSpec)).toEqual(
+      interruptedSetup,
+    );
+    const state = await resumedHarness.confirmCycleStart("2026-08-10");
+
+    expect(state).toEqual({
+      schemaVersion: "stella-fitness/program-state/v0.1",
+      id: interruptedSetup.id,
+      program: interruptedSetup.program,
+      cycle: { startDate: "2026-08-10" },
+      symbolicLoadBindings: {},
+      provenance: {
+        kind: "confirmed-program-setup",
+        setupId: interruptedSetup.id,
+        selectedAt: interruptedSetup.provenance.selectedAt,
+        cycleStartConfirmedAt: expect.any(String),
+      },
+    });
+    expect(
+      JSON.parse(
+        readFileSync(join(personalDataDirectory, "program", "state.json"), "utf8"),
+      ),
+    ).toEqual(state);
+    expect(readdirSync(join(personalDataDirectory, "program"))).toEqual([
+      "state.json",
+    ]);
+    expect(JSON.stringify(state)).not.toMatch(
+      /body.profile|health|nutrition|performance/i,
+    );
+    await expect(
+      resumedHarness.confirmCycleStart("2026-08-10"),
+    ).resolves.toEqual(state);
+    await expect(resumedHarness.selectProgram(programSpec)).resolves.toEqual(
+      interruptedSetup,
+    );
+  });
+
+  it("keeps the resumable setup when the cycle start confirmation is invalid", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      personalDataDirectory: () => personalDataDirectory,
+      preflight: () => ({ readiness: "READY_FOR_SETUP", reasons: [] }),
+    });
+    await harness.selectProgram(await programFixture());
+
+    await expect(harness.confirmCycleStart("2026-08-11")).rejects.toThrow(
+      "Cycle start must be a Monday",
+    );
+    expect(readdirSync(join(personalDataDirectory, "program"))).toEqual([
+      "setup.json",
+    ]);
+  });
 });
 
 function readyHarness(extractionRuntime: ControlledExtractionRuntime) {
@@ -232,4 +394,24 @@ function candidate() {
 
 function sanitizedFixture() {
   return sanitizedMediaFixture();
+}
+
+function temporaryPersonalDataDirectory(): string {
+  const root = mkdtempSync(join(tmpdir(), "stella-scenario-"));
+  temporaryRoots.push(root);
+  const personalDataDirectory = join(root, "personal");
+  mkdirSync(personalDataDirectory);
+  return personalDataDirectory;
+}
+
+async function programFixture(): Promise<unknown> {
+  return parse(
+    await readFile(
+      new URL(
+        "../knowledge/programs/zhuoshu-12-week/program-spec.v0.2.yaml",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
 }

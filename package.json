@@ -28,13 +28,15 @@
   "peerDependencies": {
     "openclaw": ">=2026.6.34"
   },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  },
   "devDependencies": {
     "@types/node": "26.1.0",
     "@types/ws": "8.18.1",
     "openclaw": "2026.6.34",
     "typescript": "6.0.3",
-    "vitest": "3.2.4",
-    "yaml": "^2.9.0"
+    "vitest": "3.2.4"
   },
   "engines": {
     "node": ">=22.19.0"

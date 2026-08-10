@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -95,6 +95,48 @@ describe("Plugin registration", () => {
         },
       }),
     ]);
+  });
+
+  it("registers an explicit two-step Program setup command", async () => {
+    const commands: Array<Record<string, unknown>> = [];
+    const personalDataDirectory = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands,
+      hooks: new Map(),
+      cliRegistrations: [],
+      pluginConfig: personalDataDirectory,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const setupCommand = commands.find(
+      (candidate) => candidate.name === "stella-setup",
+    );
+    const handler = setupCommand?.handler as (context: {
+      args?: string;
+    }) => Promise<{ text: string }>;
+
+    await expect(
+      handler({ args: `select ${programFixturePath()}` }),
+    ).resolves.toMatchObject({
+      text: expect.stringContaining("ProgramSpec selected: zhuoshu-12-week@0.2.0"),
+    });
+    await expect(handler({ args: "confirm 2026-08-10" })).resolves.toMatchObject(
+      { text: expect.stringContaining("Program State initialized") },
+    );
+
+    const state = JSON.parse(
+      readFileSync(
+        join(personalDataDirectory.personalDataDirectory, "program", "state.json"),
+        "utf8",
+      ),
+    );
+    expect(state).toMatchObject({
+      schemaVersion: "stella-fitness/program-state/v0.1",
+      program: { id: "zhuoshu-12-week", version: "0.2.0" },
+      cycle: { startDate: "2026-08-10" },
+    });
   });
 
   it("connects configured Plugin runtime to OpenClaw structured extraction", async () => {
@@ -243,7 +285,10 @@ describe("Plugin registration", () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow("STRUCTURED_MEDIA_REQUIRED");
-    expect(commands).toHaveLength(1);
+    expect(commands.map(({ name }) => name)).toEqual([
+      "stella-status",
+      "stella-setup",
+    ]);
   });
 
   it("accepts corrected configuration after rerunning preflight", async () => {
@@ -421,6 +466,13 @@ function configuredPersonalDirectory(): { personalDataDirectory: string } {
   const personalDataDirectory = join(temporaryRoot(), "personal");
   mkdirSync(personalDataDirectory);
   return { personalDataDirectory };
+}
+
+function programFixturePath(): string {
+  return new URL(
+    "../knowledge/programs/zhuoshu-12-week/program-spec.v0.2.yaml",
+    import.meta.url,
+  ).pathname;
 }
 
 function temporaryRoot(): string {
