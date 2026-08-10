@@ -32,7 +32,9 @@ export type WorkoutLogProcessingRecord = {
   readonly schemaVersion: "stella-fitness/processing/workout-log/v0.1";
   readonly id: string;
   readonly path: string;
-  readonly operation: "workout-log-extraction";
+  readonly operation:
+    | "workout-log-extraction"
+    | "workout-log-confirmation";
   readonly runId: string;
   readonly startedAt: string;
   readonly completedAt: string;
@@ -45,6 +47,11 @@ export type WorkoutLogProcessingRecord = {
     readonly sha256: string;
   };
   readonly execution?: ExtractionExecutionMetadata;
+  readonly result?: {
+    readonly kind: "workout-log-observation";
+    readonly observationId: string;
+    readonly path: string;
+  };
   readonly errorCategory?:
     | "cancelled"
     | "extraction-failed"

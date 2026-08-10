@@ -26,6 +26,7 @@ import {
   createScenarioHarness,
 } from "../src/scenario/harness.js";
 import type { ConfigurationPreflightResult } from "../src/preflight.js";
+import { workoutLogCandidate } from "./support/workout-log-candidate.js";
 
 const temporaryRoots: string[] = [];
 
@@ -436,13 +437,7 @@ function upload(bytes: Buffer) {
 }
 
 function candidate() {
-  return {
-    stage: 1,
-    week: 1,
-    weekday: "monday",
-    exercises: [],
-    uncertainFields: [],
-  };
+  return workoutLogCandidate();
 }
 
 function sha256(bytes: Buffer): string {

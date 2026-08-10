@@ -37,9 +37,11 @@ describe("OpenClaw structured extraction adapter", () => {
           type: "object",
           additionalProperties: false,
           required: [
+            "layout",
             "stage",
             "week",
             "weekday",
+            "sessionType",
             "exercises",
             "uncertainFields",
           ],
@@ -62,6 +64,9 @@ describe("OpenClaw structured extraction adapter", () => {
         contentType: "json",
       },
     });
+    expect(extractStructuredWithModel.mock.calls[0]?.[0].instructions).toContain(
+      "Never copy ProgramSpec targets into blank actual cells",
+    );
   });
 
   it("rejects an in-flight result after caller cancellation", async () => {

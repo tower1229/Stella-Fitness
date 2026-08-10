@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin, { registerStellaFitnessPlugin } from "../src/plugin.js";
 import { rawMediaUploadFixture } from "./support/sanitized-media.js";
+import { workoutLogCandidate } from "./support/workout-log-candidate.js";
 
 const temporaryRoots: string[] = [];
 
@@ -274,13 +275,7 @@ describe("Plugin registration", () => {
   it("connects configured Plugin runtime to OpenClaw structured extraction", async () => {
     const extractStructuredWithModel = vi.fn().mockResolvedValue({
       text: '{"stage":1}',
-      parsed: {
-        stage: 1,
-        week: 1,
-        weekday: "monday",
-        exercises: [],
-        uncertainFields: [],
-      },
+      parsed: workoutLogCandidate(),
       provider: "operator-provider",
       model: "operator-model",
       contentType: "json",
@@ -311,7 +306,7 @@ describe("Plugin registration", () => {
     });
 
     expect(output).toMatchObject({
-      status: "candidate",
+      status: "recorded",
       execution: {
         provider: "operator-provider",
         model: "operator-model",
@@ -426,13 +421,7 @@ describe("Plugin registration", () => {
   it("accepts corrected configuration after rerunning preflight", async () => {
     const extractStructuredWithModel = vi.fn().mockResolvedValue({
       text: '{"stage":1}',
-      parsed: {
-        stage: 1,
-        week: 1,
-        weekday: "monday",
-        exercises: [],
-        uncertainFields: [],
-      },
+      parsed: workoutLogCandidate(),
       provider: "operator-provider",
       model: "operator-model",
       contentType: "json",
@@ -470,7 +459,7 @@ describe("Plugin registration", () => {
         timeoutMs: 2_000,
         signal: new AbortController().signal,
       }),
-    ).resolves.toMatchObject({ status: "candidate" });
+    ).resolves.toMatchObject({ status: "recorded" });
     expect(extractStructuredWithModel).toHaveBeenCalledOnce();
   });
 

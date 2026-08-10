@@ -22,6 +22,7 @@ import {
   alternateRawMediaUploadFixture,
   rawMediaUploadFixture,
 } from "./support/sanitized-media.js";
+import { workoutLogCandidate } from "./support/workout-log-candidate.js";
 
 const temporaryRoots: string[] = [];
 
@@ -52,8 +53,12 @@ describe("scenario-level Plugin harness", () => {
     });
 
     expect(output).toMatchObject({
-      status: "candidate",
-      candidate: candidate(),
+      status: "recorded",
+      observation: {
+        stage: candidate().stage,
+        week: candidate().week,
+        exercises: expect.any(Array),
+      },
       execution: {
         provider: "controlled",
         model: "fixture-v1",
@@ -183,7 +188,7 @@ describe("scenario-level Plugin harness", () => {
 
   it("preserves conflicts as structured uncertainty instead of choosing a value", async () => {
     const conflict = {
-      path: "exercises[0].load",
+      path: "exercises[0].load.value",
       kind: "conflict",
       candidates: ["20 kg", "25 kg"],
     } as const;
@@ -202,7 +207,8 @@ describe("scenario-level Plugin harness", () => {
         timeoutMs: 2_000,
       }),
     ).resolves.toMatchObject({
-      candidate: { uncertainFields: [conflict] },
+      status: "confirmation",
+      fields: [conflict],
     });
   });
 
@@ -743,13 +749,7 @@ function readyHarness(
 }
 
 function candidate() {
-  return {
-    stage: 1,
-    week: 1,
-    weekday: "monday",
-    exercises: [],
-    uncertainFields: [],
-  };
+  return workoutLogCandidate();
 }
 
 function rawUploadFixture() {

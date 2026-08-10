@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type {
   RawArtifactRecord,
@@ -9,6 +9,7 @@ import type {
   BodyWeightObservation,
   BodyWeightView,
   ObservationSource,
+  WorkoutLogObservation,
 } from "./domain/observation.js";
 import type { PlannedSession } from "./domain/program.js";
 import {
@@ -51,13 +52,28 @@ import {
   persistRawWorkoutLogArtifact,
   persistWorkoutLogProcessingRecord,
 } from "./storage/media.js";
+import { persistWorkoutLogObservation } from "./storage/workout-log.js";
 
-export type PluginExtractionOutput = {
-  status: "candidate";
-  candidate: WorkoutLogCandidate;
+type PluginExtractionBase = {
   execution: ExtractionExecutionMetadata;
   artifact: RawArtifactRecord;
   processing: WorkoutLogProcessingRecord;
+};
+
+export type PluginExtractionOutput =
+  | (PluginExtractionBase & {
+      status: "recorded";
+      observation: WorkoutLogObservation;
+    })
+  | (PluginExtractionBase & {
+      status: "confirmation";
+      confirmationId: string;
+      fields: WorkoutLogCandidate["uncertainFields"];
+    });
+
+export type ConfirmedWorkoutLogOutput = PluginExtractionBase & {
+  status: "recorded";
+  observation: WorkoutLogObservation;
 };
 
 export type StellaFitnessRuntime = {
@@ -70,6 +86,10 @@ export type StellaFitnessRuntime = {
   ingestWorkoutLog(
     request: WorkoutLogIngestRequest,
   ): Promise<PluginExtractionOutput>;
+  confirmWorkoutLog(input: {
+    readonly confirmationId: string;
+    readonly values: Readonly<Record<string, unknown>>;
+  }): Promise<ConfirmedWorkoutLogOutput>;
   shutdown(): Promise<void>;
   recordBodyWeight(input: {
     text: string;
@@ -108,6 +128,17 @@ type RunEntry = {
   controller: AbortController;
 };
 
+type PendingWorkoutLogConfirmation = {
+  readonly candidate: WorkoutLogCandidate;
+  readonly artifact: RawArtifactRecord;
+  readonly runId: string;
+  readonly execution: ExtractionExecutionMetadata;
+  result?: {
+    readonly fingerprint: string;
+    readonly promise: Promise<ConfirmedWorkoutLogOutput>;
+  };
+};
+
 export function createStellaFitnessRuntime(options: {
   extractionRuntime: ExtractionRuntime;
   personalDataDirectory?: () => string | undefined;
@@ -116,6 +147,7 @@ export function createStellaFitnessRuntime(options: {
   preflight: () => ConfigurationPreflightResult;
 }): StellaFitnessRuntime {
   const runs = new Map<string, RunEntry>();
+  const confirmations = new Map<string, PendingWorkoutLogConfirmation>();
   const preflight = options.preflight;
   const mediaSanitizer = options.mediaSanitizer ?? createBufferMediaSanitizer();
   let stopped = false;
@@ -250,6 +282,7 @@ export function createStellaFitnessRuntime(options: {
           personalDataDirectory: requiredPersonalDataDirectory(options),
           request,
           controller,
+          confirmations,
         }),
         settled: false,
         controller,
@@ -260,6 +293,46 @@ export function createStellaFitnessRuntime(options: {
         () => markSettledAndTrim(runs, entry),
       );
       return entry.promise;
+    },
+    confirmWorkoutLog(input) {
+      assertPersonalDataPreflight(preflight());
+      if (stopped) {
+        return Promise.reject(new Error("Stella Fitness runtime is shut down"));
+      }
+      const pending = confirmations.get(input.confirmationId);
+      if (pending === undefined) {
+        return Promise.reject(new Error("Workout-log confirmation is unavailable"));
+      }
+      const fingerprint = createHash("sha256")
+        .update(
+          JSON.stringify(
+            Object.fromEntries(
+              Object.entries(input.values).sort(([left], [right]) =>
+                left.localeCompare(right),
+              ),
+            ),
+          ),
+        )
+        .digest("hex");
+      if (pending.result !== undefined) {
+        return pending.result.fingerprint === fingerprint
+          ? pending.result.promise
+          : Promise.reject(
+              new Error("Workout-log confirmation was reused with different values"),
+            );
+      }
+      const promise = recordConfirmedWorkoutLog({
+        personalDataDirectory: requiredPersonalDataDirectory(options),
+        pending,
+        values: input.values,
+      });
+      pending.result = { fingerprint, promise };
+      void promise.catch(() => {
+        if (pending.result?.promise === promise) {
+          delete pending.result;
+        }
+      });
+      return promise;
     },
     async shutdown() {
       stopped = true;
@@ -349,6 +422,7 @@ async function executeWorkoutLogIngest(options: {
   personalDataDirectory: string;
   request: WorkoutLogIngestRequest;
   controller: AbortController;
+  confirmations: Map<string, PendingWorkoutLogConfirmation>;
 }): Promise<PluginExtractionOutput> {
   const startedAt = new Date().toISOString();
   const artifact = await persistRawWorkoutLogArtifact({
@@ -393,6 +467,17 @@ async function executeWorkoutLogIngest(options: {
     } catch (error) {
       throw new ProcessingFailureError("invalid-result", error);
     }
+    const recordedAt = new Date().toISOString();
+    const persistedObservation =
+      candidate.uncertainFields.length === 0
+        ? await persistWorkoutLogObservation({
+            personalDataDirectory: options.personalDataDirectory,
+            candidate,
+            artifact,
+            runId: options.request.runId,
+            recordedAt,
+          })
+        : undefined;
     const processing = await persistWorkoutLogProcessingRecord({
       personalDataDirectory: options.personalDataDirectory,
       record: {
@@ -400,16 +485,42 @@ async function executeWorkoutLogIngest(options: {
         operation: "workout-log-extraction",
         runId: options.request.runId,
         startedAt,
-        completedAt: new Date().toISOString(),
+        completedAt: recordedAt,
         status: "succeeded",
         artifact: artifactReference(artifact),
         payload: payloadReference(lease),
         execution: result.metadata,
+        ...(persistedObservation === undefined
+          ? {}
+          : {
+              result: {
+                kind: "workout-log-observation" as const,
+                observationId: persistedObservation.observation.id,
+                path: persistedObservation.path,
+              },
+            }),
       },
     });
-    return {
-      status: "candidate",
+    if (persistedObservation !== undefined) {
+      return {
+        status: "recorded",
+        observation: persistedObservation.observation,
+        execution: result.metadata,
+        artifact,
+        processing,
+      };
+    }
+    const confirmationId = randomUUID();
+    options.confirmations.set(confirmationId, {
       candidate,
+      artifact,
+      runId: options.request.runId,
+      execution: result.metadata,
+    });
+    return {
+      status: "confirmation",
+      confirmationId,
+      fields: candidate.uncertainFields,
       execution: result.metadata,
       artifact,
       processing,
@@ -439,6 +550,121 @@ async function executeWorkoutLogIngest(options: {
     options.request.signal.removeEventListener("abort", onCallerAbort);
     await lease?.dispose();
   }
+}
+
+async function recordConfirmedWorkoutLog(options: {
+  readonly personalDataDirectory: string;
+  readonly pending: PendingWorkoutLogConfirmation;
+  readonly values: Readonly<Record<string, unknown>>;
+}): Promise<ConfirmedWorkoutLogOutput> {
+  const requiredPaths = options.pending.candidate.uncertainFields.map(
+    ({ path }) => path,
+  );
+  if (
+    Object.keys(options.values).length !== requiredPaths.length ||
+    !requiredPaths.every((path) => Object.hasOwn(options.values, path))
+  ) {
+    throw new Error("Confirm exactly the requested workout-log fields");
+  }
+
+  const corrected = candidateExtractionShape(options.pending.candidate);
+  for (const path of requiredPaths) {
+    setCandidateFieldValue(corrected, path, options.values[path]);
+  }
+  corrected.uncertainFields = [];
+  const candidate = parseWorkoutLogCandidate(corrected);
+  const recordedAt = new Date().toISOString();
+  const persisted = await persistWorkoutLogObservation({
+    personalDataDirectory: options.personalDataDirectory,
+    candidate,
+    artifact: options.pending.artifact,
+    runId: options.pending.runId,
+    recordedAt,
+    confirmedFields: requiredPaths,
+  });
+  const processing = await persistWorkoutLogProcessingRecord({
+    personalDataDirectory: options.personalDataDirectory,
+    record: {
+      schemaVersion: "stella-fitness/processing/workout-log/v0.1",
+      operation: "workout-log-confirmation",
+      runId: options.pending.runId,
+      startedAt: recordedAt,
+      completedAt: new Date().toISOString(),
+      status: "succeeded",
+      artifact: artifactReference(options.pending.artifact),
+      execution: options.pending.execution,
+      result: {
+        kind: "workout-log-observation",
+        observationId: persisted.observation.id,
+        path: persisted.path,
+      },
+    },
+  });
+  return {
+    status: "recorded",
+    observation: persisted.observation,
+    execution: options.pending.execution,
+    artifact: options.pending.artifact,
+    processing,
+  };
+}
+
+function candidateExtractionShape(candidate: WorkoutLogCandidate): Record<string, unknown> & {
+  uncertainFields: unknown[];
+} {
+  return structuredClone({
+    ...candidate,
+    uncertainFields: [...candidate.uncertainFields],
+    exercises: candidate.exercises.map((exercise) => ({
+      ...exercise,
+      sets: exercise.sets.map(({ value, confidence }) => ({ value, confidence })),
+    })),
+  });
+}
+
+function setCandidateFieldValue(
+  candidate: Record<string, unknown>,
+  path: string,
+  value: unknown,
+): void {
+  const topLevel = /^(layout|stage|week|weekday|sessionType)\.value$/u.exec(path);
+  if (topLevel !== null) {
+    setFieldValue(candidate[topLevel[1]!], value);
+    return;
+  }
+  const exerciseField = /^exercises\[(\d+)\]\.(rawLabel|exerciseId|load|actionQuality|problemNote)\.value$/u.exec(path);
+  if (exerciseField !== null) {
+    const exercise = candidateExercise(candidate, Number(exerciseField[1]));
+    setFieldValue(exercise[exerciseField[2]!], value);
+    return;
+  }
+  const setField = /^exercises\[(\d+)\]\.sets\[(\d+)\]\.value$/u.exec(path);
+  if (setField !== null) {
+    const exercise = candidateExercise(candidate, Number(setField[1]));
+    if (!Array.isArray(exercise.sets)) throw new Error("Invalid confirmation path");
+    setFieldValue(exercise.sets[Number(setField[2])], value);
+    return;
+  }
+  throw new Error(`Unsupported workout-log confirmation path: ${path}`);
+}
+
+function candidateExercise(
+  candidate: Record<string, unknown>,
+  index: number,
+): Record<string, unknown> {
+  if (!Array.isArray(candidate.exercises)) throw new Error("Invalid confirmation path");
+  const exercise = candidate.exercises[index];
+  if (typeof exercise !== "object" || exercise === null || Array.isArray(exercise)) {
+    throw new Error("Invalid confirmation path");
+  }
+  return exercise as Record<string, unknown>;
+}
+
+function setFieldValue(field: unknown, value: unknown): void {
+  if (typeof field !== "object" || field === null || Array.isArray(field)) {
+    throw new Error("Invalid confirmation path");
+  }
+  (field as Record<string, unknown>).value = value;
 }
 
 async function acquireSanitizedMedia(

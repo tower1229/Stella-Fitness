@@ -57,6 +57,11 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
         signal: input.signal ?? new AbortController().signal,
       });
     },
+    confirmWorkoutLog(
+      input: Parameters<typeof pluginRuntime.confirmWorkoutLog>[0],
+    ) {
+      return pluginRuntime.confirmWorkoutLog(input);
+    },
     shutdown() {
       return pluginRuntime.shutdown();
     },

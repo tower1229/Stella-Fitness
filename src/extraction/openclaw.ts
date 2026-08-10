@@ -37,7 +37,7 @@ export function createOpenClawExtractionRuntime(
           },
         ],
         instructions:
-          "Extract only candidate workout-log facts. Preserve blanks and uncertainty. Do not diagnose, advise, or infer health, safety, nutrition, or training quality.",
+          "Extract only candidate facts from the fixed Zhuoshu three-stage workout workbook. Identify the layout, stage, week, weekday, session type, exercises, load semantics, set-cell values, action quality, notes, field confidence, and uncertainty. Treat intentionally blank actual cells as null. Never copy ProgramSpec targets into blank actual cells. Do not diagnose, advise, or infer health, safety, nutrition, or training quality.",
         schemaName: "stella_workout_log_candidate_v1",
         jsonSchema: WORKOUT_LOG_CANDIDATE_SCHEMA,
         jsonMode: true,
