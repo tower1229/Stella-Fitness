@@ -5,6 +5,7 @@ import type {
 } from "../extraction/runtime.js";
 import { throwIfAborted } from "../extraction/cancellation.js";
 import { createStellaFitnessRuntime } from "../plugin-runtime.js";
+import type { ConfigurationPreflightResult } from "../preflight.js";
 
 type HarnessInput = Omit<ExtractionRequest, "signal"> & {
   signal?: AbortSignal;
@@ -12,6 +13,7 @@ type HarnessInput = Omit<ExtractionRequest, "signal"> & {
 
 type ScenarioHarnessOptions = {
   extractionRuntime: ExtractionRuntime;
+  preflight: () => ConfigurationPreflightResult;
 };
 
 export function createScenarioHarness(options: ScenarioHarnessOptions) {

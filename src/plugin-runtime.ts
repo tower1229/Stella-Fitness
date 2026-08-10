@@ -10,6 +10,7 @@ import type {
   ExtractionRequest,
   ExtractionRuntime,
 } from "./extraction/runtime.js";
+import type { ConfigurationPreflightResult } from "./preflight.js";
 
 export type PluginExtractionOutput = {
   status: "candidate";
@@ -18,6 +19,7 @@ export type PluginExtractionOutput = {
 };
 
 export type StellaFitnessRuntime = {
+  preflight(): ConfigurationPreflightResult;
   extractWorkoutLog(request: ExtractionRequest): Promise<PluginExtractionOutput>;
 };
 
@@ -31,11 +33,24 @@ type RunEntry = {
 
 export function createStellaFitnessRuntime(options: {
   extractionRuntime: ExtractionRuntime;
+  preflight: () => ConfigurationPreflightResult;
 }): StellaFitnessRuntime {
   const runs = new Map<string, RunEntry>();
+  const preflight = options.preflight;
 
   return {
+    preflight,
     extractWorkoutLog(request) {
+      const readiness = preflight();
+      if (readiness.readiness !== "READY") {
+        return Promise.reject(
+          new Error(
+            `Stella Fitness cannot accept workout media in ${readiness.readiness}: ${readiness.reasons
+              .map(({ code }) => code)
+              .join(", ")}`,
+          ),
+        );
+      }
       if (request.runId.trim().length === 0) {
         return Promise.reject(new Error("Extraction run ID must not be blank"));
       }

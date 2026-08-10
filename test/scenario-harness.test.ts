@@ -4,6 +4,7 @@ import {
   ControlledExtractionRuntime,
   createScenarioHarness,
 } from "../src/scenario/harness.js";
+import type { ConfigurationPreflightResult } from "../src/preflight.js";
 import { sanitizedMediaFixture } from "./support/sanitized-media.js";
 
 describe("scenario-level Plugin harness", () => {
@@ -18,7 +19,7 @@ describe("scenario-level Plugin harness", () => {
         },
       },
     ]);
-    const harness = createScenarioHarness({ extractionRuntime: runtime });
+    const harness = readyHarness(runtime);
 
     const output = await harness.extract({
       runId: "scenario-1",
@@ -50,7 +51,7 @@ describe("scenario-level Plugin harness", () => {
 
   it("rejects cancellation and never emits a candidate", async () => {
     const runtime = new ControlledExtractionRuntime([], { pending: true });
-    const harness = createScenarioHarness({ extractionRuntime: runtime });
+    const harness = readyHarness(runtime);
     const controller = new AbortController();
     controller.abort("user-cancelled");
 
@@ -66,7 +67,7 @@ describe("scenario-level Plugin harness", () => {
 
   it("rejects when cancellation arrives while controlled extraction is pending", async () => {
     const runtime = new ControlledExtractionRuntime([], { pending: true });
-    const harness = createScenarioHarness({ extractionRuntime: runtime });
+    const harness = readyHarness(runtime);
     const controller = new AbortController();
     const extraction = harness.extract({
       runId: "scenario-pending",
@@ -84,7 +85,7 @@ describe("scenario-level Plugin harness", () => {
     const runtime = new ControlledExtractionRuntime([
       { parsed: candidate(), metadata: { provider: "controlled" } },
     ]);
-    const harness = createScenarioHarness({ extractionRuntime: runtime });
+    const harness = readyHarness(runtime);
     const input = {
       runId: "scenario-idempotent",
       media: sanitizedFixture(),
@@ -102,7 +103,7 @@ describe("scenario-level Plugin harness", () => {
     const runtime = new ControlledExtractionRuntime([
       { parsed: candidate(), metadata: { provider: "controlled" } },
     ]);
-    const harness = createScenarioHarness({ extractionRuntime: runtime });
+    const harness = readyHarness(runtime);
 
     await harness.extract({
       runId: "scenario-collision",
@@ -121,7 +122,7 @@ describe("scenario-level Plugin harness", () => {
 
   it("applies each caller's cancellation gate to an idempotent run", async () => {
     const runtime = new ControlledExtractionRuntime([], { pending: true });
-    const harness = createScenarioHarness({ extractionRuntime: runtime });
+    const harness = readyHarness(runtime);
     void harness.extract({
       runId: "scenario-shared-pending",
       media: sanitizedFixture(),
@@ -145,7 +146,7 @@ describe("scenario-level Plugin harness", () => {
     const runtime = new ControlledExtractionRuntime([
       { parsed: { stage: 1 }, metadata: { provider: "controlled" } },
     ]);
-    const harness = createScenarioHarness({ extractionRuntime: runtime });
+    const harness = readyHarness(runtime);
 
     await expect(
       harness.extract({
@@ -168,7 +169,7 @@ describe("scenario-level Plugin harness", () => {
         metadata: { provider: "controlled" },
       },
     ]);
-    const harness = createScenarioHarness({ extractionRuntime: runtime });
+    const harness = readyHarness(runtime);
 
     await expect(
       harness.extract({
@@ -180,7 +181,44 @@ describe("scenario-level Plugin harness", () => {
       candidate: { uncertainFields: [conflict] },
     });
   });
+
+  it("rejects personal input at the harness seam while configuration is blocked", async () => {
+    const runtime = new ControlledExtractionRuntime([
+      { parsed: candidate(), metadata: { provider: "controlled" } },
+    ]);
+    const harness = createScenarioHarness({
+      extractionRuntime: runtime,
+      preflight: () => ({
+        readiness: "BLOCKED_CONFIGURATION",
+        reasons: [
+          {
+            code: "PERSONAL_DATA_DIRECTORY_REQUIRED",
+            message: "Configure an absolute Personal Data Directory",
+          },
+        ],
+      }),
+    });
+
+    await expect(
+      harness.extract({
+        runId: "scenario-blocked",
+        media: sanitizedFixture(),
+        timeoutMs: 2_000,
+      }),
+    ).rejects.toThrow("PERSONAL_DATA_DIRECTORY_REQUIRED");
+    expect(runtime.requests).toEqual([]);
+  });
 });
+
+function readyHarness(extractionRuntime: ControlledExtractionRuntime) {
+  return createScenarioHarness({
+    extractionRuntime,
+    preflight: (): ConfigurationPreflightResult => ({
+      readiness: "READY",
+      reasons: [],
+    }),
+  });
+}
 
 function candidate() {
   return {

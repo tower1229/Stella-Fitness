@@ -1,14 +1,19 @@
+import { join } from "node:path";
+
 import {
   definePluginEntry,
+  type OpenClawConfig,
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
 
-import {
-  assertOpenClawContract,
-  assertOperatorModelPermission,
-} from "./contracts/openclaw.js";
+import { assertOperatorModelPermission } from "./contracts/openclaw.js";
 import { createOpenClawExtractionRuntime } from "./extraction/openclaw.js";
 import type { ExtractionRuntime } from "./extraction/runtime.js";
+import {
+  runConfigurationPreflight,
+  type ConfigurationPreflightResult,
+  type ExtractionPermission,
+} from "./preflight.js";
 import {
   createStellaFitnessRuntime,
   type StellaFitnessRuntime,
@@ -16,6 +21,7 @@ import {
 import { createStatusResponse } from "./status.js";
 
 const STATUS_INPUT = "stella status";
+const PLUGIN_ID = "stella-fitness";
 
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "stella-fitness",
@@ -32,29 +38,18 @@ export default plugin;
 export function registerStellaFitnessPlugin(
   api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
 ): StellaFitnessRuntime | undefined {
-  const extractionConfig = resolveExtractionConfig(api.pluginConfig);
-  const status = createStatusResponse(
-    extractionConfig === undefined ? "unconfigured" : "configured",
-  );
-  registerStatusCli(api, status.text);
+  let statusText = () => "Stella Fitness status requires full runtime inspection";
+  registerStatusCli(api, () => statusText());
   if (api.registrationMode === "cli-metadata") {
     return undefined;
   }
 
-  assertOpenClawContract(api);
-  if (extractionConfig !== undefined) {
-    assertOperatorModelPermission(api.config, extractionConfig);
-  }
+  const preflight = createPreflightRunner(api);
+  statusText = () => createStatusResponse(preflight()).text;
+  preflight();
   const stellaRuntime = createStellaFitnessRuntime({
-    extractionRuntime:
-      extractionConfig === undefined
-        ? createUnconfiguredExtractionRuntime()
-        : createOpenClawExtractionRuntime({
-            extractStructuredWithModel:
-              api.runtime.mediaUnderstanding.extractStructuredWithModel,
-            openclawConfig: api.config,
-            model: extractionConfig,
-          }),
+    extractionRuntime: createCurrentExtractionRuntime(api),
+    preflight,
   });
 
   api.registerCommand({
@@ -63,7 +58,7 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: false,
     requireAuth: true,
     async handler() {
-      return status;
+      return createStatusResponse(preflight());
     },
   });
 
@@ -73,7 +68,7 @@ export function registerStellaFitnessPlugin(
       if (normalizeStatusInput(event.cleanedBody) !== STATUS_INPUT) {
         return;
       }
-      return { handled: true, reply: status };
+      return { handled: true, reply: createStatusResponse(preflight()) };
     },
     { priority: 100, timeoutMs: 1_000 },
   );
@@ -87,7 +82,7 @@ export function registerStellaFitnessPlugin(
       return {
         outcome: "block" as const,
         reason: "stella-status-is-plugin-owned",
-        message: status.text,
+        message: createStatusResponse(preflight()).text,
         category: "plugin-command",
       };
     },
@@ -102,7 +97,7 @@ function normalizeStatusInput(input: string): string {
 
 function registerStatusCli(
   api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
-  statusText: string,
+  statusText: () => string,
 ): void {
   api.registerCli(
     ({ program }) => {
@@ -112,7 +107,7 @@ function registerStatusCli(
         .command("status")
         .description("Print deterministic Plugin status")
         .action(() => {
-          process.stdout.write(`${statusText}\n`);
+          process.stdout.write(`${statusText()}\n`);
         });
     },
     {
@@ -125,6 +120,107 @@ function registerStatusCli(
       ],
     },
   );
+}
+
+function createPreflightRunner(
+  api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
+): () => ConfigurationPreflightResult {
+  return () => {
+    const openclawConfig = currentOpenClawConfig(api);
+    const pluginConfig = currentPluginConfig(openclawConfig);
+    const extractionConfig = resolveExtractionConfig(pluginConfig);
+    return runConfigurationPreflight({
+      personalDataDirectory: pluginConfig?.personalDataDirectory,
+      runtimeDirectory: join(
+        api.runtime.state.resolveStateDir(process.env),
+        PLUGIN_ID,
+      ),
+      conversationAccess: hasConversationAccess(openclawConfig),
+      structuredMedia:
+        typeof api.runtime.mediaUnderstanding.extractStructuredWithModel ===
+        "function",
+      extraction: resolveExtractionPermission(
+        openclawConfig,
+        extractionConfig,
+      ),
+    });
+  };
+}
+
+function createCurrentExtractionRuntime(
+  api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
+): ExtractionRuntime {
+  return {
+    extract(request) {
+      const openclawConfig = currentOpenClawConfig(api);
+      const extractionConfig = resolveExtractionConfig(
+        currentPluginConfig(openclawConfig),
+      );
+      if (extractionConfig === undefined) {
+        throw new Error(
+          "Stella Fitness extraction configuration changed after preflight",
+        );
+      }
+      return createOpenClawExtractionRuntime({
+        extractStructuredWithModel:
+          api.runtime.mediaUnderstanding.extractStructuredWithModel,
+        openclawConfig: openclawConfig as OpenClawConfig,
+        model: extractionConfig,
+      }).extract(request);
+    },
+  };
+}
+
+function currentOpenClawConfig(
+  api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
+) {
+  return api.runtime.config.current();
+}
+
+function currentPluginConfig(
+  openclawConfig: ReturnType<typeof currentOpenClawConfig>,
+): Record<string, unknown> | undefined {
+  const entry = pluginEntry(openclawConfig);
+  return asRecord(entry?.config);
+}
+
+function hasConversationAccess(
+  openclawConfig: ReturnType<typeof currentOpenClawConfig>,
+): boolean {
+  const hooks = asRecord(pluginEntry(openclawConfig)?.hooks);
+  return hooks?.allowConversationAccess === true;
+}
+
+function pluginEntry(
+  openclawConfig: ReturnType<typeof currentOpenClawConfig>,
+): Record<string, unknown> | undefined {
+  const plugins = asRecord(openclawConfig.plugins);
+  const entries = asRecord(plugins?.entries);
+  return asRecord(entries?.[PLUGIN_ID]);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function resolveExtractionPermission(
+  openclawConfig: ReturnType<typeof currentOpenClawConfig>,
+  extractionConfig: { provider: string; model: string } | undefined,
+): ExtractionPermission {
+  if (extractionConfig === undefined) {
+    return "unconfigured";
+  }
+  try {
+    assertOperatorModelPermission(
+      openclawConfig as OpenClawConfig,
+      extractionConfig,
+    );
+    return "allowed";
+  } catch {
+    return "denied";
+  }
 }
 
 function resolveExtractionConfig(
@@ -148,14 +244,4 @@ function resolveExtractionConfig(
     return undefined;
   }
   return { provider: record.provider, model: record.model };
-}
-
-function createUnconfiguredExtractionRuntime(): ExtractionRuntime {
-  return {
-    async extract() {
-      throw new Error(
-        "Stella Fitness extraction is unconfigured; set provider and model before processing media",
-      );
-    },
-  };
 }

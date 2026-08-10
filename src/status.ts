@@ -1,14 +1,20 @@
-export type ExtractionConfigurationState = "configured" | "unconfigured";
+import type { ConfigurationPreflightResult } from "./preflight.js";
 
 export function createStatusResponse(
-  extraction: ExtractionConfigurationState,
+  preflight: ConfigurationPreflightResult,
 ): { text: string } {
+  const reasonLines =
+    preflight.reasons.length === 0
+      ? ["reason: none"]
+      : preflight.reasons.map(
+          ({ code, message }) => `reason: ${code}: ${message}`,
+        );
   return {
     text: [
-      "Stella Fitness: ready",
+      `Stella Fitness: ${preflight.readiness}`,
       "contract: openclaw>=2026.6.34",
       "scope: recording-only",
-      `extraction: ${extraction}`,
+      ...reasonLines,
     ].join("\n"),
   };
 }

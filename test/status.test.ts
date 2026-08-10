@@ -3,12 +3,22 @@ import { describe, expect, it } from "vitest";
 import { createStatusResponse } from "../src/status.js";
 
 describe("deterministic Plugin status", () => {
-  it("returns the same recording-only status response", () => {
-    expect(createStatusResponse("unconfigured")).toEqual({
-      text: "Stella Fitness: ready\ncontract: openclaw>=2026.6.34\nscope: recording-only\nextraction: unconfigured",
+  it("returns readiness and deterministic reasons", () => {
+    expect(
+      createStatusResponse({
+        readiness: "BLOCKED_CONFIGURATION",
+        reasons: [
+          {
+            code: "PERSONAL_DATA_DIRECTORY_REQUIRED",
+            message: "Configure an absolute Personal Data Directory",
+          },
+        ],
+      }),
+    ).toEqual({
+      text: "Stella Fitness: BLOCKED_CONFIGURATION\ncontract: openclaw>=2026.6.34\nscope: recording-only\nreason: PERSONAL_DATA_DIRECTORY_REQUIRED: Configure an absolute Personal Data Directory",
     });
-    expect(createStatusResponse("configured")).toEqual({
-      text: "Stella Fitness: ready\ncontract: openclaw>=2026.6.34\nscope: recording-only\nextraction: configured",
+    expect(createStatusResponse({ readiness: "READY", reasons: [] })).toEqual({
+      text: "Stella Fitness: READY\ncontract: openclaw>=2026.6.34\nscope: recording-only\nreason: none",
     });
   });
 });

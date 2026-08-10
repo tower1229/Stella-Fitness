@@ -10,6 +10,11 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "personalDataDirectory": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Absolute path to the user-controlled canonical Personal Data Directory"
+      },
       "extraction": {
         "type": "object",
         "additionalProperties": false,
