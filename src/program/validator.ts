@@ -5,6 +5,16 @@ import type {
   ProgramWeek,
 } from "../domain/program.js";
 
+const SUPPORTED_WEEKDAYS = new Set([
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+]);
+
 export class InvalidProgramSpecError extends Error {
   constructor(readonly issues: readonly string[]) {
     super(`Invalid ProgramSpec: ${issues.join("; ")}`);
@@ -92,6 +102,9 @@ function validateRelationships(program: ProgramSpec): void {
       if (days.has(session.day)) {
         issues.push(`${path}.day duplicates ${session.day}`);
       }
+      if (!SUPPORTED_WEEKDAYS.has(session.day)) {
+        issues.push(`${path}.day must be a supported weekday`);
+      }
       days.add(session.day);
       const template = optionalText(session.template);
       if (session.type === "strength-test") {
@@ -103,6 +116,16 @@ function validateRelationships(program: ProgramSpec): void {
       }
       if (template !== undefined && program.templates[template] === undefined) {
         issues.push(`${path} references unknown template ${template}`);
+      }
+      if (template !== undefined && session.type.endsWith("-recovery")) {
+        validateRecoveryRelationship(
+          program,
+          week.phase,
+          session.type,
+          template,
+          path,
+          issues,
+        );
       }
       validateSymbolReference(
         session.load,
@@ -143,6 +166,46 @@ function validateRelationships(program: ProgramSpec): void {
 
   if (issues.length > 0) {
     throw new InvalidProgramSpecError(issues);
+  }
+}
+
+function validateRecoveryRelationship(
+  program: ProgramSpec,
+  phase: string,
+  recoveryType: string,
+  recoveryTemplateId: string,
+  path: string,
+  issues: string[],
+): void {
+  if (!recoveryTemplateId.endsWith(`-${recoveryType}`)) {
+    issues.push(
+      `${path} recovery template ${recoveryTemplateId} does not match ${recoveryType}`,
+    );
+  }
+  const basedOn = optionalText(program.templates[recoveryTemplateId]?.based_on);
+  if (basedOn === undefined) {
+    return;
+  }
+  const ordinaryType = recoveryType.slice(0, -"-recovery".length);
+  const ordinaryTemplates = new Set(
+    program.weeks
+      .filter((week) => week.phase === phase)
+      .flatMap((week) => week.sessions)
+      .filter((session) => session.type === ordinaryType)
+      .map((session) => optionalText(session.template))
+      .filter((template): template is string => template !== undefined),
+  );
+  if (ordinaryTemplates.size !== 1) {
+    issues.push(
+      `${path} cannot resolve one ${phase} ${ordinaryType} template for recovery`,
+    );
+    return;
+  }
+  const expected = [...ordinaryTemplates][0]!;
+  if (basedOn !== expected) {
+    issues.push(
+      `${path} ${recoveryType} must inherit the ${phase} ${ordinaryType} template ${expected}`,
+    );
   }
 }
 
@@ -526,6 +589,14 @@ function validateTransitionSemantics(
       "course_start",
       issues,
     );
+    if (courseStart.action !== "test_main_12rm") {
+      issues.push(
+        "phase_transitions.course_start.action must be test_main_12rm",
+      );
+    }
+    if (courseStart.bind_results_to !== "A") {
+      issues.push("phase_transitions.course_start.bind_results_to must be A");
+    }
   }
   const phaseChange = program.phaseTransitions.phase1_to_phase2;
   if (phaseChange !== undefined) {
@@ -535,6 +606,16 @@ function validateTransitionSemantics(
       "phase1_to_phase2",
       issues,
     );
+    if (phaseChange.week !== 4 || phaseChange.day !== "friday") {
+      issues.push(
+        "phase_transitions.phase1_to_phase2 must occur on week 4 friday",
+      );
+    }
+    if (phaseChange.bind_main_results_to !== "N") {
+      issues.push(
+        "phase_transitions.phase1_to_phase2.bind_main_results_to must be N",
+      );
+    }
     requireTransitionText(
       phaseChange,
       "pullup_protocol_ref",
@@ -552,6 +633,14 @@ function validateTransitionSemantics(
       phaseChange.actions.length === 0
     ) {
       issues.push("phase_transitions.phase1_to_phase2.actions is required");
+    } else if (
+      phaseChange.actions.length !== 2 ||
+      !phaseChange.actions.includes("test_main_12rm") ||
+      !phaseChange.actions.includes("test_pullup_first_set_max")
+    ) {
+      issues.push(
+        "phase_transitions.phase1_to_phase2.actions must contain the settled main and pull-up tests",
+      );
     }
     const session =
       typeof phaseChange.week === "number" &&
@@ -580,6 +669,37 @@ function validateTransitionSemantics(
         `phase_transitions.phase1_to_phase2 main protocol ${mainProtocol} must bind test results to ${mainBinding}`,
       );
     }
+    const mainDefinition =
+      mainProtocol === undefined
+        ? undefined
+        : program.testingProtocols[mainProtocol];
+    const mainExercises = Array.isArray(mainDefinition?.applies_to)
+      ? mainDefinition.applies_to.filter(
+          (exercise): exercise is string => typeof exercise === "string",
+        )
+      : [];
+    const mainTests = tests.filter(
+      (test) => test.protocol_ref === mainProtocol,
+    );
+    if (mainTests.length !== mainExercises.length) {
+      issues.push(
+        `phase_transitions.phase1_to_phase2 main protocol ${String(mainProtocol)} must have one test per exercise`,
+      );
+    }
+    for (const exercise of mainExercises) {
+      if (
+        !tests.some(
+          (test) =>
+            test.exercise === exercise &&
+            test.protocol_ref === mainProtocol &&
+            test.result_binding === mainBinding,
+        )
+      ) {
+        issues.push(
+          `phase_transitions.phase1_to_phase2 ${exercise} must bind ${mainProtocol} results to ${String(mainBinding)}`,
+        );
+      }
+    }
     const pullupProtocol = optionalText(phaseChange.pullup_protocol_ref);
     if (
       pullupProtocol !== undefined &&
@@ -587,6 +707,37 @@ function validateTransitionSemantics(
     ) {
       issues.push(
         `phase_transitions.phase1_to_phase2 pull-up protocol ${pullupProtocol} is missing from its test session`,
+      );
+    }
+    const assistanceBindings = new Set(
+      Object.values(program.templates)
+        .map((template) =>
+          optionalText(
+            safeRecord(template.pullup_assistance, "", [])?.source_baseline,
+          ),
+        )
+        .filter((binding): binding is string => binding !== undefined),
+    );
+    const pullupTests = tests.filter(
+      (test) => test.protocol_ref === pullupProtocol,
+    );
+    if (
+      pullupProtocol !== undefined &&
+      (pullupTests.length !== 1 ||
+        !assistanceBindings.has(
+          optionalText(pullupTests[0]?.result_binding) ?? "",
+        ))
+    ) {
+      issues.push(
+        `phase_transitions.phase1_to_phase2 pull-up protocol ${pullupProtocol} must bind its assistance relationship`,
+      );
+    }
+    if (
+      courseStart !== undefined &&
+      courseStart.protocol_ref !== mainProtocol
+    ) {
+      issues.push(
+        "phase_transitions.course_start.protocol_ref must match the phase main protocol",
       );
     }
   }
@@ -600,6 +751,14 @@ function validateTransitionSemantics(
       "cycle_end",
       issues,
     );
+    if (cycleEnd.action !== "test_main_12rm") {
+      issues.push("phase_transitions.cycle_end.action must be test_main_12rm");
+    }
+    if (cycleEnd.bind_results_to_next_cycle !== "A") {
+      issues.push(
+        "phase_transitions.cycle_end.bind_results_to_next_cycle must be A",
+      );
+    }
     if (
       cycleEnd.restart_from_week !== program.cycleCompletion.restart_from_week
     ) {
@@ -610,6 +769,14 @@ function validateTransitionSemantics(
     if (cycleEnd.protocol_ref !== program.cycleCompletion.protocol_ref) {
       issues.push(
         "phase_transitions.cycle_end.protocol_ref must match cycle_completion",
+      );
+    }
+    if (
+      phaseChange !== undefined &&
+      cycleEnd.protocol_ref !== phaseChange.main_protocol_ref
+    ) {
+      issues.push(
+        "phase_transitions.cycle_end.protocol_ref must match the phase main protocol",
       );
     }
     if (

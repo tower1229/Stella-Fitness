@@ -91,6 +91,27 @@ describe("ProgramSpec validator", () => {
       "test max_reps_first_set does not match protocol main-12rm type 12RM",
     ],
     [
+      "main test bound to the wrong symbol",
+      (program: Fixture) => {
+        program.weeks[3]!.sessions[2]!.tests![1]!.result_binding = "A";
+      },
+      "dumbbell-bench-press must bind main-12rm results to N",
+    ],
+    [
+      "missing main strength tests",
+      (program: Fixture) => {
+        program.weeks[3]!.sessions[2]!.tests!.splice(1, 2);
+      },
+      "dumbbell-bench-press must bind main-12rm results to N",
+    ],
+    [
+      "pull-up test bound to a load symbol",
+      (program: Fixture) => {
+        program.weeks[3]!.sessions[2]!.tests![3]!.result_binding = "N";
+      },
+      "pull-up protocol pullup-first-set-max must bind its assistance relationship",
+    ],
+    [
       "unresolved test binding",
       (program: Fixture) => {
         program.weeks[3]!.sessions[2]!.tests![0]!.result_binding =
@@ -105,6 +126,13 @@ describe("ProgramSpec validator", () => {
           "missing-symbol";
       },
       "bind_results_to_next_cycle references unknown load symbol missing-symbol",
+    ],
+    [
+      "changed course-start binding",
+      (program: Fixture) => {
+        program.phase_transitions.course_start!.bind_results_to = "N";
+      },
+      "phase_transitions.course_start.bind_results_to must be A",
     ],
     [
       "missing phase transition",
@@ -127,6 +155,16 @@ describe("ProgramSpec validator", () => {
           "pullup-first-set-max";
       },
       "main protocol pullup-first-set-max must bind test results to N",
+    ],
+    [
+      "changed phase transition binding",
+      (program: Fixture) => {
+        program.phase_transitions.phase1_to_phase2!.bind_main_results_to = "A";
+        for (const test of program.weeks[3]!.sessions[2]!.tests!.slice(0, 3)) {
+          test.result_binding = "A";
+        }
+      },
+      "phase_transitions.phase1_to_phase2.bind_main_results_to must be N",
     ],
     [
       "non-exercise load symbol",
@@ -160,6 +198,20 @@ describe("ProgramSpec validator", () => {
         ]!.overrides!.overhead_press!.sets = "three";
       },
       "overrides.overhead_press.sets must be a positive integer",
+    ],
+    [
+      "recovery inheriting the wrong split",
+      (program: Fixture) => {
+        program.templates["phase2-torso-recovery"]!.based_on = "phase2-limbs";
+      },
+      "torso-recovery must inherit the phase-2 torso template phase2-torso",
+    ],
+    [
+      "invalid weekday",
+      (program: Fixture) => {
+        program.weeks[0]!.sessions[0]!.day = "monday-ish";
+      },
+      "day must be a supported weekday",
     ],
   ])("fails closed for %s", async (_label, corrupt, expected) => {
     const program = (await programFixture()) as Fixture;
@@ -322,6 +374,17 @@ describe("Program Engine", () => {
         date: "2026-08-11",
       }),
     ).toThrow("cycle start must be a Monday");
+
+    const invalidSpec = (await programFixture()) as Fixture;
+    invalidSpec.weeks[0]!.sessions[0]!.status = "unresolved";
+    expect(() =>
+      harness.resolvePlannedSession({
+        programSpec: invalidSpec,
+        programVersion: "0.2.0",
+        cycleStart: "2026-08-10",
+        date: "2026-08-10",
+      }),
+    ).toThrow(InvalidProgramSpecError);
   });
 });
 
@@ -354,6 +417,7 @@ type Fixture = {
   schema_version: string;
   weeks: Array<{
     sessions: Array<{
+      day: string;
       status: string;
       template?: string;
       tests?: Array<{
@@ -377,8 +441,10 @@ type Fixture = {
     string,
     {
       bind_results_to_next_cycle?: string;
+      bind_results_to?: string;
       day?: string;
       main_protocol_ref?: string;
+      bind_main_results_to?: string;
     }
   >;
 };
