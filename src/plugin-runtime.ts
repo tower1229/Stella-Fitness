@@ -11,6 +11,12 @@ import type {
   ExtractionRuntime,
 } from "./extraction/runtime.js";
 import type { ConfigurationPreflightResult } from "./preflight.js";
+import type { PlannedSession } from "./domain/program.js";
+import {
+  resolvePlannedSession,
+  type ProgramResolutionInput,
+} from "./program/engine.js";
+import { validateProgramSpec } from "./program/validator.js";
 
 export type PluginExtractionOutput = {
   status: "candidate";
@@ -20,7 +26,12 @@ export type PluginExtractionOutput = {
 
 export type StellaFitnessRuntime = {
   preflight(): ConfigurationPreflightResult;
-  extractWorkoutLog(request: ExtractionRequest): Promise<PluginExtractionOutput>;
+  resolvePlannedSession(
+    input: Omit<ProgramResolutionInput, "program"> & { programSpec: unknown },
+  ): PlannedSession | null;
+  extractWorkoutLog(
+    request: ExtractionRequest,
+  ): Promise<PluginExtractionOutput>;
 };
 
 const MAX_CACHED_RUNS = 256;
@@ -40,6 +51,14 @@ export function createStellaFitnessRuntime(options: {
 
   return {
     preflight,
+    resolvePlannedSession(input) {
+      return resolvePlannedSession({
+        program: validateProgramSpec(input.programSpec),
+        programVersion: input.programVersion,
+        cycleStart: input.cycleStart,
+        date: input.date,
+      });
+    },
     extractWorkoutLog(request) {
       const readiness = preflight();
       if (readiness.readiness !== "READY") {

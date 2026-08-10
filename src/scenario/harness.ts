@@ -20,6 +20,11 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
   const pluginRuntime = createStellaFitnessRuntime(options);
 
   return {
+    resolvePlannedSession(
+      input: Parameters<typeof pluginRuntime.resolvePlannedSession>[0],
+    ) {
+      return pluginRuntime.resolvePlannedSession(input);
+    },
     extract(input: HarnessInput) {
       return pluginRuntime.extractWorkoutLog({
         runId: input.runId,

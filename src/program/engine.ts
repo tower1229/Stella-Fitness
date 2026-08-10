@@ -27,12 +27,16 @@ export class ProgramResolutionError extends Error {
   }
 }
 
-export function resolvePlannedSession(input: {
+export type ProgramResolutionInput = {
   program: ProgramSpec;
   programVersion: string;
   cycleStart: string;
   date: string;
-}): PlannedSession | null {
+};
+
+export function resolvePlannedSession(
+  input: ProgramResolutionInput,
+): PlannedSession | null {
   if (input.program.version !== input.programVersion) {
     throw new ProgramResolutionError(
       `requested version ${input.programVersion} does not match ${input.program.version}`,
@@ -247,14 +251,61 @@ function resolveExercise(
     ...(optionalText(input.effort) === undefined
       ? {}
       : { effort: optionalText(input.effort)! }),
-    ...(requiredRecordOrUndefined(input.progression) === undefined
+    ...(input.progression === undefined
       ? {}
-      : { progression: requiredRecordOrUndefined(input.progression)! }),
+      : { progression: normalizeProgression(input.progression) }),
     ...(exerciseId === "pull-up" && assistance !== undefined
-      ? { assistance }
+      ? { assistance: normalizeAssistance(assistance) }
       : {}),
   };
   return result;
+}
+
+function normalizeProgression(
+  input: unknown,
+): NonNullable<PlannedExercise["progression"]> {
+  const progression = requiredRecord(input, "exercise progression");
+  return {
+    trigger: requiredText(progression.trigger, "progression trigger"),
+    action: requiredText(progression.action, "progression action"),
+    amount: requiredText(progression.amount, "progression amount"),
+  };
+}
+
+function normalizeAssistance(
+  assistance: ProgramRecord,
+): NonNullable<PlannedExercise["assistance"]> {
+  if (
+    !Array.isArray(assistance.allowed_modes) ||
+    !assistance.allowed_modes.every(
+      (mode): mode is string => typeof mode === "string" && mode.length > 0,
+    )
+  ) {
+    throw new ProgramResolutionError(
+      "pull-up assistance allowed modes must be strings",
+    );
+  }
+  if (assistance.preserve_programmed_total_reps !== true) {
+    throw new ProgramResolutionError(
+      "pull-up assistance must preserve programmed total reps",
+    );
+  }
+  return {
+    sourceBaseline: requiredText(
+      assistance.source_baseline,
+      "pull-up assistance source baseline",
+    ),
+    allowedModes: assistance.allowed_modes,
+    targetMinRepsPerSet: requiredPositiveInteger(
+      assistance.target_min_reps_per_set,
+      "pull-up assistance target minimum reps",
+    ),
+    targetMode: requiredText(
+      assistance.target_mode,
+      "pull-up assistance target mode",
+    ),
+    preserveProgrammedTotalReps: true,
+  };
 }
 
 function resolveStringExercise(

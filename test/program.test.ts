@@ -7,7 +7,10 @@ import {
   InvalidProgramSpecError,
   validateProgramSpec,
 } from "../src/program/validator.js";
-import { resolvePlannedSession } from "../src/program/engine.js";
+import {
+  ControlledExtractionRuntime,
+  createScenarioHarness,
+} from "../src/scenario/harness.js";
 
 describe("ProgramSpec validator", () => {
   it("validates the complete source-reconciled v0.2 program", async () => {
@@ -81,6 +84,13 @@ describe("ProgramSpec validator", () => {
       "references unknown testing protocol missing-protocol",
     ],
     [
+      "mismatched strength-test semantics",
+      (program: Fixture) => {
+        program.weeks[3]!.sessions[2]!.tests![0]!.test = "max_reps_first_set";
+      },
+      "test max_reps_first_set does not match protocol main-12rm type 12RM",
+    ],
+    [
       "unresolved test binding",
       (program: Fixture) => {
         program.weeks[3]!.sessions[2]!.tests![0]!.result_binding =
@@ -95,6 +105,28 @@ describe("ProgramSpec validator", () => {
           "missing-symbol";
       },
       "bind_results_to_next_cycle references unknown load symbol missing-symbol",
+    ],
+    [
+      "missing phase transition",
+      (program: Fixture) => {
+        delete program.phase_transitions.phase1_to_phase2;
+      },
+      "phase_transitions.phase1_to_phase2 is required",
+    ],
+    [
+      "transition targeting an ordinary session",
+      (program: Fixture) => {
+        program.phase_transitions.phase1_to_phase2!.day = "monday";
+      },
+      "phase_transitions.phase1_to_phase2 must reference a strength-test session",
+    ],
+    [
+      "transition protocol not represented by its test session",
+      (program: Fixture) => {
+        program.phase_transitions.phase1_to_phase2!.main_protocol_ref =
+          "pullup-first-set-max";
+      },
+      "main protocol pullup-first-set-max must bind test results to N",
     ],
     [
       "non-exercise load symbol",
@@ -120,6 +152,15 @@ describe("ProgramSpec validator", () => {
       },
       "template inheritance cycle",
     ],
+    [
+      "invalid recovery override",
+      (program: Fixture) => {
+        program.templates[
+          "phase2-torso-recovery"
+        ]!.overrides!.overhead_press!.sets = "three";
+      },
+      "overrides.overhead_press.sets must be a positive integer",
+    ],
   ])("fails closed for %s", async (_label, corrupt, expected) => {
     const program = (await programFixture()) as Fixture;
     corrupt(program);
@@ -131,16 +172,17 @@ describe("ProgramSpec validator", () => {
 
 describe("Program Engine", () => {
   it("deterministically resolves an ordinary session from version, cycle start and date", async () => {
-    const program = validateProgramSpec(await programFixture());
+    const programSpec = await programFixture();
+    const harness = programHarness();
     const input = {
-      program,
+      programSpec,
       programVersion: "0.2.0",
       cycleStart: "2026-08-10",
       date: "2026-09-07",
     };
 
-    const first = resolvePlannedSession(input);
-    const second = resolvePlannedSession(input);
+    const first = harness.resolvePlannedSession(input);
+    const second = harness.resolvePlannedSession(input);
 
     expect(second).toEqual(first);
     expect(first).toMatchObject({
@@ -180,10 +222,11 @@ describe("Program Engine", () => {
   });
 
   it("resolves all 44 sessions including strength tests and recovery facts", async () => {
-    const program = validateProgramSpec(await programFixture());
+    const programSpec = await programFixture();
+    const harness = programHarness();
     const sessions = Array.from({ length: 84 }, (_unused, dayOffset) =>
-      resolvePlannedSession({
-        program,
+      harness.resolvePlannedSession({
+        programSpec,
         programVersion: "0.2.0",
         cycleStart: "2026-08-10",
         date: isoDate(dayOffset),
@@ -195,7 +238,7 @@ describe("Program Engine", () => {
       new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
     );
 
-    expect(sessionOn(program, "2026-09-04")).toMatchObject({
+    expect(sessionOn(harness, programSpec, "2026-09-04")).toMatchObject({
       type: "strength-test",
       recovery: false,
       exercises: [],
@@ -225,7 +268,7 @@ describe("Program Engine", () => {
       ],
     });
 
-    expect(sessionOn(program, "2026-10-01")).toMatchObject({
+    expect(sessionOn(harness, programSpec, "2026-10-01")).toMatchObject({
       type: "torso-recovery",
       recovery: true,
       exercises: [
@@ -235,8 +278,8 @@ describe("Program Engine", () => {
           sets: "self_selected",
           rest: "self_selected",
           assistance: {
-            source_baseline: "phase2_pullup_assistance_baseline",
-            preserve_programmed_total_reps: true,
+            sourceBaseline: "phase2_pullup_assistance_baseline",
+            preserveProgrammedTotalReps: true,
           },
         },
         {
@@ -259,20 +302,21 @@ describe("Program Engine", () => {
   });
 
   it("returns no session on rest days and fails closed for invalid resolution input", async () => {
-    const program = validateProgramSpec(await programFixture());
+    const programSpec = await programFixture();
+    const harness = programHarness();
 
-    expect(sessionOn(program, "2026-08-15")).toBeNull();
+    expect(sessionOn(harness, programSpec, "2026-08-15")).toBeNull();
     expect(() =>
-      resolvePlannedSession({
-        program,
+      harness.resolvePlannedSession({
+        programSpec,
         programVersion: "0.1.0",
         cycleStart: "2026-08-10",
         date: "2026-08-10",
       }),
     ).toThrow("requested version 0.1.0 does not match 0.2.0");
     expect(() =>
-      resolvePlannedSession({
-        program,
+      harness.resolvePlannedSession({
+        programSpec,
         programVersion: "0.2.0",
         cycleStart: "2026-08-11",
         date: "2026-08-11",
@@ -282,14 +326,22 @@ describe("Program Engine", () => {
 });
 
 function sessionOn(
-  program: ReturnType<typeof validateProgramSpec>,
+  harness: ReturnType<typeof programHarness>,
+  programSpec: unknown,
   date: string,
 ) {
-  return resolvePlannedSession({
-    program,
+  return harness.resolvePlannedSession({
+    programSpec,
     programVersion: "0.2.0",
     cycleStart: "2026-08-10",
     date,
+  });
+}
+
+function programHarness() {
+  return createScenarioHarness({
+    extractionRuntime: new ControlledExtractionRuntime([]),
+    preflight: () => ({ readiness: "READY", reasons: [] }),
   });
 }
 
@@ -304,15 +356,31 @@ type Fixture = {
     sessions: Array<{
       status: string;
       template?: string;
-      tests?: Array<{ protocol_ref: string; result_binding: string }>;
+      tests?: Array<{
+        exercise: string;
+        test: string;
+        protocol_ref: string;
+        result_binding: string;
+      }>;
     }>;
   }>;
   load_symbols: Record<string, { per_exercise: boolean }>;
   templates: Record<
     string,
-    { based_on?: string; exercises?: Array<Record<string, unknown>> }
+    {
+      based_on?: string;
+      exercises?: Array<Record<string, unknown>>;
+      overrides?: { overhead_press?: { sets: unknown } };
+    }
   >;
-  phase_transitions: Record<string, { bind_results_to_next_cycle?: string }>;
+  phase_transitions: Record<
+    string,
+    {
+      bind_results_to_next_cycle?: string;
+      day?: string;
+      main_protocol_ref?: string;
+    }
+  >;
 };
 
 async function programFixture(): Promise<unknown> {

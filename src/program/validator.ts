@@ -165,6 +165,7 @@ function validateTemplates(
       continue;
     }
     if (!Array.isArray(template.exercises)) {
+      validateRecoveryOverrides(template, path, weekNumbers, issues);
       continue;
     }
     for (const [index, value] of template.exercises.entries()) {
@@ -202,6 +203,70 @@ function validateTemplates(
     }
   }
   validateTemplateInheritance(program, issues);
+}
+
+function validateRecoveryOverrides(
+  template: ProgramRecord,
+  path: string,
+  weekNumbers: ReadonlySet<number>,
+  issues: string[],
+): void {
+  const overrides = safeRecord(template.overrides, `${path}.overrides`, issues);
+  if (overrides === undefined) {
+    return;
+  }
+  const allowed = new Set([
+    "pullup_total",
+    "overhead_press",
+    "bench_effort",
+    "lateral_raise",
+    "main_effort",
+  ]);
+  for (const key of Object.keys(overrides)) {
+    if (!allowed.has(key)) {
+      issues.push(`${path}.overrides contains unsupported relationship ${key}`);
+    }
+  }
+  if (overrides.pullup_total !== undefined) {
+    safePositiveInteger(
+      overrides.pullup_total,
+      `${path}.overrides.pullup_total`,
+      issues,
+    );
+  }
+  for (const field of ["bench_effort", "main_effort"] as const) {
+    if (overrides[field] !== undefined) {
+      safeText(overrides[field], `${path}.overrides.${field}`, issues);
+    }
+  }
+  for (const field of ["overhead_press", "lateral_raise"] as const) {
+    if (overrides[field] === undefined) {
+      continue;
+    }
+    const values = safeRecord(
+      overrides[field],
+      `${path}.overrides.${field}`,
+      issues,
+    );
+    if (values === undefined) {
+      continue;
+    }
+    safePositiveInteger(values.sets, `${path}.overrides.${field}.sets`, issues);
+    safePositiveInteger(values.reps, `${path}.overrides.${field}.reps`, issues);
+    safeText(values.effort, `${path}.overrides.${field}.effort`, issues);
+    const reference = safeText(
+      values.load_reference,
+      `${path}.overrides.${field}.load_reference`,
+      issues,
+    );
+    const match =
+      reference === undefined ? null : /^week-(\d+)$/.exec(reference);
+    if (match === null || !weekNumbers.has(Number(match[1]))) {
+      issues.push(
+        `${path}.overrides.${field}.load_reference references unknown week ${String(reference)}`,
+      );
+    }
+  }
 }
 
 function validateTemplateInheritance(
@@ -337,20 +402,67 @@ function validateTests(
       `${path}[${index}].protocol_ref`,
       issues,
     );
-    if (
-      protocol !== undefined &&
-      program.testingProtocols[protocol] === undefined
-    ) {
+    const protocolDefinition =
+      protocol === undefined ? undefined : program.testingProtocols[protocol];
+    if (protocol !== undefined && protocolDefinition === undefined) {
       issues.push(
         `${path}[${index}] references unknown testing protocol ${protocol}`,
       );
     }
-    safeText(test.exercise, `${path}[${index}].exercise`, issues);
+    const exercise = safeText(
+      test.exercise,
+      `${path}[${index}].exercise`,
+      issues,
+    );
+    const testType = safeText(test.test, `${path}[${index}].test`, issues);
     safeText(test.result_binding, `${path}[${index}].result_binding`, issues);
+    if (protocolDefinition !== undefined && protocol !== undefined) {
+      const protocolType = safeText(
+        protocolDefinition.type,
+        `testing_protocols.${protocol}.type`,
+        issues,
+      );
+      if (
+        testType !== undefined &&
+        protocolType !== undefined &&
+        testType !== protocolType
+      ) {
+        issues.push(
+          `${path}[${index}] test ${testType} does not match protocol ${protocol} type ${protocolType}`,
+        );
+      }
+      if (
+        exercise !== undefined &&
+        Array.isArray(protocolDefinition.applies_to) &&
+        !protocolDefinition.applies_to.includes(exercise)
+      ) {
+        issues.push(
+          `${path}[${index}] exercise ${exercise} is not covered by protocol ${protocol}`,
+        );
+      }
+      if (
+        exercise !== undefined &&
+        typeof protocolDefinition.exercise === "string" &&
+        protocolDefinition.exercise !== exercise
+      ) {
+        issues.push(
+          `${path}[${index}] exercise ${exercise} does not match protocol ${protocol} exercise ${protocolDefinition.exercise}`,
+        );
+      }
+    }
   }
 }
 
 function validateTransitions(program: ProgramSpec, issues: string[]): void {
+  for (const required of [
+    "course_start",
+    "phase1_to_phase2",
+    "cycle_end",
+  ] as const) {
+    if (program.phaseTransitions[required] === undefined) {
+      issues.push(`phase_transitions.${required} is required`);
+    }
+  }
   for (const [id, transition] of Object.entries(program.phaseTransitions)) {
     const path = `phase_transitions.${id}`;
     for (const field of [
@@ -389,9 +501,138 @@ function validateTransitions(program: ProgramSpec, issues: string[]): void {
         ?.sessions.find(({ day }) => day === transition.day);
       if (session === undefined) {
         issues.push(`${path} references a missing session`);
+      } else if (
+        id === "phase1_to_phase2" &&
+        session.type !== "strength-test"
+      ) {
+        issues.push(`${path} must reference a strength-test session`);
       }
     }
   }
+  validateTransitionSemantics(program, issues);
+}
+
+function validateTransitionSemantics(
+  program: ProgramSpec,
+  issues: string[],
+): void {
+  const courseStart = program.phaseTransitions.course_start;
+  if (courseStart !== undefined) {
+    requireTransitionText(courseStart, "action", "course_start", issues);
+    requireTransitionText(courseStart, "protocol_ref", "course_start", issues);
+    requireTransitionText(
+      courseStart,
+      "bind_results_to",
+      "course_start",
+      issues,
+    );
+  }
+  const phaseChange = program.phaseTransitions.phase1_to_phase2;
+  if (phaseChange !== undefined) {
+    requireTransitionText(
+      phaseChange,
+      "main_protocol_ref",
+      "phase1_to_phase2",
+      issues,
+    );
+    requireTransitionText(
+      phaseChange,
+      "pullup_protocol_ref",
+      "phase1_to_phase2",
+      issues,
+    );
+    requireTransitionText(
+      phaseChange,
+      "bind_main_results_to",
+      "phase1_to_phase2",
+      issues,
+    );
+    if (
+      !Array.isArray(phaseChange.actions) ||
+      phaseChange.actions.length === 0
+    ) {
+      issues.push("phase_transitions.phase1_to_phase2.actions is required");
+    }
+    const session =
+      typeof phaseChange.week === "number" &&
+      typeof phaseChange.day === "string"
+        ? program.weeks
+            .find(({ week }) => week === phaseChange.week)
+            ?.sessions.find(({ day }) => day === phaseChange.day)
+        : undefined;
+    const tests = Array.isArray(session?.tests)
+      ? session.tests
+          .map((test) => safeRecord(test, "", []))
+          .filter((test): test is ProgramRecord => test !== undefined)
+      : [];
+    const mainProtocol = optionalText(phaseChange.main_protocol_ref);
+    const mainBinding = optionalText(phaseChange.bind_main_results_to);
+    if (
+      mainProtocol !== undefined &&
+      mainBinding !== undefined &&
+      !tests.some(
+        (test) =>
+          test.protocol_ref === mainProtocol &&
+          test.result_binding === mainBinding,
+      )
+    ) {
+      issues.push(
+        `phase_transitions.phase1_to_phase2 main protocol ${mainProtocol} must bind test results to ${mainBinding}`,
+      );
+    }
+    const pullupProtocol = optionalText(phaseChange.pullup_protocol_ref);
+    if (
+      pullupProtocol !== undefined &&
+      !tests.some((test) => test.protocol_ref === pullupProtocol)
+    ) {
+      issues.push(
+        `phase_transitions.phase1_to_phase2 pull-up protocol ${pullupProtocol} is missing from its test session`,
+      );
+    }
+  }
+  const cycleEnd = program.phaseTransitions.cycle_end;
+  if (cycleEnd !== undefined) {
+    requireTransitionText(cycleEnd, "action", "cycle_end", issues);
+    requireTransitionText(cycleEnd, "protocol_ref", "cycle_end", issues);
+    requireTransitionText(
+      cycleEnd,
+      "bind_results_to_next_cycle",
+      "cycle_end",
+      issues,
+    );
+    if (
+      cycleEnd.restart_from_week !== program.cycleCompletion.restart_from_week
+    ) {
+      issues.push(
+        "phase_transitions.cycle_end.restart_from_week must match cycle_completion",
+      );
+    }
+    if (cycleEnd.protocol_ref !== program.cycleCompletion.protocol_ref) {
+      issues.push(
+        "phase_transitions.cycle_end.protocol_ref must match cycle_completion",
+      );
+    }
+    if (
+      cycleEnd.bind_results_to_next_cycle !== program.cycleCompletion.bind_to
+    ) {
+      issues.push(
+        "phase_transitions.cycle_end binding must match cycle_completion.bind_to",
+      );
+    }
+  }
+}
+
+function requireTransitionText(
+  transition: ProgramRecord,
+  field: string,
+  transitionId: string,
+  issues: string[],
+): void {
+  safeText(
+    transition[field],
+    `phase_transitions.${transitionId}.${field}`,
+    issues,
+  );
 }
 
 function validateCycleCompletion(

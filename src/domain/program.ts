@@ -62,8 +62,18 @@ export type PlannedExercise = {
   readonly rest?: "self_selected";
   readonly restSeconds?: readonly number[];
   readonly effort?: string;
-  readonly progression?: ProgramRecord;
-  readonly assistance?: ProgramRecord;
+  readonly progression?: {
+    readonly trigger: string;
+    readonly action: string;
+    readonly amount: string;
+  };
+  readonly assistance?: {
+    readonly sourceBaseline: string;
+    readonly allowedModes: readonly string[];
+    readonly targetMinRepsPerSet: number;
+    readonly targetMode: string;
+    readonly preserveProgrammedTotalReps: true;
+  };
 };
 
 export type PlannedTest = {
