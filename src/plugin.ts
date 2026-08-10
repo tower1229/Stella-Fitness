@@ -104,11 +104,31 @@ export function registerStellaFitnessPlugin(
         };
       }
       const state = await stellaRuntime.confirmCycleStart(input.cycleStart);
+      const binding = await context.requestConversationBinding({
+        summary: "Stella Fitness workout recording",
+        detachHint: "Detach the Stella Fitness conversation binding to stop recording here.",
+        data: { workflow: "workout-recording" },
+      });
+      const stateText = [
+        `Program State initialized: ${state.id}`,
+        `program: ${state.program.id}@${state.program.version}`,
+        `cycle-start: ${state.cycle.startDate}`,
+      ];
+      if (binding.status === "pending") {
+        return {
+          ...binding.reply,
+          text: [
+            ...stateText,
+            binding.reply.text ?? "Approve the Stella Fitness conversation binding.",
+          ].join("\n"),
+        };
+      }
       return {
         text: [
-          `Program State initialized: ${state.id}`,
-          `program: ${state.program.id}@${state.program.version}`,
-          `cycle-start: ${state.cycle.startDate}`,
+          ...stateText,
+          binding.status === "bound"
+            ? "conversation-binding: active"
+            : `conversation-binding: unavailable (${binding.message})`,
         ].join("\n"),
       };
     },
@@ -129,6 +149,9 @@ export function registerStellaFitnessPlugin(
   api.on(
     "inbound_claim",
     async (event) => {
+      if (!isWorkoutLogImageInput(event)) {
+        return;
+      }
       const upload = await workoutLogUpload(event);
       if (upload === undefined) {
         return;
@@ -223,6 +246,13 @@ export function registerStellaFitnessPlugin(
     { priority: 100, timeoutMs: 1_000 },
   );
   return stellaRuntime;
+}
+
+function isWorkoutLogImageInput(event: PluginHookInboundClaimEvent): boolean {
+  const text = [event.content, event.body, event.bodyForAgent]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  return /(?:训练(?:日志|记录)|记录训练|workout\s*log)/iu.test(text);
 }
 
 async function workoutLogUpload(

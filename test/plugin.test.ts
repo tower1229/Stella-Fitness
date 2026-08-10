@@ -121,18 +121,36 @@ describe("Plugin registration", () => {
     const setupCommand = commands.find(
       (candidate) => candidate.name === "stella-setup",
     );
+    const requestConversationBinding = vi.fn().mockResolvedValue({
+      status: "bound",
+      binding: { bindingId: "stella-binding-1" },
+    });
     const handler = setupCommand?.handler as (context: {
       args?: string;
+      requestConversationBinding: typeof requestConversationBinding;
     }) => Promise<{ text: string }>;
 
     await expect(
-      handler({ args: `select ${programFixturePath()}` }),
+      handler({
+        args: `select ${programFixturePath()}`,
+        requestConversationBinding,
+      }),
     ).resolves.toMatchObject({
       text: expect.stringContaining("ProgramSpec selected: zhuoshu-12-week@0.2.0"),
     });
-    await expect(handler({ args: "confirm 2026-08-10" })).resolves.toMatchObject(
-      { text: expect.stringContaining("Program State initialized") },
-    );
+    await expect(
+      handler({ args: "confirm 2026-08-10", requestConversationBinding }),
+    ).resolves.toMatchObject({
+      text: expect.stringMatching(
+        /Program State initialized:.+\n.+\n.+\nconversation-binding: active/su,
+      ),
+    });
+    expect(requestConversationBinding).toHaveBeenCalledWith({
+      summary: "Stella Fitness workout recording",
+      detachHint:
+        "Detach the Stella Fitness conversation binding to stop recording here.",
+      data: { workflow: "workout-recording" },
+    });
 
     const state = JSON.parse(
       readFileSync(
@@ -349,9 +367,22 @@ describe("Plugin registration", () => {
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
 
+    await expect(
+      hooks.get("inbound_claim")?.(
+        {
+          content: "看看这张照片",
+          channel: "test-channel",
+          messageId: "ordinary-image-message",
+          metadata: { mediaPath, mediaType: "image/png" },
+        },
+        {},
+      ),
+    ).resolves.toBeUndefined();
+    expect(extractStructuredWithModel).not.toHaveBeenCalled();
+
     const result = await hooks.get("inbound_claim")?.(
       {
-        content: "",
+        content: "记录训练",
         channel: "test-channel",
         timestamp: Date.parse("2026-08-10T08:00:00.000Z"),
         messageId: "workout-message-1",
@@ -400,7 +431,7 @@ describe("Plugin registration", () => {
         candidates?: string[];
       }>;
     };
-    candidate.exercises[0]!.load = { value: null, confidence: "low" };
+    candidate.exercises[0]!.load = { value: null, confidence: "high" };
     candidate.uncertainFields = [
       {
         path: "exercises[0].load.value",
@@ -433,7 +464,7 @@ describe("Plugin registration", () => {
 
     const pending = await hooks.get("inbound_claim")?.(
       {
-        content: "",
+        content: "训练日志",
         channel: "test-channel",
         messageId: "workout-message-2",
         runId: "workout-hook-run-2",

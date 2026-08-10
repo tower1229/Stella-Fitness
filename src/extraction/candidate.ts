@@ -230,7 +230,6 @@ export function parseWorkoutLogCandidate(value: unknown): WorkoutLogCandidate {
     uncertainPaths.length !== uncertainFields.length ||
     new Set(uncertainPaths).size !== uncertainPaths.length ||
     !uncertainPaths.every((path) => isCorrectablePath(path, exercises)) ||
-    lowConfidencePaths.length !== uncertainPaths.length ||
     !lowConfidencePaths.every((path) => uncertainPaths.includes(path))
   ) {
     throw new InvalidWorkoutLogCandidateError();

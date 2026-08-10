@@ -16,6 +16,7 @@ describe("OpenClaw stable contract baseline", () => {
       developmentVersion: "2026.6.34",
       minimumVersion: "2026.6.34",
       hooks: ["inbound_claim", "before_agent_reply", "before_agent_run"],
+      conversationBinding: "command-context.requestConversationBinding",
       structuredMedia: "runtime.mediaUnderstanding.extractStructuredWithModel",
       modelPermission: "explicit-openclaw-model-allowlist",
       executionMetadata: ["provider", "model", "contentType"],
