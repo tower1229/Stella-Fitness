@@ -33,7 +33,8 @@
     "@types/ws": "8.18.1",
     "openclaw": "2026.6.34",
     "typescript": "6.0.3",
-    "vitest": "3.2.4"
+    "vitest": "3.2.4",
+    "yaml": "^2.9.0"
   },
   "engines": {
     "node": ">=22.19.0"
