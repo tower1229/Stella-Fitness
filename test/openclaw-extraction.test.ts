@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createOpenClawExtractionRuntime } from "../src/extraction/openclaw.js";
-import { createSanitizedMediaCopy } from "../src/media/sanitized-copy.js";
+import { sanitizedMediaFixture } from "./support/sanitized-media.js";
 
 describe("OpenClaw structured extraction adapter", () => {
   it("uses operator-owned model config and preserves observable execution metadata", async () => {
@@ -95,9 +95,5 @@ describe("OpenClaw structured extraction adapter", () => {
 });
 
 function sanitizedFixture() {
-  return createSanitizedMediaCopy({
-    bytes: Buffer.from("sanitized-image"),
-    fileName: "sanitized.jpg",
-    mime: "image/jpeg",
-  });
+  return sanitizedMediaFixture(Buffer.from("sanitized-image"), "sanitized.jpg");
 }

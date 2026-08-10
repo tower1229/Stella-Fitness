@@ -6,15 +6,3 @@ export type SanitizedMediaCopy = {
   readonly mime: string;
   readonly [sanitizedMediaCopyBrand]: true;
 };
-
-export function createSanitizedMediaCopy(input: {
-  bytes: Buffer;
-  fileName: string;
-  mime: string;
-}): SanitizedMediaCopy {
-  return {
-    bytes: Buffer.from(input.bytes),
-    fileName: input.fileName,
-    mime: input.mime,
-  } as SanitizedMediaCopy;
-}

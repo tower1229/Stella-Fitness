@@ -10,6 +10,10 @@ describe("installable Plugin package contract", () => {
     const packageJson = JSON.parse(
       await readFile(new URL("../package.json", import.meta.url), "utf8"),
     );
+    const releaseGate = await readFile(
+      new URL("../scripts/verify-release.mjs", import.meta.url),
+      "utf8",
+    );
 
     expect(packageJson).toMatchObject({
       name: "@tower1229/stella-fitness",
@@ -42,6 +46,9 @@ describe("installable Plugin package contract", () => {
     expect(manifest.configSchema.properties).not.toHaveProperty("cron");
     expect(packageJson.scripts["verify:internal"]).not.toBe(
       packageJson.scripts["verify:release"],
+    );
+    expect(releaseGate).toContain(
+      "automated ClawHub evidence and clean-environment recording-flow verification are not implemented",
     );
   });
 });

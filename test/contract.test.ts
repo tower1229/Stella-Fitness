@@ -4,6 +4,7 @@ import {
   LOCKED_OPENCLAW_CONTRACT,
   OpenClawContractError,
   assertOpenClawContract,
+  assertOperatorModelPermission,
 } from "../src/contracts/openclaw.js";
 
 describe("locked OpenClaw contract", () => {
@@ -16,7 +17,7 @@ describe("locked OpenClaw contract", () => {
       runtimeVersions: ["2026.7.1", "2026.7.1-2"],
       hooks: ["before_agent_reply", "before_agent_run"],
       structuredMedia: "runtime.mediaUnderstanding.extractStructuredWithModel",
-      modelPermission: "operator-owned-provider-model-config",
+      modelPermission: "explicit-openclaw-model-allowlist",
       executionMetadata: ["provider", "model", "contentType"],
       timeout: "timeoutMs",
       cancellation: "abort-signal-result-gate",
@@ -49,6 +50,24 @@ describe("locked OpenClaw contract", () => {
       new OpenClawContractError("host-version"),
     );
     expect(structuredMediaAccesses).toBe(0);
+  });
+
+  it("requires an explicit OpenClaw model allowlist entry", () => {
+    const selection = { provider: "operator-provider", model: "operator-model" };
+    const allowedConfig = {
+      agents: {
+        defaults: {
+          models: { "operator-provider/operator-model": {} },
+        },
+      },
+    };
+
+    expect(() =>
+      assertOperatorModelPermission(allowedConfig, selection),
+    ).not.toThrow();
+    expect(() => assertOperatorModelPermission({}, selection)).toThrow(
+      new OpenClawContractError("model-permission"),
+    );
   });
 });
 

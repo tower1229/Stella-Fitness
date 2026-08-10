@@ -3,7 +3,10 @@ import {
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
 
-import { assertOpenClawContract } from "./contracts/openclaw.js";
+import {
+  assertOpenClawContract,
+  assertOperatorModelPermission,
+} from "./contracts/openclaw.js";
 import { createOpenClawExtractionRuntime } from "./extraction/openclaw.js";
 import type { ExtractionRuntime } from "./extraction/runtime.js";
 import {
@@ -39,6 +42,9 @@ export function registerStellaFitnessPlugin(
   }
 
   assertOpenClawContract(api);
+  if (extractionConfig !== undefined) {
+    assertOperatorModelPermission(api.config, extractionConfig);
+  }
   const stellaRuntime = createStellaFitnessRuntime({
     extractionRuntime:
       extractionConfig === undefined

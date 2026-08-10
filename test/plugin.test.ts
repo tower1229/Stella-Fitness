@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import plugin, { registerStellaFitnessPlugin } from "../src/plugin.js";
-import { createSanitizedMediaCopy } from "../src/media/sanitized-copy.js";
+import { sanitizedMediaFixture } from "./support/sanitized-media.js";
 
 const UNCONFIGURED_STATUS =
   "Stella Fitness: ready\ncontract: openclaw@2026.7.1-2\nscope: recording-only\nextraction: unconfigured";
@@ -103,6 +103,7 @@ describe("Plugin registration", () => {
           model: "operator-model",
         },
       },
+      openclawConfig: allowedModelConfig(),
       extractStructuredWithModel,
     });
 
@@ -111,11 +112,7 @@ describe("Plugin registration", () => {
     );
     const output = await runtime?.extractWorkoutLog({
       runId: "plugin-run-1",
-      media: createSanitizedMediaCopy({
-        bytes: Buffer.from("sanitized"),
-        fileName: "workout.jpg",
-        mime: "image/jpeg",
-      }),
+      media: sanitizedMediaFixture(Buffer.from("sanitized")),
       timeoutMs: 2_000,
       signal: new AbortController().signal,
     });
@@ -145,15 +142,36 @@ describe("Plugin registration", () => {
     await expect(
       runtime?.extractWorkoutLog({
         runId: "plugin-unconfigured",
-        media: createSanitizedMediaCopy({
-          bytes: Buffer.from("sanitized"),
-          fileName: "workout.jpg",
-          mime: "image/jpeg",
-        }),
+        media: sanitizedMediaFixture(Buffer.from("sanitized")),
         timeoutMs: 2_000,
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow("extraction is unconfigured");
+    expect(extractStructuredWithModel).not.toHaveBeenCalled();
+  });
+
+  it("fails registration before model access when extraction model is not allowlisted", () => {
+    const commands: Array<Record<string, unknown>> = [];
+    const extractStructuredWithModel = vi.fn();
+    const api = compatibleApi({
+      commands,
+      hooks: new Map(),
+      cliRegistrations: [],
+      pluginConfig: {
+        extraction: {
+          provider: "operator-provider",
+          model: "operator-model",
+        },
+      },
+      extractStructuredWithModel,
+    });
+
+    expect(() =>
+      registerStellaFitnessPlugin(
+        api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+      ),
+    ).toThrow("model-permission");
+    expect(commands).toEqual([]);
     expect(extractStructuredWithModel).not.toHaveBeenCalled();
   });
 
@@ -180,11 +198,12 @@ function compatibleApi(options: {
   hooks: Map<string, (...args: unknown[]) => unknown>;
   cliRegistrations: Array<Record<string, unknown>>;
   pluginConfig?: Record<string, unknown>;
+  openclawConfig?: Record<string, unknown>;
   extractStructuredWithModel?: ReturnType<typeof vi.fn>;
 }) {
   return {
     registrationMode: "full",
-    config: {},
+    config: options.openclawConfig ?? {},
     pluginConfig: options.pluginConfig,
     runtime: {
       version: "2026.7.1-2",
@@ -207,6 +226,16 @@ function compatibleApi(options: {
     },
     on(name: string, handler: (...args: unknown[]) => unknown) {
       options.hooks.set(name, handler);
+    },
+  };
+}
+
+function allowedModelConfig() {
+  return {
+    agents: {
+      defaults: {
+        models: { "operator-provider/operator-model": {} },
+      },
     },
   };
 }

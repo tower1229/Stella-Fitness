@@ -4,7 +4,7 @@ import {
   ControlledExtractionRuntime,
   createScenarioHarness,
 } from "../src/scenario/harness.js";
-import { createSanitizedMediaCopy } from "../src/media/sanitized-copy.js";
+import { sanitizedMediaFixture } from "./support/sanitized-media.js";
 
 describe("scenario-level Plugin harness", () => {
   it("injects a controlled extraction result without a live provider", async () => {
@@ -98,6 +98,49 @@ describe("scenario-level Plugin harness", () => {
     expect(runtime.requests).toHaveLength(1);
   });
 
+  it("rejects a run ID reused for different sanitized media", async () => {
+    const runtime = new ControlledExtractionRuntime([
+      { parsed: candidate(), metadata: { provider: "controlled" } },
+    ]);
+    const harness = createScenarioHarness({ extractionRuntime: runtime });
+
+    await harness.extract({
+      runId: "scenario-collision",
+      media: sanitizedFixture(),
+      timeoutMs: 2_000,
+    });
+    await expect(
+      harness.extract({
+        runId: "scenario-collision",
+        media: sanitizedMediaFixture(Buffer.from("different-image")),
+        timeoutMs: 2_000,
+      }),
+    ).rejects.toThrow("reused for different media");
+    expect(runtime.requests).toHaveLength(1);
+  });
+
+  it("applies each caller's cancellation gate to an idempotent run", async () => {
+    const runtime = new ControlledExtractionRuntime([], { pending: true });
+    const harness = createScenarioHarness({ extractionRuntime: runtime });
+    void harness.extract({
+      runId: "scenario-shared-pending",
+      media: sanitizedFixture(),
+      timeoutMs: 2_000,
+    });
+    const controller = new AbortController();
+    controller.abort("second-caller-cancelled");
+
+    await expect(
+      harness.extract({
+        runId: "scenario-shared-pending",
+        media: sanitizedFixture(),
+        timeoutMs: 2_000,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(runtime.requests).toHaveLength(1);
+  });
+
   it("rejects schema-invalid controlled output", async () => {
     const runtime = new ControlledExtractionRuntime([
       { parsed: { stage: 1 }, metadata: { provider: "controlled" } },
@@ -150,9 +193,5 @@ function candidate() {
 }
 
 function sanitizedFixture() {
-  return createSanitizedMediaCopy({
-    bytes: Buffer.from("fixture-image"),
-    fileName: "workout.jpg",
-    mime: "image/jpeg",
-  });
+  return sanitizedMediaFixture();
 }

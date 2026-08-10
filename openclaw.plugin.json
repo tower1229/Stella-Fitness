@@ -22,12 +22,6 @@
           "model": {
             "type": "string",
             "minLength": 1
-          },
-          "timeoutMs": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 600000,
-            "default": 60000
           }
         }
       }
