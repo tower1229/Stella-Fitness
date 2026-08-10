@@ -4,6 +4,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -312,6 +313,26 @@ describe("scenario-level Plugin harness", () => {
     });
   });
 
+  it("asks for the occurrence time when an explicit calendar timestamp is invalid", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const harness = readyHarness(
+      new ControlledExtractionRuntime([]),
+      personalDataDirectory,
+    );
+
+    await expect(
+      harness.recordBodyWeight({
+        text: "2026-02-30T07:00:00Z 体重 68.4 kg",
+        receivedAt: "2026-08-10T07:30:00.000Z",
+      }),
+    ).resolves.toEqual({
+      status: "clarification",
+      field: "occurrence-time",
+      question: "请确认这次测量的发生时间。",
+    });
+    expect(readdirSync(personalDataDirectory)).toEqual([]);
+  });
+
   it("asks only for the occurrence time when a relative date is ambiguous", async () => {
     const personalDataDirectory = temporaryPersonalDataDirectory();
     const harness = readyHarness(
@@ -412,6 +433,82 @@ describe("scenario-level Plugin harness", () => {
       options,
     ).bodyWeightTimeline();
     expect(restartedView).toEqual(corrected.view);
+  });
+
+  it("corrects an occurrence time through the same explicit lineage", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const harness = readyHarness(
+      new ControlledExtractionRuntime([]),
+      personalDataDirectory,
+    );
+    const recorded = await harness.recordBodyWeight({
+      text: "今天体重 68.4 kg",
+      receivedAt: "2026-08-10T07:30:00.000Z",
+    });
+    if (recorded.status !== "recorded") {
+      throw new Error("Expected the original body weight to be recorded");
+    }
+
+    await expect(
+      harness.correctBodyWeight({
+        replacesObservationId: recorded.observation.id,
+        text: "2026-08-09T07:00:00+08:00 纠正为 68.4 kg",
+        receivedAt: "2026-08-10T08:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({
+      status: "recorded",
+      observation: {
+        occurredAt: "2026-08-08T23:00:00.000Z",
+        provenance: {
+          kind: "body-weight-correction",
+          replacesObservationId: recorded.observation.id,
+        },
+      },
+      view: {
+        points: [
+          expect.objectContaining({ occurredAt: "2026-08-08T23:00:00.000Z" }),
+        ],
+      },
+    });
+  });
+
+  it("reports and excludes a schema-invalid manual edit from the rebuilt view", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const harness = readyHarness(
+      new ControlledExtractionRuntime([]),
+      personalDataDirectory,
+    );
+    const recorded = await harness.recordBodyWeight({
+      text: "今天体重 68.4 kg",
+      receivedAt: "2026-08-10T07:30:00.000Z",
+    });
+    if (recorded.status !== "recorded") {
+      throw new Error("Expected the body weight to be recorded");
+    }
+    const relativeFile = join(
+      "observations",
+      "body-weight",
+      `${recorded.observation.id}.json`,
+    );
+    const canonicalFile = join(personalDataDirectory, relativeFile);
+    writeFileSync(
+      canonicalFile,
+      `${JSON.stringify({
+        ...recorded.observation,
+        value: { amount: 0, unit: "kg" },
+      })}\n`,
+    );
+
+    await expect(harness.bodyWeightTimeline()).resolves.toEqual({
+      schemaVersion: "stella-fitness/view/body-weight/v0.1",
+      points: [],
+      errors: [
+        {
+          file: relativeFile,
+          message: "Body-weight Observation is schema-invalid",
+        },
+      ],
+    });
   });
 
   it("does not start Program setup while configuration preflight is blocked", async () => {

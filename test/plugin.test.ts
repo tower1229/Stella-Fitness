@@ -217,7 +217,9 @@ describe("Plugin registration", () => {
     const originalId = readdirSync(directory)[0]!.replace(/\.json$/u, "");
 
     const handled = await replyHook(
-      { cleanedBody: `纠正体重 ${originalId} 为 67.9 kg` },
+      {
+        cleanedBody: `2026-08-09T07:00:00+08:00 纠正体重 ${originalId} 为 67.9 kg`,
+      },
       {},
     );
 
@@ -225,7 +227,7 @@ describe("Plugin registration", () => {
       handled: true,
       reply: {
         text: expect.stringMatching(
-          /^Body weight corrected: 67\.9 kg\n.+\ntimeline:\n- .+ 67\.9 kg$/,
+          /^Body weight corrected: 67\.9 kg\n.+\ntimeline:\n- 2026-08-08T23:00:00\.000Z 67\.9 kg$/,
         ),
       },
     });

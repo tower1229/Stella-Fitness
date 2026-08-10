@@ -136,7 +136,9 @@ export function createStellaFitnessRuntime(options: {
       }
       const observation = await persistBodyWeightObservation({
         personalDataDirectory,
-        ...candidate,
+        amount: candidate.amount,
+        unit: candidate.unit,
+        occurredAt: candidate.occurredAt,
         source: {
           kind: "user-text",
           text: input.text,
@@ -162,6 +164,9 @@ export function createStellaFitnessRuntime(options: {
         replacesObservationId: input.replacesObservationId,
         amount: candidate.amount,
         unit: candidate.unit,
+        ...(candidate.occurrenceTimeSource === "explicit"
+          ? { occurredAt: candidate.occurredAt }
+          : {}),
         source: {
           kind: "user-text",
           text: input.text,

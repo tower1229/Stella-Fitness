@@ -4,6 +4,7 @@ export type BodyWeightCandidate = {
   readonly amount: number;
   readonly unit: BodyWeightUnit;
   readonly occurredAt: string;
+  readonly occurrenceTimeSource: "received-at" | "explicit";
 };
 
 export type BodyWeightClarification = {
@@ -34,6 +35,13 @@ export function parseBodyWeightInput(options: {
   }
   const explicitTimestamp = timestampMatches[0]?.[0];
   if (explicitTimestamp === undefined && /\b\d{4}-\d{2}-\d{2}\b/u.test(options.text)) {
+    return occurrenceTimeClarification();
+  }
+  const normalizedExplicitTimestamp =
+    explicitTimestamp === undefined
+      ? undefined
+      : normalizeRfc3339Timestamp(explicitTimestamp);
+  if (explicitTimestamp !== undefined && normalizedExplicitTimestamp === undefined) {
     return occurrenceTimeClarification();
   }
   const units = recognizedUnits(options.text);
@@ -70,9 +78,11 @@ export function parseBodyWeightInput(options: {
     amount,
     unit: units[0]!,
     occurredAt:
-      explicitTimestamp === undefined
+      normalizedExplicitTimestamp === undefined
         ? receivedAt
-        : parseTimestamp(explicitTimestamp, "occurrence time"),
+        : normalizedExplicitTimestamp,
+    occurrenceTimeSource:
+      normalizedExplicitTimestamp === undefined ? "received-at" : "explicit",
   };
 }
 
@@ -96,9 +106,58 @@ function recognizedUnits(text: string): BodyWeightUnit[] {
 }
 
 function parseTimestamp(value: string, label: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
+  const normalized = normalizeRfc3339Timestamp(value);
+  if (normalized === undefined) {
     throw new Error(`${label} must be an ISO timestamp`);
   }
-  return parsed.toISOString();
+  return normalized;
+}
+
+function normalizeRfc3339Timestamp(value: string): string | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|([+-])(\d{2}):(\d{2}))$/u.exec(
+    value,
+  );
+  if (match === null) {
+    return undefined;
+  }
+  const [year, month, day, hour, minute, second, offsetHour, offsetMinute] = [
+    match[1],
+    match[2],
+    match[3],
+    match[4],
+    match[5],
+    match[6],
+    match[10] ?? "00",
+    match[11] ?? "00",
+  ].map(Number);
+  if (
+    year === undefined ||
+    month === undefined ||
+    day === undefined ||
+    hour === undefined ||
+    minute === undefined ||
+    second === undefined ||
+    offsetHour === undefined ||
+    offsetMinute === undefined ||
+    year < 1 ||
+    month < 1 ||
+    month > 12 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59
+  ) {
+    return undefined;
+  }
+  const calendarDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendarDate.getUTCFullYear() !== year ||
+    calendarDate.getUTCMonth() !== month - 1 ||
+    calendarDate.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
 }

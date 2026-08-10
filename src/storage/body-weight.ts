@@ -46,6 +46,7 @@ export async function persistBodyWeightCorrection(options: {
   replacesObservationId: string;
   amount: number;
   unit: BodyWeightUnit;
+  occurredAt?: string;
   source: ObservationSource;
   recordedAt: string;
 }): Promise<BodyWeightObservation> {
@@ -71,7 +72,7 @@ export async function persistBodyWeightCorrection(options: {
     id: randomUUID(),
     kind: "body-weight",
     value: { amount: options.amount, unit: options.unit },
-    occurredAt: replaced.occurredAt,
+    occurredAt: options.occurredAt ?? replaced.occurredAt,
     source: options.source,
     provenance: {
       kind: "body-weight-correction",
@@ -97,13 +98,20 @@ export async function rebuildBodyWeightView(
     }
     throw error;
   });
-  const observations: BodyWeightObservation[] = [];
+  const entries: Array<{
+    file: string;
+    observation: BodyWeightObservation;
+  }> = [];
   const errors: Array<{ file: string; message: string }> = [];
   for (const file of files.filter((name) => name.endsWith(".json")).sort()) {
     try {
-      observations.push(
-        parseBodyWeightObservation(await readFile(join(directory, file), "utf8")),
+      const observation = parseBodyWeightObservation(
+        await readFile(join(directory, file), "utf8"),
       );
+      if (file !== `${observation.id}.json`) {
+        throw new Error("Body-weight Observation is schema-invalid");
+      }
+      entries.push({ file, observation });
     } catch (error) {
       errors.push({
         file: join(OBSERVATION_DIRECTORY, file),
@@ -111,6 +119,20 @@ export async function rebuildBodyWeightView(
       });
     }
   }
+  const entriesById = new Map(
+    entries.map((entry) => [entry.observation.id, entry] as const),
+  );
+  const validEntries = entries.filter((entry) => {
+    if (hasValidCorrectionLineage(entry.observation, entriesById, new Set())) {
+      return true;
+    }
+    errors.push({
+      file: join(OBSERVATION_DIRECTORY, entry.file),
+      message: "Body-weight Observation has invalid correction lineage",
+    });
+    return false;
+  });
+  const observations = validEntries.map(({ observation }) => observation);
   const replacedIds = new Set(
     observations.flatMap(({ provenance }) =>
       provenance.kind === "body-weight-correction"
@@ -143,25 +165,73 @@ function parseBodyWeightObservation(source: string): BodyWeightObservation {
     !isRecord(value) ||
     value.schemaVersion !== "stella-fitness/observation/body-weight/v0.1" ||
     typeof value.id !== "string" ||
+    !isUuid(value.id) ||
     value.kind !== "body-weight" ||
     !isRecord(value.value) ||
     typeof value.value.amount !== "number" ||
     !Number.isFinite(value.value.amount) ||
+    value.value.amount <= 0 ||
     (value.value.unit !== "kg" && value.value.unit !== "lb") ||
     typeof value.occurredAt !== "string" ||
+    !isCanonicalTimestamp(value.occurredAt) ||
     !isRecord(value.source) ||
     value.source.kind !== "user-text" ||
     typeof value.source.text !== "string" ||
+    value.source.text.trim().length === 0 ||
+    (value.source.channel !== undefined &&
+      (typeof value.source.channel !== "string" ||
+        value.source.channel.trim().length === 0)) ||
+    (value.source.messageId !== undefined &&
+      (typeof value.source.messageId !== "string" ||
+        value.source.messageId.trim().length === 0)) ||
     !isRecord(value.provenance) ||
     typeof value.provenance.recordedAt !== "string" ||
+    !isCanonicalTimestamp(value.provenance.recordedAt) ||
     (value.provenance.kind !== "body-weight-recording" &&
       value.provenance.kind !== "body-weight-correction") ||
     (value.provenance.kind === "body-weight-correction" &&
-      typeof value.provenance.replacesObservationId !== "string")
+      (typeof value.provenance.replacesObservationId !== "string" ||
+        !isUuid(value.provenance.replacesObservationId) ||
+        value.provenance.replacesObservationId === value.id))
   ) {
     throw new Error("Body-weight Observation is schema-invalid");
   }
   return value as BodyWeightObservation;
+}
+
+function hasValidCorrectionLineage(
+  observation: BodyWeightObservation,
+  entriesById: ReadonlyMap<
+    string,
+    { file: string; observation: BodyWeightObservation }
+  >,
+  visited: Set<string>,
+): boolean {
+  if (observation.provenance.kind === "body-weight-recording") {
+    return true;
+  }
+  if (visited.has(observation.id)) {
+    return false;
+  }
+  visited.add(observation.id);
+  const replaced = entriesById.get(
+    observation.provenance.replacesObservationId,
+  );
+  return (
+    replaced !== undefined &&
+    hasValidCorrectionLineage(replaced.observation, entriesById, visited)
+  );
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+    value,
+  );
+}
+
+function isCanonicalTimestamp(value: string): boolean {
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
