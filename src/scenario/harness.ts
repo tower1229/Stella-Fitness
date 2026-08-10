@@ -3,7 +3,7 @@ import type {
   ExtractionResult,
   ExtractionRuntime,
 } from "../extraction/runtime.js";
-import { rejectOnAbort, throwIfAborted } from "../extraction/cancellation.js";
+import { throwIfAborted } from "../extraction/cancellation.js";
 import { createStellaFitnessRuntime } from "../plugin-runtime.js";
 
 type HarnessInput = Omit<ExtractionRequest, "signal"> & {
@@ -18,20 +18,13 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
   const pluginRuntime = createStellaFitnessRuntime(options);
 
   return {
-    async extract(input: HarnessInput) {
-      const controller = new AbortController();
-      const signal = input.signal ?? controller.signal;
-      throwIfAborted(signal);
-
-      return await rejectOnAbort(
-        pluginRuntime.extractWorkoutLog({
-          runId: input.runId,
-          media: input.media,
-          timeoutMs: input.timeoutMs,
-          signal,
-        }),
-        signal,
-      );
+    extract(input: HarnessInput) {
+      return pluginRuntime.extractWorkoutLog({
+        runId: input.runId,
+        media: input.media,
+        timeoutMs: input.timeoutMs,
+        signal: input.signal ?? new AbortController().signal,
+      });
     },
   };
 }
