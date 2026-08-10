@@ -22,7 +22,7 @@
 
 ## Phase 1 — Plugin Foundation
 
-- 锁定 OpenClaw 版本与 Plugin/media/model permission 契约；
+- 建立 OpenClaw stable 最低兼容基线并验证 Plugin/media/model permission 契约；
 - 创建可安装、可加载的 Native Plugin；
 - 建立 scenario harness；
 - 实现配置 preflight 和 readiness states；

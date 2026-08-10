@@ -1,6 +1,8 @@
 # OpenClaw 平台能力调研
 
-**状态：RESEARCH SNAPSHOT / REVALIDATE AT KICKOFF**
+**状态：LIVE-VERIFIED BASELINE / 2026-08-10**
+
+本机 OpenClaw `2026.6.34` 与 npm `extended-stable` 一致。实现以该版本的 SDK 编译并完成 clean install / enable / load；package 声明 `>=2026.6.34`，运行时按 hooks、structured media 与 model permission 等实际能力预检，不使用精确版本白名单。后续发行仍须对届时 stable 版本复验。
 
 当前架构依赖以下 OpenClaw 能力：
 

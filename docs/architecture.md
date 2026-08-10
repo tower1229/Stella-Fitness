@@ -1,6 +1,6 @@
 # Stella Fitness 技术架构
 
-> 本文描述记录型 v1 的目标架构。OpenClaw 接口必须在 implementation kickoff 按锁定版本重新核验。
+> 本文描述记录型 v1 的目标架构。OpenClaw 接口以本机 stable 基线实机核验，并通过最低版本声明与能力预检保持向后续 stable 版本兼容，不使用精确版本白名单。
 
 ## 1. 总体结构
 

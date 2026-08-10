@@ -26,29 +26,29 @@
     "verify:release": "node scripts/verify-release.mjs"
   },
   "peerDependencies": {
-    "openclaw": "2026.7.1-2"
+    "openclaw": ">=2026.6.34"
   },
   "devDependencies": {
     "@types/node": "26.1.0",
     "@types/ws": "8.18.1",
-    "openclaw": "2026.7.1-2",
+    "openclaw": "2026.6.34",
     "typescript": "6.0.3",
     "vitest": "3.2.4"
   },
   "engines": {
-    "node": ">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0"
+    "node": ">=22.19.0"
   },
   "openclaw": {
     "extensions": [
       "./dist/plugin.js"
     ],
     "compat": {
-      "pluginApi": "=2026.7.1",
-      "minGatewayVersion": "2026.7.1-2"
+      "pluginApi": ">=2026.6.34",
+      "minGatewayVersion": "2026.6.34"
     },
     "build": {
-      "openclawVersion": "2026.7.1-2",
-      "pluginSdkVersion": "2026.7.1-2"
+      "openclawVersion": "2026.6.34",
+      "pluginSdkVersion": "2026.6.34"
     }
   }
 }

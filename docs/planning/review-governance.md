@@ -10,7 +10,7 @@ Product Owner 批准产品定位、非目标、用户流程、事实语义和 sc
 
 ## Platform Review
 
-implementation kickoff 按锁定 OpenClaw 版本核验 hooks、permissions、media runtime、execution metadata、timeout/cancellation 和 packaging。平台契约具有时效性，旧 research snapshot 不能替代 live validation。
+implementation kickoff 按本机 OpenClaw stable 基线核验 hooks、permissions、media runtime、execution metadata、timeout/cancellation 和 packaging。平台契约具有时效性，旧 research snapshot 不能替代 live validation；兼容判断采用最低版本声明与能力预检，不采用精确版本白名单。
 
 ## Source / Rights Review
 
@@ -41,6 +41,6 @@ notes
 
 | Gate | Evidence | Effect while pending |
 |---|---|---|
-| `REVALIDATE_AT_KICKOFF` | locked OpenClaw contract | 对应集成能力不得继续实现 |
+| `REVALIDATE_AT_KICKOFF` | verified OpenClaw stable baseline | 对应集成能力不得继续实现 |
 | `MODEL-SELECTION-BLOCKED` | real pilot + ground truth + provider terms | 不得冻结默认 extraction model |
 | `RELEASE-BLOCKING` | content rights + package inspection + live permission | 不得公开发行 |

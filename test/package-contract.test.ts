@@ -23,12 +23,12 @@ describe("installable Plugin package contract", () => {
         "verify:clean-install": "node scripts/verify-clean-install.mjs",
         "verify:release": "node scripts/verify-release.mjs",
       },
-      peerDependencies: { openclaw: "2026.7.1-2" },
+      peerDependencies: { openclaw: ">=2026.6.34" },
       openclaw: {
         extensions: ["./dist/plugin.js"],
         compat: {
-          pluginApi: "=2026.7.1",
-          minGatewayVersion: "2026.7.1-2",
+          pluginApi: ">=2026.6.34",
+          minGatewayVersion: "2026.6.34",
         },
       },
     });

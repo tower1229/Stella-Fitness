@@ -6,7 +6,7 @@ export function createStatusResponse(
   return {
     text: [
       "Stella Fitness: ready",
-      "contract: openclaw@2026.7.1-2",
+      "contract: openclaw>=2026.6.34",
       "scope: recording-only",
       `extraction: ${extraction}`,
     ].join("\n"),

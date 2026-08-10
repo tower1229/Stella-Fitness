@@ -4,7 +4,7 @@
 
 角色：Native Plugin 宿主、conversation hooks、structured media runtime、model permission 和 ClawHub 分发入口。
 
-kickoff 必须锁定并验证实际 stable 版本，不能依赖 research snapshot。
+kickoff 必须以实际 stable 版本建立并验证最低兼容基线，不能依赖 research snapshot，也不得用单一修订版本白名单替代能力预检。
 
 ## Extraction model
 

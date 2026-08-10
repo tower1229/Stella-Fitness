@@ -2,7 +2,7 @@
 
 > 当前没有可安装 Plugin。
 
-目标 package identity 为 `@tower1229/stella-fitness`，owner 为 `tower1229`。具体命令和最低兼容版本必须在实现与发布时按锁定 OpenClaw/ClawHub 版本验证。
+目标 package identity 为 `@tower1229/stella-fitness`，owner 为 `tower1229`。当前开发与最低兼容基线为本机 OpenClaw extended-stable `2026.6.34`，package 接受 `>=2026.6.34`；发布前仍须按届时 stable OpenClaw/ClawHub 实机复验。
 
 ## 首次使用
 

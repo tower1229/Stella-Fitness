@@ -1,20 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  LOCKED_OPENCLAW_CONTRACT,
+  OPENCLAW_CONTRACT_BASELINE,
   OpenClawContractError,
   assertOpenClawContract,
   assertOperatorModelPermission,
 } from "../src/contracts/openclaw.js";
 
-describe("locked OpenClaw contract", () => {
-  it("accepts the locked host surfaces and records every required contract", () => {
+describe("OpenClaw stable contract baseline", () => {
+  it("accepts the baseline host surfaces and records every required contract", () => {
     expect(assertOpenClawContract(compatibleHost())).toEqual(
-      LOCKED_OPENCLAW_CONTRACT,
+      OPENCLAW_CONTRACT_BASELINE,
     );
-    expect(LOCKED_OPENCLAW_CONTRACT).toMatchObject({
-      packageVersion: "2026.7.1-2",
-      runtimeVersions: ["2026.7.1", "2026.7.1-2"],
+    expect(OPENCLAW_CONTRACT_BASELINE).toMatchObject({
+      developmentVersion: "2026.6.34",
+      minimumVersion: "2026.6.34",
       hooks: ["before_agent_reply", "before_agent_run"],
       structuredMedia: "runtime.mediaUnderstanding.extractStructuredWithModel",
       modelPermission: "explicit-openclaw-model-allowlist",
@@ -33,23 +33,11 @@ describe("locked OpenClaw contract", () => {
     );
   });
 
-  it("rejects an incompatible host version before personal data is accessed", () => {
-    let structuredMediaAccesses = 0;
-    const host = {
-      runtime: {
-        version: "2026.7.2",
-        get mediaUnderstanding() {
-          structuredMediaAccesses += 1;
-          return { extractStructuredWithModel: vi.fn() };
-        },
-      },
-      on: vi.fn(),
-    };
+  it("accepts newer hosts by capabilities instead of an exact version whitelist", () => {
+    const host = compatibleHost();
+    host.runtime.version = "2026.8.1";
 
-    expect(() => assertOpenClawContract(host)).toThrow(
-      new OpenClawContractError("host-version"),
-    );
-    expect(structuredMediaAccesses).toBe(0);
+    expect(() => assertOpenClawContract(host)).not.toThrow();
   });
 
   it("requires an explicit OpenClaw model allowlist entry", () => {
@@ -80,7 +68,7 @@ function compatibleHost(): {
 } {
   return {
     runtime: {
-      version: "2026.7.1-2",
+      version: "2026.6.34",
       mediaUnderstanding: {
         extractStructuredWithModel: vi.fn(),
       },

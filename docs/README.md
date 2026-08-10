@@ -57,4 +57,4 @@ ProgramSpec v0.2 已完成 source reconciliation。它是计划事实 fixture，
 
 ## 当前状态
 
-Phase 0 已批准进入实现。第一项工作是锁定 OpenClaw 契约并建立可安装 Plugin 与 scenario harness。课程派生内容授权继续阻止公开发行，但不阻止内部实现。
+Phase 0 已批准进入实现。OpenClaw stable 最低兼容基线、可安装 Plugin 与 scenario harness 已建立；当前以本机 extended-stable `2026.6.34` 开发并接受 `>=2026.6.34`。课程派生内容授权继续阻止公开发行，但不阻止内部实现。

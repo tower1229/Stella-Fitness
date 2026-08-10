@@ -4,9 +4,9 @@ import {
 } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/plugin-entry";
 
-export const LOCKED_OPENCLAW_CONTRACT = {
-  packageVersion: "2026.7.1-2",
-  runtimeVersions: ["2026.7.1", "2026.7.1-2"],
+export const OPENCLAW_CONTRACT_BASELINE = {
+  developmentVersion: "2026.6.34",
+  minimumVersion: "2026.6.34",
   hooks: ["before_agent_reply", "before_agent_run"],
   structuredMedia: "runtime.mediaUnderstanding.extractStructuredWithModel",
   modelPermission: "explicit-openclaw-model-allowlist",
@@ -27,7 +27,6 @@ type ContractHost = {
 
 export class OpenClawContractError extends Error {
   readonly contract:
-    | "host-version"
     | "conversation-hooks"
     | "structured-media"
     | "model-permission";
@@ -41,14 +40,7 @@ export class OpenClawContractError extends Error {
 
 export function assertOpenClawContract(
   host: ContractHost,
-): typeof LOCKED_OPENCLAW_CONTRACT {
-  if (
-    !LOCKED_OPENCLAW_CONTRACT.runtimeVersions.includes(
-      host.runtime.version as (typeof LOCKED_OPENCLAW_CONTRACT.runtimeVersions)[number],
-    )
-  ) {
-    throw new OpenClawContractError("host-version");
-  }
+): typeof OPENCLAW_CONTRACT_BASELINE {
   if (typeof host.on !== "function") {
     throw new OpenClawContractError("conversation-hooks");
   }
@@ -59,7 +51,7 @@ export function assertOpenClawContract(
     throw new OpenClawContractError("structured-media");
   }
 
-  return LOCKED_OPENCLAW_CONTRACT;
+  return OPENCLAW_CONTRACT_BASELINE;
 }
 
 export function assertOperatorModelPermission(

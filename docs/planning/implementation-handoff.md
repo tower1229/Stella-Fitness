@@ -17,12 +17,12 @@ Phase 0 已由 [phase0-exit-review.md](./phase0-exit-review.md) 签署为 `APPRO
 
 ## Kickoff 必做
 
-- [ ] 锁定 OpenClaw stable 版本；
-- [ ] 核验 Plugin hooks 与权限；
-- [ ] 核验 structured media extraction 与 execution metadata；
-- [ ] 核验 timeout/cancellation；
-- [ ] 核验 manifest、package、install/enable/load；
-- [ ] 建立 deterministic scenario harness。
+- [x] 以本机 OpenClaw extended-stable `2026.6.34` 建立最低兼容基线，不锁定单一修订版本；
+- [x] 核验 Plugin hooks 与权限；
+- [x] 核验 structured media extraction 与 execution metadata；
+- [x] 核验 timeout/cancellation；
+- [x] 核验 manifest、package、install/enable/load；
+- [x] 建立 deterministic scenario harness。
 
 ## Implementation acceptance
 

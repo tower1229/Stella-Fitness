@@ -1,10 +1,10 @@
 # Known Gaps
 
-## GAP-001：OpenClaw 锁定版本契约
+## GAP-001：OpenClaw stable 兼容契约
 
-**状态：REVALIDATE_AT_KICKOFF**
+**状态：CLOSED / VERIFIED AGAINST LOCAL EXTENDED-STABLE 2026.6.34**
 
-implementation kickoff 必须核验当前稳定版本的 Plugin hooks、structured media extraction、model permission、execution metadata、timeout/cancellation 与 package load 契约。失败时阻止对应能力启动，不改变产品语义。
+2026-08-10 已以本机 OpenClaw extended-stable `2026.6.34` 核验 Plugin hooks、structured media extraction、model permission、execution metadata、timeout/cancellation 与 package install/enable/load。Package 声明最低兼容版本 `>=2026.6.34`，不再锁定单一修订版本；运行时继续按实际能力 fail closed。
 
 ## GAP-002：ProgramSpec schema 与完整 fixture validator
 
@@ -56,4 +56,4 @@ Plugin 代码、通用 schema 和原创材料采用 Apache-2.0；课程内容和
 
 ## 当前结论
 
-不存在剩余的 Phase 0 `IMPLEMENTATION-BLOCKING` 审核项。下一步是 OpenClaw contract kickoff 与 Plugin foundation；model selection 和 release blockers 按各自阶段保留。
+不存在剩余的 Phase 0 `IMPLEMENTATION-BLOCKING` 审核项。OpenClaw stable contract kickoff 与 Plugin foundation 已完成；model selection 和 release blockers 按各自阶段保留。

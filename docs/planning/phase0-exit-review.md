@@ -99,7 +99,7 @@ reason: no health-risk detection, classification, escalation or medical/special-
 
 ## 7. Kickoff gate
 
-implementation kickoff 的第一项工作是按锁定 OpenClaw 版本核验：
+implementation kickoff 的第一项工作是按本机 OpenClaw stable 基线核验：
 
 - Plugin hooks 与 conversation-access permission；
 - structured media extraction；

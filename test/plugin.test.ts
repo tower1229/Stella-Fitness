@@ -4,7 +4,7 @@ import plugin, { registerStellaFitnessPlugin } from "../src/plugin.js";
 import { sanitizedMediaFixture } from "./support/sanitized-media.js";
 
 const UNCONFIGURED_STATUS =
-  "Stella Fitness: ready\ncontract: openclaw@2026.7.1-2\nscope: recording-only\nextraction: unconfigured";
+  "Stella Fitness: ready\ncontract: openclaw>=2026.6.34\nscope: recording-only\nextraction: unconfigured";
 
 describe("Plugin registration", () => {
   it("registers status CLI metadata without loading full runtime contracts", () => {
@@ -175,20 +175,20 @@ describe("Plugin registration", () => {
     expect(extractStructuredWithModel).not.toHaveBeenCalled();
   });
 
-  it("fails registration before exposing commands when the host is incompatible", () => {
+  it("fails registration before exposing commands when a required host capability is missing", () => {
     const commands: Array<Record<string, unknown>> = [];
     const api = compatibleApi({
       commands,
       hooks: new Map(),
       cliRegistrations: [],
     });
-    api.runtime.version = "2026.7.2";
+    api.runtime.mediaUnderstanding.extractStructuredWithModel = undefined as never;
 
     expect(() =>
       plugin.register!(
         api as unknown as Parameters<NonNullable<typeof plugin.register>>[0],
       ),
-    ).toThrow("host-version");
+    ).toThrow("structured-media");
     expect(commands).toEqual([]);
   });
 });
@@ -206,7 +206,7 @@ function compatibleApi(options: {
     config: options.openclawConfig ?? {},
     pluginConfig: options.pluginConfig,
     runtime: {
-      version: "2026.7.1-2",
+      version: "2026.6.34",
       mediaUnderstanding: {
         extractStructuredWithModel:
           options.extractStructuredWithModel ?? vi.fn(),

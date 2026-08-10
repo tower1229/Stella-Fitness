@@ -63,7 +63,7 @@ try {
   );
   const status = run(openclaw, ["stella-fitness", "status"]);
   const expectedStatus =
-    "Stella Fitness: ready\ncontract: openclaw@2026.7.1-2\nscope: recording-only\nextraction: unconfigured";
+    "Stella Fitness: ready\ncontract: openclaw>=2026.6.34\nscope: recording-only\nextraction: unconfigured";
 
   if (inspection.plugin.status !== "loaded") {
     throw new Error(`Plugin did not load: ${inspection.plugin.status}`);
