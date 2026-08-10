@@ -1,4 +1,10 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -137,6 +143,130 @@ describe("Plugin registration", () => {
       program: { id: "zhuoshu-12-week", version: "0.2.0" },
       cycle: { startDate: "2026-08-10" },
     });
+  });
+
+  it("claims clear body-weight text and returns only the recorded facts", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const personalDataDirectory = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: personalDataDirectory,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    const handled = await hooks.get("before_agent_reply")?.(
+      { cleanedBody: "今天体重 68.4 kg" },
+      { messageProvider: "test-channel" },
+    );
+
+    expect(handled).toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /^Body weight recorded: 68\.4 kg\noccurred-at: .+\nobservation: [0-9a-f-]{36}\ntimeline:\n- .+ 68\.4 kg$/,
+        ),
+      },
+    });
+    expect(JSON.stringify(handled)).not.toMatch(
+      /trend|ideal|training adjustment|nutrition|health conclusion/i,
+    );
+    expect(
+      readdirSync(
+        join(
+          personalDataDirectory.personalDataDirectory,
+          "observations",
+          "body-weight",
+        ),
+      ),
+    ).toHaveLength(1);
+    await expect(
+      hooks.get("before_agent_run")?.({ prompt: "今天体重 68.4 kg" }),
+    ).resolves.toEqual({
+      outcome: "block",
+      reason: "stella-body-weight-is-plugin-owned",
+      message: "Body-weight recording is handled by Stella Fitness.",
+      category: "plugin-command",
+    });
+  });
+
+  it("claims an explicit body-weight correction and preserves lineage", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const personalDataDirectory = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: personalDataDirectory,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const replyHook = hooks.get("before_agent_reply")!;
+    await replyHook({ cleanedBody: "今天体重 68.4 kg" }, {});
+    const directory = join(
+      personalDataDirectory.personalDataDirectory,
+      "observations",
+      "body-weight",
+    );
+    const originalId = readdirSync(directory)[0]!.replace(/\.json$/u, "");
+
+    const handled = await replyHook(
+      { cleanedBody: `纠正体重 ${originalId} 为 67.9 kg` },
+      {},
+    );
+
+    expect(handled).toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /^Body weight corrected: 67\.9 kg\n.+\ntimeline:\n- .+ 67\.9 kg$/,
+        ),
+      },
+    });
+    const observations = readdirSync(directory).map((file) =>
+      JSON.parse(readFileSync(join(directory, file), "utf8")),
+    );
+    expect(observations).toHaveLength(2);
+    expect(observations).toContainEqual(
+      expect.objectContaining({
+        value: { amount: 67.9, unit: "kg" },
+        provenance: {
+          kind: "body-weight-correction",
+          recordedAt: expect.any(String),
+          replacesObservationId: originalId,
+        },
+      }),
+    );
+  });
+
+  it("does not claim or persist a body-weight evaluation question", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const personalDataDirectory = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: personalDataDirectory,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const input = "体重 68.4 kg 健康吗，要调整训练或饮食吗？";
+
+    await expect(
+      hooks.get("before_agent_reply")?.({ cleanedBody: input }, {}),
+    ).resolves.toBeUndefined();
+    await expect(
+      hooks.get("before_agent_run")?.({ prompt: input }),
+    ).resolves.toEqual({ outcome: "pass" });
+    expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
   });
 
   it("connects configured Plugin runtime to OpenClaw structured extraction", async () => {

@@ -24,6 +24,8 @@ import { createStatusResponse } from "./status.js";
 
 const STATUS_INPUT = "stella status";
 const PLUGIN_ID = "stella-fitness";
+const BODY_WEIGHT_RECORDING_INPUT =
+  /^\s*(?:(?:\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))?|今天|昨天|前天|today|yesterday)\s*)?(?:我\s*)?(?:记录\s*)?(?:体重|body\s*weight|weight)\s*(?:是|为|:|：)?\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?(?:\s*(?:或|还是|or)\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?)?\s*[。.!]?\s*$/iu;
 
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "stella-fitness",
@@ -103,11 +105,43 @@ export function registerStellaFitnessPlugin(
 
   api.on(
     "before_agent_reply",
-    async (event) => {
-      if (normalizeStatusInput(event.cleanedBody) !== STATUS_INPUT) {
+    async (event, context) => {
+      if (normalizeStatusInput(event.cleanedBody) === STATUS_INPUT) {
+        return { handled: true, reply: createStatusResponse(preflight()) };
+      }
+      if (!isBodyWeightInput(event.cleanedBody)) {
         return;
       }
-      return { handled: true, reply: createStatusResponse(preflight()) };
+      const receivedAt = new Date().toISOString();
+      const source =
+        context.messageProvider === undefined
+          ? {}
+          : { source: { channel: context.messageProvider } };
+      const correctionId = bodyWeightCorrectionId(event.cleanedBody);
+      const result =
+        correctionId === undefined
+          ? await stellaRuntime.recordBodyWeight({
+              text: event.cleanedBody,
+              receivedAt,
+              ...source,
+            })
+          : await stellaRuntime.correctBodyWeight({
+              replacesObservationId: correctionId,
+              text: event.cleanedBody,
+              receivedAt,
+              ...source,
+            });
+      return {
+        handled: true,
+        reply: {
+          text:
+            result.status === "clarification"
+              ? result.question
+              : correctionId === undefined
+                ? formatBodyWeightRecording(result)
+                : formatBodyWeightCorrection(result),
+        },
+      };
     },
     { priority: 100, timeoutMs: 1_000 },
   );
@@ -115,15 +149,23 @@ export function registerStellaFitnessPlugin(
   api.on(
     "before_agent_run",
     async (event) => {
-      if (normalizeStatusInput(event.prompt) !== STATUS_INPUT) {
-        return { outcome: "pass" as const };
+      if (normalizeStatusInput(event.prompt) === STATUS_INPUT) {
+        return {
+          outcome: "block" as const,
+          reason: "stella-status-is-plugin-owned",
+          message: createStatusResponse(preflight()).text,
+          category: "plugin-command",
+        };
       }
-      return {
-        outcome: "block" as const,
-        reason: "stella-status-is-plugin-owned",
-        message: createStatusResponse(preflight()).text,
-        category: "plugin-command",
-      };
+      if (isBodyWeightInput(event.prompt)) {
+        return {
+          outcome: "block" as const,
+          reason: "stella-body-weight-is-plugin-owned",
+          message: "Body-weight recording is handled by Stella Fitness.",
+          category: "plugin-command",
+        };
+      }
+      return { outcome: "pass" as const };
     },
     { priority: 100, timeoutMs: 1_000 },
   );
@@ -132,6 +174,56 @@ export function registerStellaFitnessPlugin(
 
 function normalizeStatusInput(input: string): string {
   return input.trim().toLowerCase().replaceAll(/\s+/g, " ");
+}
+
+function isBodyWeightInput(input: string): boolean {
+  return (
+    BODY_WEIGHT_RECORDING_INPUT.test(input) ||
+    bodyWeightCorrectionId(input) !== undefined
+  );
+}
+
+function bodyWeightCorrectionId(input: string): string | undefined {
+  return /^\s*(?:纠正体重|correct\s+body\s*weight)\s+([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\s+(?:为|to)\s+[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?\s*[。.!]?\s*$/iu.exec(
+    input,
+  )?.[1];
+}
+
+function formatBodyWeightRecording(
+  result: Awaited<ReturnType<StellaFitnessRuntime["recordBodyWeight"]>> & {
+    status: "recorded";
+  },
+): string {
+  const { observation, view } = result;
+  return [
+    `Body weight recorded: ${observation.value.amount} ${observation.value.unit}`,
+    `occurred-at: ${observation.occurredAt}`,
+    `observation: ${observation.id}`,
+    "timeline:",
+    ...view.points.map(
+      (point) =>
+        `- ${point.occurredAt} ${point.amount} ${point.unit}`,
+    ),
+  ].join("\n");
+}
+
+function formatBodyWeightCorrection(
+  result: Awaited<ReturnType<StellaFitnessRuntime["correctBodyWeight"]>> & {
+    status: "recorded";
+  },
+): string {
+  const { observation, view } = result;
+  if (observation.provenance.kind !== "body-weight-correction") {
+    throw new Error("Body-weight correction is missing correction provenance");
+  }
+  return [
+    `Body weight corrected: ${observation.value.amount} ${observation.value.unit}`,
+    `correction: ${observation.id} replaces: ${observation.provenance.replacesObservationId}`,
+    "timeline:",
+    ...view.points.map(
+      (point) => `- ${point.occurredAt} ${point.amount} ${point.unit}`,
+    ),
+  ].join("\n");
 }
 
 function registerStatusCli(

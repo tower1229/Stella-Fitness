@@ -229,6 +229,191 @@ describe("scenario-level Plugin harness", () => {
     expect(runtime.requests).toEqual([]);
   });
 
+  it("records a clear body-weight Observation and returns a factual time-series view", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const harness = readyHarness(
+      new ControlledExtractionRuntime([]),
+      personalDataDirectory,
+    );
+
+    const result = await harness.recordBodyWeight({
+      text: "今天体重 68.4 kg",
+      receivedAt: "2026-08-10T07:30:00.000Z",
+      source: { channel: "test", messageId: "message-1" },
+    });
+
+    expect(result).toMatchObject({
+      status: "recorded",
+      observation: {
+        schemaVersion: "stella-fitness/observation/body-weight/v0.1",
+        id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        kind: "body-weight",
+        value: { amount: 68.4, unit: "kg" },
+        occurredAt: "2026-08-10T07:30:00.000Z",
+        source: {
+          kind: "user-text",
+          text: "今天体重 68.4 kg",
+          channel: "test",
+          messageId: "message-1",
+        },
+        provenance: {
+          kind: "body-weight-recording",
+          recordedAt: "2026-08-10T07:30:00.000Z",
+        },
+      },
+      view: {
+        schemaVersion: "stella-fitness/view/body-weight/v0.1",
+        points: [
+          expect.objectContaining({
+            amount: 68.4,
+            unit: "kg",
+            occurredAt: "2026-08-10T07:30:00.000Z",
+          }),
+        ],
+        errors: [],
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /trend|ideal|training adjustment|nutrition|health conclusion/i,
+    );
+  });
+
+  it("normalizes an explicit Chinese kilogram unit without evaluating the value", async () => {
+    const harness = readyHarness(
+      new ControlledExtractionRuntime([]),
+      temporaryPersonalDataDirectory(),
+    );
+
+    await expect(
+      harness.recordBodyWeight({
+        text: "今天体重 68.4 公斤",
+        receivedAt: "2026-08-10T07:30:00.000Z",
+      }),
+    ).resolves.toMatchObject({
+      status: "recorded",
+      observation: { value: { amount: 68.4, unit: "kg" } },
+    });
+  });
+
+  it("uses an explicit RFC 3339 measurement time instead of the message time", async () => {
+    const harness = readyHarness(
+      new ControlledExtractionRuntime([]),
+      temporaryPersonalDataDirectory(),
+    );
+
+    await expect(
+      harness.recordBodyWeight({
+        text: "2026-08-09T07:00:00+08:00 体重 68.4 kg",
+        receivedAt: "2026-08-10T07:30:00.000Z",
+      }),
+    ).resolves.toMatchObject({
+      status: "recorded",
+      observation: { occurredAt: "2026-08-08T23:00:00.000Z" },
+    });
+  });
+
+  it("asks only for the occurrence time when a relative date is ambiguous", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const harness = readyHarness(
+      new ControlledExtractionRuntime([]),
+      personalDataDirectory,
+    );
+
+    await expect(
+      harness.recordBodyWeight({
+        text: "昨天体重 68.4 kg",
+        receivedAt: "2026-08-10T07:30:00.000Z",
+      }),
+    ).resolves.toEqual({
+      status: "clarification",
+      field: "occurrence-time",
+      question: "请确认这次测量的发生时间。",
+    });
+    expect(readdirSync(personalDataDirectory)).toEqual([]);
+  });
+
+  it.each([
+    ["今天体重 68.4", "unit", "请确认体重单位：kg 还是 lb？"],
+    ["今天体重 68.4 kg 或 69.0 kg", "value", "请确认一个体重数值。"],
+  ] as const)(
+    "asks only for the ambiguous field in %s",
+    async (text, field, question) => {
+      const personalDataDirectory = temporaryPersonalDataDirectory();
+      const harness = readyHarness(
+        new ControlledExtractionRuntime([]),
+        personalDataDirectory,
+      );
+
+      await expect(
+        harness.recordBodyWeight({
+          text,
+          receivedAt: "2026-08-10T07:30:00.000Z",
+        }),
+      ).resolves.toEqual({ status: "clarification", field, question });
+      expect(readdirSync(personalDataDirectory)).toEqual([]);
+    },
+  );
+
+  it("corrects by explicit lineage and rebuilds the same factual view after restart", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const options = {
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      personalDataDirectory: () => personalDataDirectory,
+      preflight: (): ConfigurationPreflightResult => ({
+        readiness: "READY_FOR_SETUP",
+        reasons: [],
+      }),
+    };
+    const firstHarness = createScenarioHarness(options);
+    const recorded = await firstHarness.recordBodyWeight({
+      text: "今天体重 68.4 kg",
+      receivedAt: "2026-08-10T07:30:00.000Z",
+    });
+    if (recorded.status !== "recorded") {
+      throw new Error("Expected the original body weight to be recorded");
+    }
+
+    const corrected = await firstHarness.correctBodyWeight({
+      replacesObservationId: recorded.observation.id,
+      text: "纠正为 67.9 kg",
+      receivedAt: "2026-08-10T08:00:00.000Z",
+    });
+    if (corrected.status !== "recorded") {
+      throw new Error("Expected the body-weight correction to be recorded");
+    }
+
+    expect(corrected).toMatchObject({
+      status: "recorded",
+      observation: {
+        id: expect.not.stringMatching(recorded.observation.id),
+        value: { amount: 67.9, unit: "kg" },
+        occurredAt: "2026-08-10T07:30:00.000Z",
+        provenance: {
+          kind: "body-weight-correction",
+          recordedAt: "2026-08-10T08:00:00.000Z",
+          replacesObservationId: recorded.observation.id,
+        },
+      },
+      view: {
+        points: [
+          expect.objectContaining({
+            amount: 67.9,
+            occurredAt: "2026-08-10T07:30:00.000Z",
+          }),
+        ],
+        errors: [],
+      },
+    });
+    expect(
+      readdirSync(join(personalDataDirectory, "observations", "body-weight")),
+    ).toHaveLength(2);
+
+    const restartedView = await createScenarioHarness(
+      options,
+    ).bodyWeightTimeline();
+    expect(restartedView).toEqual(corrected.view);
+  });
+
   it("does not start Program setup while configuration preflight is blocked", async () => {
     const personalDataDirectory = temporaryPersonalDataDirectory();
     const harness = createScenarioHarness({
@@ -375,9 +560,15 @@ describe("scenario-level Plugin harness", () => {
   });
 });
 
-function readyHarness(extractionRuntime: ControlledExtractionRuntime) {
+function readyHarness(
+  extractionRuntime: ControlledExtractionRuntime,
+  personalDataDirectory?: string,
+) {
   return createScenarioHarness({
     extractionRuntime,
+    ...(personalDataDirectory === undefined
+      ? {}
+      : { personalDataDirectory: () => personalDataDirectory }),
     preflight: (): ConfigurationPreflightResult => ({
       readiness: "READY",
       reasons: [],

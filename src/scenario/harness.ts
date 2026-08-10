@@ -32,6 +32,19 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
     ) {
       return pluginRuntime.resolvePlannedSession(input);
     },
+    recordBodyWeight(
+      input: Parameters<typeof pluginRuntime.recordBodyWeight>[0],
+    ) {
+      return pluginRuntime.recordBodyWeight(input);
+    },
+    correctBodyWeight(
+      input: Parameters<typeof pluginRuntime.correctBodyWeight>[0],
+    ) {
+      return pluginRuntime.correctBodyWeight(input);
+    },
+    bodyWeightTimeline() {
+      return pluginRuntime.bodyWeightTimeline();
+    },
     extract(input: HarnessInput) {
       return pluginRuntime.extractWorkoutLog({
         runId: input.runId,

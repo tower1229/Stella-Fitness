@@ -11,6 +11,15 @@ import type {
   ExtractionRuntime,
 } from "./extraction/runtime.js";
 import type { ConfigurationPreflightResult } from "./preflight.js";
+import type {
+  BodyWeightObservation,
+  BodyWeightView,
+  ObservationSource,
+} from "./domain/observation.js";
+import {
+  parseBodyWeightInput,
+  type BodyWeightClarification,
+} from "./extraction/body-weight.js";
 import type { PlannedSession } from "./domain/program.js";
 import {
   resolvePlannedSession,
@@ -23,6 +32,11 @@ import {
   type PendingProgramSelection,
   type ProgramState,
 } from "./program/state.js";
+import {
+  persistBodyWeightCorrection,
+  persistBodyWeightObservation,
+  rebuildBodyWeightView,
+} from "./storage/body-weight.js";
 
 export type PluginExtractionOutput = {
   status: "candidate";
@@ -40,6 +54,32 @@ export type StellaFitnessRuntime = {
   extractWorkoutLog(
     request: ExtractionRequest,
   ): Promise<PluginExtractionOutput>;
+  recordBodyWeight(input: {
+    text: string;
+    receivedAt: string;
+    source?: Omit<ObservationSource, "kind" | "text">;
+  }): Promise<
+    | BodyWeightClarification
+    | {
+        status: "recorded";
+        observation: BodyWeightObservation;
+        view: BodyWeightView;
+      }
+  >;
+  correctBodyWeight(input: {
+    replacesObservationId: string;
+    text: string;
+    receivedAt: string;
+    source?: Omit<ObservationSource, "kind" | "text">;
+  }): Promise<
+    | BodyWeightClarification
+    | {
+        status: "recorded";
+        observation: BodyWeightObservation;
+        view: BodyWeightView;
+      }
+  >;
+  bodyWeightTimeline(): Promise<BodyWeightView>;
 };
 
 const MAX_CACHED_RUNS = 256;
@@ -87,6 +127,58 @@ export function createStellaFitnessRuntime(options: {
         date: input.date,
       });
     },
+    async recordBodyWeight(input) {
+      assertPersonalDataPreflight(preflight());
+      const personalDataDirectory = requiredPersonalDataDirectory(options);
+      const candidate = parseBodyWeightInput(input);
+      if ("status" in candidate) {
+        return candidate;
+      }
+      const observation = await persistBodyWeightObservation({
+        personalDataDirectory,
+        ...candidate,
+        source: {
+          kind: "user-text",
+          text: input.text,
+          ...input.source,
+        },
+        recordedAt: new Date(input.receivedAt).toISOString(),
+      });
+      return {
+        status: "recorded",
+        observation,
+        view: await rebuildBodyWeightView(personalDataDirectory),
+      };
+    },
+    async correctBodyWeight(input) {
+      assertPersonalDataPreflight(preflight());
+      const personalDataDirectory = requiredPersonalDataDirectory(options);
+      const candidate = parseBodyWeightInput(input);
+      if ("status" in candidate) {
+        return candidate;
+      }
+      const observation = await persistBodyWeightCorrection({
+        personalDataDirectory,
+        replacesObservationId: input.replacesObservationId,
+        amount: candidate.amount,
+        unit: candidate.unit,
+        source: {
+          kind: "user-text",
+          text: input.text,
+          ...input.source,
+        },
+        recordedAt: new Date(input.receivedAt).toISOString(),
+      });
+      return {
+        status: "recorded",
+        observation,
+        view: await rebuildBodyWeightView(personalDataDirectory),
+      };
+    },
+    async bodyWeightTimeline() {
+      assertPersonalDataPreflight(preflight());
+      return await rebuildBodyWeightView(requiredPersonalDataDirectory(options));
+    },
     extractWorkoutLog(request) {
       const readiness = preflight();
       if (readiness.readiness !== "READY") {
@@ -126,6 +218,28 @@ export function createStellaFitnessRuntime(options: {
       return rejectOnAbort(entry.promise, request.signal);
     },
   };
+}
+
+function requiredPersonalDataDirectory(options: {
+  personalDataDirectory?: () => string | undefined;
+}): string {
+  const personalDataDirectory = options.personalDataDirectory?.();
+  if (personalDataDirectory === undefined) {
+    throw new Error("Personal Data Directory is unavailable after preflight");
+  }
+  return personalDataDirectory;
+}
+
+function assertPersonalDataPreflight(
+  preflight: ConfigurationPreflightResult,
+): void {
+  if (preflight.readiness === "BLOCKED_CONFIGURATION") {
+    throw new Error(
+      `Stella Fitness cannot accept body-weight input in ${preflight.readiness}: ${preflight.reasons
+        .map(({ code }) => code)
+        .join(", ")}`,
+    );
+  }
 }
 
 function assertSetupPreflight(preflight: ConfigurationPreflightResult): void {
