@@ -1,5 +1,20 @@
 import { createHash } from "node:crypto";
 
+import type {
+  RawArtifactRecord,
+  WorkoutLogIngestRequest,
+  WorkoutLogProcessingRecord,
+} from "./domain/media.js";
+import type {
+  BodyWeightObservation,
+  BodyWeightView,
+  ObservationSource,
+} from "./domain/observation.js";
+import type { PlannedSession } from "./domain/program.js";
+import {
+  parseBodyWeightInput,
+  type BodyWeightClarification,
+} from "./extraction/body-weight.js";
 import { rejectOnAbort } from "./extraction/cancellation.js";
 import {
   parseWorkoutLogCandidate,
@@ -7,20 +22,15 @@ import {
 } from "./extraction/candidate.js";
 import type {
   ExtractionExecutionMetadata,
-  ExtractionRequest,
   ExtractionRuntime,
 } from "./extraction/runtime.js";
-import type { ConfigurationPreflightResult } from "./preflight.js";
-import type {
-  BodyWeightObservation,
-  BodyWeightView,
-  ObservationSource,
-} from "./domain/observation.js";
 import {
-  parseBodyWeightInput,
-  type BodyWeightClarification,
-} from "./extraction/body-weight.js";
-import type { PlannedSession } from "./domain/program.js";
+  createBufferMediaSanitizer,
+  InvalidWorkoutLogImageError,
+  type MediaSanitizer,
+  type SanitizedMediaLease,
+} from "./media/sanitizer.js";
+import type { ConfigurationPreflightResult } from "./preflight.js";
 import {
   resolvePlannedSession,
   type ProgramResolutionInput,
@@ -37,11 +47,17 @@ import {
   persistBodyWeightObservation,
   rebuildBodyWeightView,
 } from "./storage/body-weight.js";
+import {
+  persistRawWorkoutLogArtifact,
+  persistWorkoutLogProcessingRecord,
+} from "./storage/media.js";
 
 export type PluginExtractionOutput = {
   status: "candidate";
   candidate: WorkoutLogCandidate;
   execution: ExtractionExecutionMetadata;
+  artifact: RawArtifactRecord;
+  processing: WorkoutLogProcessingRecord;
 };
 
 export type StellaFitnessRuntime = {
@@ -51,9 +67,10 @@ export type StellaFitnessRuntime = {
   resolvePlannedSession(
     input: Omit<ProgramResolutionInput, "program"> & { programSpec: unknown },
   ): PlannedSession | null;
-  extractWorkoutLog(
-    request: ExtractionRequest,
+  ingestWorkoutLog(
+    request: WorkoutLogIngestRequest,
   ): Promise<PluginExtractionOutput>;
+  shutdown(): Promise<void>;
   recordBodyWeight(input: {
     text: string;
     receivedAt: string;
@@ -88,15 +105,20 @@ type RunEntry = {
   fingerprint: string;
   promise: Promise<PluginExtractionOutput>;
   settled: boolean;
+  controller: AbortController;
 };
 
 export function createStellaFitnessRuntime(options: {
   extractionRuntime: ExtractionRuntime;
   personalDataDirectory?: () => string | undefined;
+  runtimeDirectory?: () => string | undefined;
+  mediaSanitizer?: MediaSanitizer;
   preflight: () => ConfigurationPreflightResult;
 }): StellaFitnessRuntime {
   const runs = new Map<string, RunEntry>();
   const preflight = options.preflight;
+  const mediaSanitizer = options.mediaSanitizer ?? createBufferMediaSanitizer();
+  let stopped = false;
 
   return {
     preflight,
@@ -184,7 +206,7 @@ export function createStellaFitnessRuntime(options: {
       assertPersonalDataPreflight(preflight());
       return await rebuildBodyWeightView(requiredPersonalDataDirectory(options));
     },
-    extractWorkoutLog(request) {
+    ingestWorkoutLog(request) {
       const readiness = preflight();
       if (readiness.readiness !== "READY") {
         return Promise.reject(
@@ -198,6 +220,15 @@ export function createStellaFitnessRuntime(options: {
       if (request.runId.trim().length === 0) {
         return Promise.reject(new Error("Extraction run ID must not be blank"));
       }
+      if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0) {
+        return Promise.reject(
+          new Error("Extraction timeout must be a positive integer"),
+        );
+      }
+      if (stopped) {
+        return Promise.reject(new Error("Stella Fitness runtime is shut down"));
+      }
+      requiredRuntimeDirectory(options);
 
       const fingerprint = fingerprintRequest(request);
       const existing = runs.get(request.runId);
@@ -210,17 +241,36 @@ export function createStellaFitnessRuntime(options: {
         return rejectOnAbort(existing.promise, request.signal);
       }
 
+      const controller = new AbortController();
       const entry: RunEntry = {
         fingerprint,
-        promise: executeExtraction(options.extractionRuntime, request),
+        promise: executeWorkoutLogIngest({
+          extractionRuntime: options.extractionRuntime,
+          mediaSanitizer,
+          personalDataDirectory: requiredPersonalDataDirectory(options),
+          request,
+          controller,
+        }),
         settled: false,
+        controller,
       };
       runs.set(request.runId, entry);
       void entry.promise.then(
         () => markSettledAndTrim(runs, entry),
         () => markSettledAndTrim(runs, entry),
       );
-      return rejectOnAbort(entry.promise, request.signal);
+      return entry.promise;
+    },
+    async shutdown() {
+      stopped = true;
+      for (const entry of runs.values()) {
+        if (!entry.settled) {
+          entry.controller.abort(
+            processingAbortError("shutdown", "Extraction stopped on shutdown"),
+          );
+        }
+      }
+      await Promise.allSettled([...runs.values()].map(({ promise }) => promise));
     },
   };
 }
@@ -233,6 +283,16 @@ function requiredPersonalDataDirectory(options: {
     throw new Error("Personal Data Directory is unavailable after preflight");
   }
   return personalDataDirectory;
+}
+
+function requiredRuntimeDirectory(options: {
+  runtimeDirectory?: () => string | undefined;
+}): string {
+  const runtimeDirectory = options.runtimeDirectory?.();
+  if (runtimeDirectory === undefined) {
+    throw new Error("Runtime Directory is unavailable after preflight");
+  }
+  return runtimeDirectory;
 }
 
 function assertPersonalDataPreflight(
@@ -257,13 +317,15 @@ function assertSetupPreflight(preflight: ConfigurationPreflightResult): void {
   }
 }
 
-function fingerprintRequest(request: ExtractionRequest): string {
+function fingerprintRequest(request: WorkoutLogIngestRequest): string {
   return createHash("sha256")
-    .update(request.media.mime)
+    .update(request.upload.mime)
     .update("\0")
-    .update(request.media.fileName)
+    .update(request.upload.fileName)
     .update("\0")
-    .update(request.media.bytes)
+    .update(request.upload.receivedAt)
+    .update("\0")
+    .update(request.upload.bytes)
     .digest("hex");
 }
 
@@ -281,16 +343,143 @@ function markSettledAndTrim(
   }
 }
 
-async function executeExtraction(
-  extractionRuntime: ExtractionRuntime,
-  request: ExtractionRequest,
-): Promise<PluginExtractionOutput> {
-  const result = await extractionRuntime.extract(request);
-  const candidate = parseWorkoutLogCandidate(result.parsed);
-
-  return {
-    status: "candidate",
-    candidate,
-    execution: result.metadata,
+async function executeWorkoutLogIngest(options: {
+  extractionRuntime: ExtractionRuntime;
+  mediaSanitizer: MediaSanitizer;
+  personalDataDirectory: string;
+  request: WorkoutLogIngestRequest;
+  controller: AbortController;
+}): Promise<PluginExtractionOutput> {
+  const startedAt = new Date().toISOString();
+  const artifact = await persistRawWorkoutLogArtifact({
+    personalDataDirectory: options.personalDataDirectory,
+    upload: options.request.upload,
+  });
+  let lease: SanitizedMediaLease | undefined;
+  const onCallerAbort = () => {
+    options.controller.abort(
+      processingAbortError("cancelled", "Extraction cancelled"),
+    );
   };
+  options.request.signal.addEventListener("abort", onCallerAbort, { once: true });
+  if (options.request.signal.aborted) {
+    onCallerAbort();
+  }
+  const timeout = setTimeout(() => {
+    options.controller.abort(
+      processingAbortError("timeout", "Workout-log extraction timed out"),
+    );
+  }, options.request.timeoutMs);
+
+  try {
+    lease = await rejectOnAbort(
+      options.mediaSanitizer.sanitize(options.request.upload, artifact.id),
+      options.controller.signal,
+    );
+    const result = await rejectOnAbort(
+      options.extractionRuntime.extract({
+        runId: options.request.runId,
+        media: lease.media,
+        timeoutMs: options.request.timeoutMs,
+        signal: options.controller.signal,
+      }),
+      options.controller.signal,
+    );
+    let candidate: WorkoutLogCandidate;
+    try {
+      candidate = parseWorkoutLogCandidate(result.parsed);
+    } catch (error) {
+      throw new ProcessingFailureError("invalid-result", error);
+    }
+    const processing = await persistWorkoutLogProcessingRecord({
+      personalDataDirectory: options.personalDataDirectory,
+      record: {
+        schemaVersion: "stella-fitness/processing/workout-log/v0.1",
+        operation: "workout-log-extraction",
+        runId: options.request.runId,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        status: "succeeded",
+        artifact: artifactReference(artifact),
+        payload: payloadReference(lease),
+        execution: result.metadata,
+      },
+    });
+    return {
+      status: "candidate",
+      candidate,
+      execution: result.metadata,
+      artifact,
+      processing,
+    };
+  } catch (error) {
+    const errorCategory = processingErrorCategory(error);
+    await persistWorkoutLogProcessingRecord({
+      personalDataDirectory: options.personalDataDirectory,
+      record: {
+        schemaVersion: "stella-fitness/processing/workout-log/v0.1",
+        operation: "workout-log-extraction",
+        runId: options.request.runId,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        status: "failed",
+        artifact: artifactReference(artifact),
+        ...(lease === undefined ? {} : { payload: payloadReference(lease) }),
+        errorCategory,
+      },
+    });
+    throw error instanceof ProcessingFailureError && error.cause !== undefined
+      ? error.cause
+      : error;
+  } finally {
+    clearTimeout(timeout);
+    options.request.signal.removeEventListener("abort", onCallerAbort);
+    await lease?.dispose();
+  }
+}
+
+function artifactReference(artifact: RawArtifactRecord) {
+  return { id: artifact.id, path: artifact.path, sha256: artifact.sha256 };
+}
+
+function payloadReference(lease: SanitizedMediaLease) {
+  return {
+    category: "sanitized-workout-log-image" as const,
+    transport: lease.transport,
+    mime: lease.media.mime,
+    sha256: lease.sha256,
+  };
+}
+
+type ProcessingErrorCategory = NonNullable<
+  WorkoutLogProcessingRecord["errorCategory"]
+>;
+
+class ProcessingFailureError extends Error {
+  constructor(
+    readonly category: ProcessingErrorCategory,
+    cause: unknown,
+  ) {
+    super("Workout-log processing failed", { cause });
+  }
+}
+
+function processingAbortError(
+  category: "cancelled" | "shutdown" | "timeout",
+  message: string,
+): Error {
+  const error = new ProcessingFailureError(category, undefined);
+  error.message = message;
+  error.name = category === "timeout" ? "TimeoutError" : "AbortError";
+  return error;
+}
+
+function processingErrorCategory(error: unknown): ProcessingErrorCategory {
+  if (error instanceof ProcessingFailureError) {
+    return error.category;
+  }
+  if (error instanceof InvalidWorkoutLogImageError) {
+    return "invalid-image";
+  }
+  return "extraction-failed";
 }

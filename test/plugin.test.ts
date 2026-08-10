@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin, { registerStellaFitnessPlugin } from "../src/plugin.js";
-import { sanitizedMediaFixture } from "./support/sanitized-media.js";
+import { rawMediaUploadFixture } from "./support/sanitized-media.js";
 
 const temporaryRoots: string[] = [];
 
@@ -303,9 +303,9 @@ describe("Plugin registration", () => {
     const runtime = registerStellaFitnessPlugin(
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
-    const output = await runtime?.extractWorkoutLog({
+    const output = await runtime?.ingestWorkoutLog({
       runId: "plugin-run-1",
-      media: sanitizedMediaFixture(Buffer.from("sanitized")),
+      upload: rawMediaUploadFixture(),
       timeoutMs: 2_000,
       signal: new AbortController().signal,
     });
@@ -335,9 +335,9 @@ describe("Plugin registration", () => {
     );
 
     await expect(
-      runtime?.extractWorkoutLog({
+      runtime?.ingestWorkoutLog({
         runId: "plugin-unconfigured",
-        media: sanitizedMediaFixture(Buffer.from("sanitized")),
+        upload: rawMediaUploadFixture(),
         timeoutMs: 2_000,
         signal: new AbortController().signal,
       }),
@@ -374,9 +374,9 @@ describe("Plugin registration", () => {
       ],
     });
     await expect(
-      runtime?.extractWorkoutLog({
+      runtime?.ingestWorkoutLog({
         runId: "plugin-denied-model",
-        media: sanitizedMediaFixture(Buffer.from("sanitized")),
+        upload: rawMediaUploadFixture(),
         timeoutMs: 2_000,
         signal: new AbortController().signal,
       }),
@@ -410,9 +410,9 @@ describe("Plugin registration", () => {
       reasons: [expect.objectContaining({ code: "STRUCTURED_MEDIA_REQUIRED" })],
     });
     await expect(
-      runtime?.extractWorkoutLog({
+      runtime?.ingestWorkoutLog({
         runId: "plugin-missing-media",
-        media: sanitizedMediaFixture(Buffer.from("sanitized")),
+        upload: rawMediaUploadFixture(),
         timeoutMs: 2_000,
         signal: new AbortController().signal,
       }),
@@ -464,9 +464,9 @@ describe("Plugin registration", () => {
 
     expect(runtime?.preflight()).toEqual({ readiness: "READY", reasons: [] });
     await expect(
-      runtime?.extractWorkoutLog({
+      runtime?.ingestWorkoutLog({
         runId: "plugin-corrected",
-        media: sanitizedMediaFixture(Buffer.from("sanitized")),
+        upload: rawMediaUploadFixture(),
         timeoutMs: 2_000,
         signal: new AbortController().signal,
       }),
@@ -553,6 +553,7 @@ function compatibleApi(options: {
     on(name: string, handler: (...args: unknown[]) => unknown) {
       options.hooks.set(name, handler);
     },
+    registerService() {},
   };
 }
 

@@ -57,7 +57,16 @@ export function registerStellaFitnessPlugin(
       resolvePersonalDataDirectory(
         currentPluginConfig(currentOpenClawConfig(api)),
       ),
+    runtimeDirectory: () =>
+      join(api.runtime.state.resolveStateDir(process.env), PLUGIN_ID),
     preflight,
+  });
+  api.registerService({
+    id: "stella-fitness-media-lifecycle",
+    start() {},
+    async stop() {
+      await stellaRuntime.shutdown();
+    },
   });
 
   api.registerCommand({

@@ -10,7 +10,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
 
 import {
@@ -18,7 +18,10 @@ import {
   createScenarioHarness,
 } from "../src/scenario/harness.js";
 import type { ConfigurationPreflightResult } from "../src/preflight.js";
-import { sanitizedMediaFixture } from "./support/sanitized-media.js";
+import {
+  alternateRawMediaUploadFixture,
+  rawMediaUploadFixture,
+} from "./support/sanitized-media.js";
 
 const temporaryRoots: string[] = [];
 
@@ -42,13 +45,13 @@ describe("scenario-level Plugin harness", () => {
     ]);
     const harness = readyHarness(runtime);
 
-    const output = await harness.extract({
+    const output = await harness.ingestWorkoutLog({
       runId: "scenario-1",
-      media: sanitizedFixture(),
+      upload: rawUploadFixture(),
       timeoutMs: 2_000,
     });
 
-    expect(output).toEqual({
+    expect(output).toMatchObject({
       status: "candidate",
       candidate: candidate(),
       execution: {
@@ -61,8 +64,8 @@ describe("scenario-level Plugin harness", () => {
       expect.objectContaining({
         runId: "scenario-1",
         media: expect.objectContaining({
-          fileName: "workout.jpg",
-          mime: "image/jpeg",
+          fileName: expect.stringMatching(/\.png$/u),
+          mime: "image/png",
         }),
         timeoutMs: 2_000,
         signal: expect.any(AbortSignal),
@@ -77,9 +80,9 @@ describe("scenario-level Plugin harness", () => {
     controller.abort("user-cancelled");
 
     await expect(
-      harness.extract({
+      harness.ingestWorkoutLog({
         runId: "scenario-cancelled",
-        media: sanitizedFixture(),
+        upload: rawUploadFixture(),
         timeoutMs: 2_000,
         signal: controller.signal,
       }),
@@ -90,9 +93,9 @@ describe("scenario-level Plugin harness", () => {
     const runtime = new ControlledExtractionRuntime([], { pending: true });
     const harness = readyHarness(runtime);
     const controller = new AbortController();
-    const extraction = harness.extract({
+    const extraction = harness.ingestWorkoutLog({
       runId: "scenario-pending",
-      media: sanitizedFixture(),
+      upload: rawUploadFixture(),
       timeoutMs: 2_000,
       signal: controller.signal,
     });
@@ -109,32 +112,32 @@ describe("scenario-level Plugin harness", () => {
     const harness = readyHarness(runtime);
     const input = {
       runId: "scenario-idempotent",
-      media: sanitizedFixture(),
+      upload: rawUploadFixture(),
       timeoutMs: 2_000,
     };
 
-    const first = await harness.extract(input);
-    const second = await harness.extract(input);
+    const first = await harness.ingestWorkoutLog(input);
+    const second = await harness.ingestWorkoutLog(input);
 
     expect(second).toEqual(first);
-    expect(runtime.requests).toHaveLength(1);
+    await vi.waitFor(() => expect(runtime.requests).toHaveLength(1));
   });
 
-  it("rejects a run ID reused for different sanitized media", async () => {
+  it("rejects a run ID reused for different raw media", async () => {
     const runtime = new ControlledExtractionRuntime([
       { parsed: candidate(), metadata: { provider: "controlled" } },
     ]);
     const harness = readyHarness(runtime);
 
-    await harness.extract({
+    await harness.ingestWorkoutLog({
       runId: "scenario-collision",
-      media: sanitizedFixture(),
+      upload: rawUploadFixture(),
       timeoutMs: 2_000,
     });
     await expect(
-      harness.extract({
+      harness.ingestWorkoutLog({
         runId: "scenario-collision",
-        media: sanitizedMediaFixture(Buffer.from("different-image")),
+        upload: alternateRawMediaUploadFixture(),
         timeoutMs: 2_000,
       }),
     ).rejects.toThrow("reused for different media");
@@ -144,23 +147,23 @@ describe("scenario-level Plugin harness", () => {
   it("applies each caller's cancellation gate to an idempotent run", async () => {
     const runtime = new ControlledExtractionRuntime([], { pending: true });
     const harness = readyHarness(runtime);
-    void harness.extract({
+    void harness.ingestWorkoutLog({
       runId: "scenario-shared-pending",
-      media: sanitizedFixture(),
+      upload: rawUploadFixture(),
       timeoutMs: 2_000,
     });
     const controller = new AbortController();
     controller.abort("second-caller-cancelled");
 
     await expect(
-      harness.extract({
+      harness.ingestWorkoutLog({
         runId: "scenario-shared-pending",
-        media: sanitizedFixture(),
+        upload: rawUploadFixture(),
         timeoutMs: 2_000,
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ name: "AbortError" });
-    expect(runtime.requests).toHaveLength(1);
+    await vi.waitFor(() => expect(runtime.requests).toHaveLength(1));
   });
 
   it("rejects schema-invalid controlled output", async () => {
@@ -170,9 +173,9 @@ describe("scenario-level Plugin harness", () => {
     const harness = readyHarness(runtime);
 
     await expect(
-      harness.extract({
+      harness.ingestWorkoutLog({
         runId: "scenario-invalid",
-        media: sanitizedFixture(),
+        upload: rawUploadFixture(),
         timeoutMs: 2_000,
       }),
     ).rejects.toMatchObject({ name: "InvalidWorkoutLogCandidateError" });
@@ -193,9 +196,9 @@ describe("scenario-level Plugin harness", () => {
     const harness = readyHarness(runtime);
 
     await expect(
-      harness.extract({
+      harness.ingestWorkoutLog({
         runId: "scenario-conflict",
-        media: sanitizedFixture(),
+        upload: rawUploadFixture(),
         timeoutMs: 2_000,
       }),
     ).resolves.toMatchObject({
@@ -221,9 +224,9 @@ describe("scenario-level Plugin harness", () => {
     });
 
     await expect(
-      harness.extract({
+      harness.ingestWorkoutLog({
         runId: "scenario-blocked",
-        media: sanitizedFixture(),
+        upload: rawUploadFixture(),
         timeoutMs: 2_000,
       }),
     ).rejects.toThrow("PERSONAL_DATA_DIRECTORY_REQUIRED");
@@ -727,11 +730,11 @@ function readyHarness(
   extractionRuntime: ControlledExtractionRuntime,
   personalDataDirectory?: string,
 ) {
+  const directory = personalDataDirectory ?? temporaryPersonalDataDirectory();
   return createScenarioHarness({
     extractionRuntime,
-    ...(personalDataDirectory === undefined
-      ? {}
-      : { personalDataDirectory: () => personalDataDirectory }),
+    personalDataDirectory: () => directory,
+    runtimeDirectory: () => join(directory, "..", "runtime"),
     preflight: (): ConfigurationPreflightResult => ({
       readiness: "READY",
       reasons: [],
@@ -749,8 +752,8 @@ function candidate() {
   };
 }
 
-function sanitizedFixture() {
-  return sanitizedMediaFixture();
+function rawUploadFixture() {
+  return rawMediaUploadFixture();
 }
 
 function temporaryPersonalDataDirectory(): string {

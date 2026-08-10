@@ -3,17 +3,19 @@ import type {
   ExtractionResult,
   ExtractionRuntime,
 } from "../extraction/runtime.js";
+import type { WorkoutLogIngestRequest } from "../domain/media.js";
 import { throwIfAborted } from "../extraction/cancellation.js";
 import { createStellaFitnessRuntime } from "../plugin-runtime.js";
 import type { ConfigurationPreflightResult } from "../preflight.js";
 
-type HarnessInput = Omit<ExtractionRequest, "signal"> & {
+type HarnessInput = Omit<WorkoutLogIngestRequest, "signal"> & {
   signal?: AbortSignal;
 };
 
 type ScenarioHarnessOptions = {
   extractionRuntime: ExtractionRuntime;
   personalDataDirectory?: () => string | undefined;
+  runtimeDirectory?: () => string | undefined;
   preflight: () => ConfigurationPreflightResult;
 };
 
@@ -45,19 +47,23 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
     bodyWeightTimeline() {
       return pluginRuntime.bodyWeightTimeline();
     },
-    extract(input: HarnessInput) {
-      return pluginRuntime.extractWorkoutLog({
+    ingestWorkoutLog(input: HarnessInput) {
+      return pluginRuntime.ingestWorkoutLog({
         runId: input.runId,
-        media: input.media,
+        upload: input.upload,
         timeoutMs: input.timeoutMs,
         signal: input.signal ?? new AbortController().signal,
       });
+    },
+    shutdown() {
+      return pluginRuntime.shutdown();
     },
   };
 }
 
 export class ControlledExtractionRuntime implements ExtractionRuntime {
   readonly requests: ExtractionRequest[] = [];
+  readonly transientMediaBytes: Buffer[] = [];
   readonly #results: ExtractionResult[];
   readonly #pending: boolean;
 
@@ -70,7 +76,14 @@ export class ControlledExtractionRuntime implements ExtractionRuntime {
   }
 
   async extract(request: ExtractionRequest): Promise<ExtractionResult> {
-    this.requests.push(request);
+    this.transientMediaBytes.push(request.media.bytes);
+    this.requests.push({
+      ...request,
+      media: {
+        ...request.media,
+        bytes: Buffer.from(request.media.bytes),
+      },
+    });
     throwIfAborted(request.signal);
 
     if (this.#pending) {
