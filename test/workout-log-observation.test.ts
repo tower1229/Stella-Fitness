@@ -52,49 +52,49 @@ describe("workout-log Observation recording", () => {
         id: expect.stringMatching(/^[0-9a-f-]{36}$/u),
         kind: "workout-log",
         occurredAt: "2026-08-10T08:00:00.000Z",
-        layout: { value: "zhuoshu-three-stage-workbook", confidence: 0.99 },
-        stage: { value: 2, confidence: 0.99 },
-        week: { value: 7, confidence: 0.99 },
-        weekday: { value: "thursday", confidence: 0.98 },
-        sessionType: { value: "torso", confidence: 0.98 },
+        layout: { value: "zhuoshu-three-stage-workbook", confidence: "high" },
+        stage: { value: 2, confidence: "high" },
+        week: { value: 7, confidence: "high" },
+        weekday: { value: "thursday", confidence: "high" },
+        sessionType: { value: "torso", confidence: "high" },
         exercises: [
           expect.objectContaining({
-            exerciseId: { value: "pull-up", confidence: 0.99 },
+            exerciseId: { value: "pull-up", confidence: "high" },
             load: {
               value: {
                 kind: "assistance",
                 mode: "resistance-band",
                 raw: "红色弹力带",
               },
-              confidence: 0.96,
+              confidence: "high",
             },
             sets: [
-              { value: 8, semantic: "repetitions", confidence: 0.99 },
-              { value: 7, semantic: "repetitions", confidence: 0.98 },
+              { value: 8, semantic: "repetitions", confidence: "high" },
+              { value: 7, semantic: "repetitions", confidence: "high" },
             ],
           }),
           expect.objectContaining({
             exerciseId: {
               value: "dumbbell-bench-press",
-              confidence: 0.99,
+              confidence: "high",
             },
             load: {
               value: { kind: "kg", value: 24, unit: "kg", raw: "24" },
-              confidence: 0.99,
+              confidence: "high",
             },
           }),
           expect.objectContaining({
-            exerciseId: { value: "plank", confidence: 0.99 },
+            exerciseId: { value: "plank", confidence: "high" },
             load: {
               value: { kind: "none", raw: "-" },
-              confidence: 0.99,
+              confidence: "high",
             },
             sets: [
-              { value: 60, semantic: "duration-seconds", confidence: 0.99 },
+              { value: 60, semantic: "duration-seconds", confidence: "high" },
               {
                 value: null,
                 semantic: "duration-seconds",
-                confidence: 0.99,
+                confidence: "high",
               },
             ],
           }),
@@ -111,6 +111,7 @@ describe("workout-log Observation recording", () => {
           recordedAt: expect.any(String),
           confirmedFields: [],
         },
+        uncertainty: [],
       },
     });
     if (result.status !== "recorded") {
@@ -140,8 +141,8 @@ describe("workout-log Observation recording", () => {
   it("asks only for uncertain fields and records the user-confirmed values", async () => {
     const personalDataDirectory = temporaryDirectory("stella-personal-");
     const candidate = completedTorsoPage();
-    candidate.exercises[1]!.load = field(null, 0.51);
-    candidate.exercises[1]!.problemNote = field("右侧略晃？", 0.58);
+    candidate.exercises[1]!.load = field(null, "low");
+    candidate.exercises[1]!.problemNote = field("右侧略晃？", "low");
     candidate.uncertainFields = [
       {
         path: "exercises[1].load.value",
@@ -172,6 +173,13 @@ describe("workout-log Observation recording", () => {
       status: "confirmation",
       confirmationId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
       fields: candidate.uncertainFields,
+      processing: {
+        status: "awaiting-confirmation",
+        result: {
+          kind: "workout-log-confirmation",
+          confirmationId: expect.any(String),
+        },
+      },
     });
     expect(pending).not.toHaveProperty("observation");
     if (pending.status !== "confirmation") {
@@ -212,9 +220,9 @@ describe("workout-log Observation recording", () => {
           expect.objectContaining({
             load: {
               value: { kind: "kg", value: 26, unit: "kg", raw: "26" },
-              confidence: 0.51,
+              confidence: "high",
             },
-            problemNote: { value: "右侧略晃", confidence: 0.58 },
+            problemNote: { value: "右侧略晃", confidence: "high" },
           }),
         ]),
         provenance: {
@@ -226,6 +234,19 @@ describe("workout-log Observation recording", () => {
             "exercises[1].problemNote.value",
           ],
         },
+        uncertainty: [
+          {
+            path: "exercises[1].load.value",
+            kind: "conflict",
+            candidates: ["24 kg", "26 kg"],
+            resolution: "user-confirmed",
+          },
+          {
+            path: "exercises[1].problemNote.value",
+            kind: "low-confidence",
+            resolution: "user-confirmed",
+          },
+        ],
       },
       processing: {
         operation: "workout-log-confirmation",
@@ -240,25 +261,25 @@ describe("workout-log Observation recording", () => {
 
   it("keeps bodyweight and exercise variants distinct from missing load", async () => {
     const candidate = completedTorsoPage();
-    candidate.stage = field(3, 0.99);
-    candidate.week = field(9, 0.99);
-    candidate.sessionType = field("torso", 0.99);
+    candidate.stage = field(3);
+    candidate.week = field(9);
+    candidate.sessionType = field("torso");
     candidate.exercises = [
       {
-        rawLabel: field("引体向上", 0.99),
-        exerciseId: field("pull-up", 0.99),
-        load: field({ kind: "bodyweight", raw: "徒手" }, 0.99),
-        sets: [field(10, 0.99)],
-        actionQuality: field("高", 0.99),
-        problemNote: field(null, 0.99),
+        rawLabel: field("引体向上"),
+        exerciseId: field("pull-up"),
+        load: field({ kind: "bodyweight", raw: "徒手" }),
+        sets: [field(10)],
+        actionQuality: field("高"),
+        problemNote: field(null),
       },
       {
-        rawLabel: field("俯卧撑", 0.99),
-        exerciseId: field("push-up", 0.99),
-        load: field({ kind: "variant", variant: "kneeling", raw: "跪姿" }, 0.99),
-        sets: [field(12, 0.99)],
-        actionQuality: field("中", 0.99),
-        problemNote: field(null, 0.99),
+        rawLabel: field("俯卧撑"),
+        exerciseId: field("push-up"),
+        load: field({ kind: "variant", variant: "kneeling", raw: "跪姿" }),
+        sets: [field(12)],
+        actionQuality: field("中"),
+        problemNote: field(null),
       },
     ];
     const harness = createScenarioHarness({
@@ -283,13 +304,13 @@ describe("workout-log Observation recording", () => {
           expect.objectContaining({
             load: {
               value: { kind: "bodyweight", raw: "徒手" },
-              confidence: 0.99,
+              confidence: "high",
             },
           }),
           expect.objectContaining({
             load: {
               value: { kind: "variant", variant: "kneeling", raw: "跪姿" },
-              confidence: 0.99,
+              confidence: "high",
             },
           }),
         ],
@@ -319,6 +340,27 @@ describe("workout-log Observation recording", () => {
       }),
     ).rejects.toMatchObject({ name: "InvalidWorkoutLogCandidateError" });
   });
+
+  it("rejects a low-confidence field that is not routed to confirmation", async () => {
+    const candidate = completedTorsoPage();
+    candidate.exercises[0]!.sets[0] = field(8, "low");
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([
+        { parsed: candidate, metadata: { provider: "controlled" } },
+      ]),
+      personalDataDirectory: () => temporaryDirectory("stella-personal-"),
+      runtimeDirectory: () => temporaryDirectory("stella-runtime-"),
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+
+    await expect(
+      harness.ingestWorkoutLog({
+        runId: "workout-unrouted-low-confidence",
+        upload: rawMediaUploadFixture(),
+        timeoutMs: 2_000,
+      }),
+    ).rejects.toMatchObject({ name: "InvalidWorkoutLogCandidateError" });
+  });
 });
 
 function completedTorsoPage(): {
@@ -342,52 +384,50 @@ function completedTorsoPage(): {
   }>;
 } {
   return {
-    layout: field("zhuoshu-three-stage-workbook", 0.99),
-    stage: field(2, 0.99),
-    week: field(7, 0.99),
-    weekday: field("thursday", 0.98),
-    sessionType: field("torso", 0.98),
+    layout: field("zhuoshu-three-stage-workbook"),
+    stage: field(2),
+    week: field(7),
+    weekday: field("thursday"),
+    sessionType: field("torso"),
     exercises: [
       {
-        rawLabel: field("引体向上", 0.99),
-        exerciseId: field("pull-up", 0.99),
+        rawLabel: field("引体向上"),
+        exerciseId: field("pull-up"),
         load: field(
           {
             kind: "assistance",
             mode: "resistance-band",
             raw: "红色弹力带",
           },
-          0.96,
         ),
-        sets: [field(8, 0.99), field(7, 0.98)],
-        actionQuality: field("中", 0.93),
-        problemNote: field(null, 0.99),
+        sets: [field(8), field(7)],
+        actionQuality: field("中"),
+        problemNote: field(null),
       },
       {
-        rawLabel: field("哑铃卧推", 0.99),
-        exerciseId: field("dumbbell-bench-press", 0.99),
+        rawLabel: field("哑铃卧推"),
+        exerciseId: field("dumbbell-bench-press"),
         load: field(
           { kind: "kg", value: 24, unit: "kg", raw: "24" },
-          0.99,
         ),
-        sets: [field(9, 0.99), field(null, 0.99)],
-        actionQuality: field("高", 0.98),
-        problemNote: field("右侧略晃", 0.96),
+        sets: [field(9), field(null)],
+        actionQuality: field("高"),
+        problemNote: field("右侧略晃"),
       },
       {
-        rawLabel: field("平板支撑", 0.99),
-        exerciseId: field("plank", 0.99),
-        load: field({ kind: "none", raw: "-" }, 0.99),
-        sets: [field(60, 0.99), field(null, 0.99)],
-        actionQuality: field(null, 0.99),
-        problemNote: field(null, 0.99),
+        rawLabel: field("平板支撑"),
+        exerciseId: field("plank"),
+        load: field({ kind: "none", raw: "-" }),
+        sets: [field(60), field(null)],
+        actionQuality: field(null),
+        problemNote: field(null),
       },
     ],
     uncertainFields: [],
   };
 }
 
-function field<T>(value: T, confidence: number) {
+function field<T>(value: T, confidence: "high" | "low" = "high") {
   return { value, confidence };
 }
 

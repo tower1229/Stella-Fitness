@@ -38,7 +38,7 @@ export type WorkoutLogProcessingRecord = {
   readonly runId: string;
   readonly startedAt: string;
   readonly completedAt: string;
-  readonly status: "succeeded" | "failed";
+  readonly status: "succeeded" | "awaiting-confirmation" | "failed";
   readonly artifact: Pick<RawArtifactRecord, "id" | "path" | "sha256">;
   readonly payload?: {
     readonly category: "sanitized-workout-log-image";
@@ -47,11 +47,16 @@ export type WorkoutLogProcessingRecord = {
     readonly sha256: string;
   };
   readonly execution?: ExtractionExecutionMetadata;
-  readonly result?: {
-    readonly kind: "workout-log-observation";
-    readonly observationId: string;
-    readonly path: string;
-  };
+  readonly result?:
+    | {
+        readonly kind: "workout-log-observation";
+        readonly observationId: string;
+        readonly path: string;
+      }
+    | {
+        readonly kind: "workout-log-confirmation";
+        readonly confirmationId: string;
+      };
   readonly errorCategory?:
     | "cancelled"
     | "extraction-failed"

@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import {
   definePluginEntry,
   type OpenClawConfig,
+  type PluginHookInboundClaimEvent,
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { parse } from "yaml";
@@ -112,6 +114,42 @@ export function registerStellaFitnessPlugin(
     },
   });
 
+  api.registerCommand({
+    name: "stella-confirm",
+    description: "Confirm only the uncertain fields from a workout-log photo",
+    acceptsArgs: true,
+    requireAuth: true,
+    async handler(context) {
+      const confirmation = parseWorkoutConfirmationCommand(context.args);
+      const result = await stellaRuntime.confirmWorkoutLog(confirmation);
+      return { text: formatWorkoutLogRecording(result) };
+    },
+  });
+
+  api.on(
+    "inbound_claim",
+    async (event) => {
+      const upload = await workoutLogUpload(event);
+      if (upload === undefined) {
+        return;
+      }
+      const result = await stellaRuntime.ingestWorkoutLog({
+        runId:
+          event.runId ??
+          event.messageId ??
+          `workout-log-${randomUUID()}`,
+        upload,
+        timeoutMs: 60_000,
+        signal: new AbortController().signal,
+      });
+      return {
+        handled: true,
+        reply: { text: formatWorkoutLogResult(result) },
+      };
+    },
+    { priority: 100, timeoutMs: 65_000 },
+  );
+
   api.on(
     "before_agent_reply",
     async (event, context) => {
@@ -185,6 +223,113 @@ export function registerStellaFitnessPlugin(
     { priority: 100, timeoutMs: 1_000 },
   );
   return stellaRuntime;
+}
+
+async function workoutLogUpload(
+  event: PluginHookInboundClaimEvent,
+): Promise<{
+  readonly bytes: Buffer;
+  readonly fileName: string;
+  readonly mime: "image/jpeg" | "image/png" | "image/webp";
+  readonly receivedAt: string;
+  readonly provenance: {
+    readonly channel: string;
+    readonly messageId?: string;
+  };
+} | undefined> {
+  const metadata = event.metadata;
+  if (metadata === undefined) {
+    return undefined;
+  }
+  const mediaPath = firstNonBlankString(metadata.mediaPaths) ??
+    nonBlankString(metadata.mediaPath);
+  const mime = supportedImageMime(
+    firstNonBlankString(metadata.mediaTypes) ?? metadata.mediaType,
+  );
+  if (mediaPath === undefined || mime === undefined) {
+    return undefined;
+  }
+  const receivedAt =
+    event.timestamp === undefined
+      ? new Date().toISOString()
+      : new Date(event.timestamp).toISOString();
+  return {
+    bytes: await readFile(mediaPath),
+    fileName: basename(mediaPath),
+    mime,
+    receivedAt,
+    provenance: {
+      channel: event.channel,
+      ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
+    },
+  };
+}
+
+function supportedImageMime(
+  value: unknown,
+): "image/jpeg" | "image/png" | "image/webp" | undefined {
+  return value === "image/jpeg" || value === "image/png" || value === "image/webp"
+    ? value
+    : undefined;
+}
+
+function firstNonBlankString(value: unknown): string | undefined {
+  return Array.isArray(value)
+    ? value.find((candidate): candidate is string =>
+        nonBlankString(candidate) !== undefined,
+      )
+    : undefined;
+}
+
+function nonBlankString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : undefined;
+}
+
+function parseWorkoutConfirmationCommand(args: string | undefined): {
+  readonly confirmationId: string;
+  readonly values: Readonly<Record<string, unknown>>;
+} {
+  const match = /^\s*([0-9a-f-]{36})\s+(\{.*\})\s*$/isu.exec(args ?? "");
+  if (match === null) {
+    throw new Error(
+      'Usage: /stella-confirm <confirmation-id> {"field.path": value}',
+    );
+  }
+  const values: unknown = JSON.parse(match[2]!);
+  const record = asRecord(values);
+  if (record === undefined) {
+    throw new Error("Workout-log confirmation values must be a JSON object");
+  }
+  return { confirmationId: match[1]!, values: record };
+}
+
+function formatWorkoutLogResult(
+  result: Awaited<ReturnType<StellaFitnessRuntime["ingestWorkoutLog"]>>,
+): string {
+  if (result.status === "recorded") {
+    return formatWorkoutLogRecording(result);
+  }
+  return [
+    `Workout log needs confirmation: ${result.confirmationId}`,
+    ...result.fields.map(({ path, kind, candidates }) =>
+      `- ${path} (${kind})${
+        candidates === undefined ? "" : `: ${candidates.join(" / ")}`
+      }`,
+    ),
+    `Run /stella-confirm ${result.confirmationId} with one JSON value for each listed path.`,
+  ].join("\n");
+}
+
+function formatWorkoutLogRecording(
+  result: Awaited<ReturnType<StellaFitnessRuntime["confirmWorkoutLog"]>>,
+): string {
+  const { observation } = result;
+  return [
+    `Workout recorded: stage ${observation.stage.value}, week ${observation.week.value}, ${observation.weekday.value}, ${observation.sessionType.value}`,
+    `observation: ${observation.id}`,
+  ].join("\n");
 }
 
 function normalizeStatusInput(input: string): string {

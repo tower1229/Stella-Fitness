@@ -19,12 +19,33 @@ export type WorkoutLogCandidate = WorkoutLogFacts & {
   }[];
 };
 
+export type WorkoutLogFieldLocation =
+  | {
+      readonly kind: "top-level";
+      readonly key: "layout" | "stage" | "week" | "weekday" | "sessionType";
+    }
+  | {
+      readonly kind: "exercise";
+      readonly exerciseIndex: number;
+      readonly key:
+        | "rawLabel"
+        | "exerciseId"
+        | "load"
+        | "actionQuality"
+        | "problemNote";
+    }
+  | {
+      readonly kind: "set";
+      readonly exerciseIndex: number;
+      readonly setIndex: number;
+    };
+
 const CONFIDENCE_FIELD_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["value", "confidence"],
   properties: {
-    confidence: { type: "number", minimum: 0, maximum: 1 },
+    confidence: { type: "string", enum: ["high", "low"] },
   },
 } as const;
 
@@ -190,6 +211,14 @@ export function parseWorkoutLogCandidate(value: unknown): WorkoutLogCandidate {
   const uncertainPaths = uncertainFields
     .filter(isUncertainField)
     .map((field) => field.path);
+  const lowConfidencePaths = candidateFieldPaths({
+    layout: value.layout,
+    stage,
+    week,
+    weekday: value.weekday,
+    sessionType: value.sessionType,
+    exercises,
+  }).filter(({ confidence }) => confidence === "low").map(({ path }) => path);
   if (
     candidateField(value.layout, (input) => input === "zhuoshu-three-stage-workbook").value !==
       "zhuoshu-three-stage-workbook" ||
@@ -200,7 +229,9 @@ export function parseWorkoutLogCandidate(value: unknown): WorkoutLogCandidate {
     !uncertainFields.every(isUncertainField) ||
     uncertainPaths.length !== uncertainFields.length ||
     new Set(uncertainPaths).size !== uncertainPaths.length ||
-    !uncertainPaths.every((path) => isCorrectablePath(path, exercises))
+    !uncertainPaths.every((path) => isCorrectablePath(path, exercises)) ||
+    lowConfidencePaths.length !== uncertainPaths.length ||
+    !lowConfidencePaths.every((path) => uncertainPaths.includes(path))
   ) {
     throw new InvalidWorkoutLogCandidateError();
   }
@@ -273,10 +304,7 @@ function isCandidateField<T>(
   return isRecord(value) &&
     hasOnlyKeys(value, ["value", "confidence"]) &&
     accepts(value.value) &&
-    typeof value.confidence === "number" &&
-    Number.isFinite(value.confidence) &&
-    value.confidence >= 0 &&
-    value.confidence <= 1;
+    (value.confidence === "high" || value.confidence === "low");
 }
 
 function isWorkoutLoadOrNull(value: unknown): value is WorkoutLoad | null {
@@ -341,16 +369,80 @@ function isCorrectablePath(
   path: string,
   exercises: readonly WorkoutExerciseCandidate[],
 ): boolean {
-  if (/^(layout|stage|week|weekday|sessionType)\.value$/u.test(path)) {
-    return true;
+  const location = parseWorkoutLogFieldPath(path);
+  if (location === undefined || location.kind === "top-level") {
+    return location !== undefined;
   }
-  const exerciseField = /^exercises\[(\d+)\]\.(rawLabel|exerciseId|load|actionQuality|problemNote)\.value$/u.exec(path);
-  if (exerciseField !== null) {
-    return exercises[Number(exerciseField[1])] !== undefined;
+  if (location.kind === "exercise") {
+    return exercises[location.exerciseIndex] !== undefined;
   }
-  const setField = /^exercises\[(\d+)\]\.sets\[(\d+)\]\.value$/u.exec(path);
-  if (setField === null) return false;
-  return exercises[Number(setField[1])]?.sets[Number(setField[2])] !== undefined;
+  return exercises[location.exerciseIndex]?.sets[location.setIndex] !== undefined;
+}
+
+export function parseWorkoutLogFieldPath(
+  path: string,
+): WorkoutLogFieldLocation | undefined {
+  const topLevel = /^(layout|stage|week|weekday|sessionType)\.value$/u.exec(path);
+  if (topLevel !== null) {
+    return {
+      kind: "top-level",
+      key: topLevel[1] as Extract<WorkoutLogFieldLocation, { kind: "top-level" }>["key"],
+    };
+  }
+  const exercise = /^exercises\[(\d+)\]\.(rawLabel|exerciseId|load|actionQuality|problemNote)\.value$/u.exec(path);
+  if (exercise !== null) {
+    return {
+      kind: "exercise",
+      exerciseIndex: Number(exercise[1]),
+      key: exercise[2] as Extract<WorkoutLogFieldLocation, { kind: "exercise" }>["key"],
+    };
+  }
+  const set = /^exercises\[(\d+)\]\.sets\[(\d+)\]\.value$/u.exec(path);
+  return set === null
+    ? undefined
+    : {
+        kind: "set",
+        exerciseIndex: Number(set[1]),
+        setIndex: Number(set[2]),
+      };
+}
+
+function candidateFieldPaths(input: {
+  readonly layout: unknown;
+  readonly stage: unknown;
+  readonly week: unknown;
+  readonly weekday: unknown;
+  readonly sessionType: unknown;
+  readonly exercises: readonly WorkoutExerciseCandidate[];
+}): readonly { readonly path: string; readonly confidence: "high" | "low" }[] {
+  const fields: Array<{ path: string; confidence: "high" | "low" }> = [];
+  for (const key of ["layout", "stage", "week", "weekday", "sessionType"] as const) {
+    const field = input[key];
+    if (isRecord(field) && (field.confidence === "high" || field.confidence === "low")) {
+      fields.push({ path: `${key}.value`, confidence: field.confidence });
+    }
+  }
+  input.exercises.forEach((exercise, exerciseIndex) => {
+    for (const key of [
+      "rawLabel",
+      "exerciseId",
+      "load",
+      "actionQuality",
+      "problemNote",
+    ] as const) {
+      fields.push({
+        path: `exercises[${exerciseIndex}].${key}.value`,
+        confidence: exercise[key].confidence,
+      });
+    }
+    exercise.sets.forEach((set, setIndex) => {
+      fields.push({
+        path: `exercises[${exerciseIndex}].sets[${setIndex}].value`,
+        confidence: set.confidence,
+      });
+    });
+  });
+  return fields;
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {

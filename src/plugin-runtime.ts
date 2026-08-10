@@ -18,6 +18,7 @@ import {
 } from "./extraction/body-weight.js";
 import { rejectOnAbort } from "./extraction/cancellation.js";
 import {
+  parseWorkoutLogFieldPath,
   parseWorkoutLogCandidate,
   type WorkoutLogCandidate,
 } from "./extraction/candidate.js";
@@ -468,6 +469,8 @@ async function executeWorkoutLogIngest(options: {
       throw new ProcessingFailureError("invalid-result", error);
     }
     const recordedAt = new Date().toISOString();
+    const confirmationId =
+      candidate.uncertainFields.length === 0 ? undefined : randomUUID();
     const persistedObservation =
       candidate.uncertainFields.length === 0
         ? await persistWorkoutLogObservation({
@@ -486,12 +489,20 @@ async function executeWorkoutLogIngest(options: {
         runId: options.request.runId,
         startedAt,
         completedAt: recordedAt,
-        status: "succeeded",
+        status:
+          persistedObservation === undefined
+            ? "awaiting-confirmation"
+            : "succeeded",
         artifact: artifactReference(artifact),
         payload: payloadReference(lease),
         execution: result.metadata,
         ...(persistedObservation === undefined
-          ? {}
+          ? {
+              result: {
+                kind: "workout-log-confirmation" as const,
+                confirmationId: confirmationId!,
+              },
+            }
           : {
               result: {
                 kind: "workout-log-observation" as const,
@@ -510,7 +521,9 @@ async function executeWorkoutLogIngest(options: {
         processing,
       };
     }
-    const confirmationId = randomUUID();
+    if (confirmationId === undefined) {
+      throw new Error("Workout-log confirmation identity was not created");
+    }
     options.confirmations.set(confirmationId, {
       candidate,
       artifact,
@@ -581,6 +594,9 @@ async function recordConfirmedWorkoutLog(options: {
     runId: options.pending.runId,
     recordedAt,
     confirmedFields: requiredPaths,
+    resolvedUncertainty: options.pending.candidate.uncertainFields.map(
+      (field) => ({ ...field, resolution: "user-confirmed" as const }),
+    ),
   });
   const processing = await persistWorkoutLogProcessingRecord({
     personalDataDirectory: options.personalDataDirectory,
@@ -627,25 +643,21 @@ function setCandidateFieldValue(
   path: string,
   value: unknown,
 ): void {
-  const topLevel = /^(layout|stage|week|weekday|sessionType)\.value$/u.exec(path);
-  if (topLevel !== null) {
-    setFieldValue(candidate[topLevel[1]!], value);
+  const location = parseWorkoutLogFieldPath(path);
+  if (location === undefined) {
+    throw new Error(`Unsupported workout-log confirmation path: ${path}`);
+  }
+  if (location.kind === "top-level") {
+    setFieldValue(candidate[location.key], value);
     return;
   }
-  const exerciseField = /^exercises\[(\d+)\]\.(rawLabel|exerciseId|load|actionQuality|problemNote)\.value$/u.exec(path);
-  if (exerciseField !== null) {
-    const exercise = candidateExercise(candidate, Number(exerciseField[1]));
-    setFieldValue(exercise[exerciseField[2]!], value);
+  const exercise = candidateExercise(candidate, location.exerciseIndex);
+  if (location.kind === "exercise") {
+    setFieldValue(exercise[location.key], value);
     return;
   }
-  const setField = /^exercises\[(\d+)\]\.sets\[(\d+)\]\.value$/u.exec(path);
-  if (setField !== null) {
-    const exercise = candidateExercise(candidate, Number(setField[1]));
-    if (!Array.isArray(exercise.sets)) throw new Error("Invalid confirmation path");
-    setFieldValue(exercise.sets[Number(setField[2])], value);
-    return;
-  }
-  throw new Error(`Unsupported workout-log confirmation path: ${path}`);
+  if (!Array.isArray(exercise.sets)) throw new Error("Invalid confirmation path");
+  setFieldValue(exercise.sets[location.setIndex], value);
 }
 
 function candidateExercise(
@@ -664,7 +676,9 @@ function setFieldValue(field: unknown, value: unknown): void {
   if (typeof field !== "object" || field === null || Array.isArray(field)) {
     throw new Error("Invalid confirmation path");
   }
-  (field as Record<string, unknown>).value = value;
+  const candidateField = field as Record<string, unknown>;
+  candidateField.value = value;
+  candidateField.confidence = "high";
 }
 
 async function acquireSanitizedMedia(

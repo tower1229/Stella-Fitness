@@ -18,6 +18,7 @@ export async function persistWorkoutLogObservation(options: {
   readonly runId: string;
   readonly recordedAt: string;
   readonly confirmedFields?: readonly string[];
+  readonly resolvedUncertainty?: WorkoutLogObservation["uncertainty"];
 }): Promise<{
   readonly observation: WorkoutLogObservation;
   readonly path: string;
@@ -46,6 +47,7 @@ export async function persistWorkoutLogObservation(options: {
       recordedAt: options.recordedAt,
       confirmedFields: options.confirmedFields ?? [],
     },
+    uncertainty: options.resolvedUncertainty ?? [],
   };
   await mkdir(join(options.personalDataDirectory, WORKOUT_LOG_OBSERVATION_DIRECTORY), {
     recursive: true,

@@ -192,9 +192,11 @@ describe("scenario-level Plugin harness", () => {
       kind: "conflict",
       candidates: ["20 kg", "25 kg"],
     } as const;
+    const conflictedCandidate = candidate();
+    conflictedCandidate.exercises[0]!.load.confidence = "low";
     const runtime = new ControlledExtractionRuntime([
       {
-        parsed: { ...candidate(), uncertainFields: [conflict] },
+        parsed: { ...conflictedCandidate, uncertainFields: [conflict] },
         metadata: { provider: "controlled" },
       },
     ]);

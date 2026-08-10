@@ -15,7 +15,7 @@ describe("OpenClaw stable contract baseline", () => {
     expect(OPENCLAW_CONTRACT_BASELINE).toMatchObject({
       developmentVersion: "2026.6.34",
       minimumVersion: "2026.6.34",
-      hooks: ["before_agent_reply", "before_agent_run"],
+      hooks: ["inbound_claim", "before_agent_reply", "before_agent_run"],
       structuredMedia: "runtime.mediaUnderstanding.extractStructuredWithModel",
       modelPermission: "explicit-openclaw-model-allowlist",
       executionMetadata: ["provider", "model", "contentType"],

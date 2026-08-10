@@ -4,6 +4,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -315,6 +316,154 @@ describe("Plugin registration", () => {
     expect(extractStructuredWithModel).toHaveBeenCalledOnce();
   });
 
+  it("claims an inbound workout-log image and returns the recorded Observation", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const commands: Array<Record<string, unknown>> = [];
+    const personalDataDirectory = configuredPersonalDirectory();
+    const mediaPath = join(
+      personalDataDirectory.personalDataDirectory,
+      "inbound-workout.png",
+    );
+    writeFileSync(mediaPath, rawMediaUploadFixture().bytes);
+    const extractStructuredWithModel = vi.fn().mockResolvedValue({
+      parsed: workoutLogCandidate(),
+      provider: "operator-provider",
+      model: "operator-model",
+      contentType: "json",
+    });
+    const api = compatibleApi({
+      commands,
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: {
+        ...personalDataDirectory,
+        extraction: {
+          provider: "operator-provider",
+          model: "operator-model",
+        },
+      },
+      openclawConfig: permittedOpenClawConfig({ allowModel: true }),
+      extractStructuredWithModel,
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    const result = await hooks.get("inbound_claim")?.(
+      {
+        content: "",
+        channel: "test-channel",
+        timestamp: Date.parse("2026-08-10T08:00:00.000Z"),
+        messageId: "workout-message-1",
+        runId: "workout-hook-run-1",
+        metadata: { mediaPath, mediaType: "image/png" },
+      },
+      {},
+    );
+
+    expect(result).toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /^Workout recorded: stage 1, week 1, monday, full-body\nobservation: [0-9a-f-]{36}$/u,
+        ),
+      },
+    });
+    expect(extractStructuredWithModel).toHaveBeenCalledOnce();
+    expect(
+      readdirSync(
+        join(
+          personalDataDirectory.personalDataDirectory,
+          "observations",
+          "workout-log",
+        ),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("exposes only uncertain image fields through the confirmation command", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const commands: Array<Record<string, unknown>> = [];
+    const personalDataDirectory = configuredPersonalDirectory();
+    const mediaPath = join(
+      personalDataDirectory.personalDataDirectory,
+      "uncertain-workout.png",
+    );
+    writeFileSync(mediaPath, rawMediaUploadFixture().bytes);
+    const candidate = workoutLogCandidate() as unknown as {
+      exercises: Array<{
+        load: { value: unknown; confidence: "high" | "low" };
+      }>;
+      uncertainFields: Array<{
+        path: string;
+        kind: "unknown" | "low-confidence" | "conflict";
+        candidates?: string[];
+      }>;
+    };
+    candidate.exercises[0]!.load = { value: null, confidence: "low" };
+    candidate.uncertainFields = [
+      {
+        path: "exercises[0].load.value",
+        kind: "conflict",
+        candidates: ["20 kg", "25 kg"],
+      },
+    ];
+    const api = compatibleApi({
+      commands,
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: {
+        ...personalDataDirectory,
+        extraction: {
+          provider: "operator-provider",
+          model: "operator-model",
+        },
+      },
+      openclawConfig: permittedOpenClawConfig({ allowModel: true }),
+      extractStructuredWithModel: vi.fn().mockResolvedValue({
+        parsed: candidate,
+        provider: "operator-provider",
+        model: "operator-model",
+        contentType: "json",
+      }),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    const pending = await hooks.get("inbound_claim")?.(
+      {
+        content: "",
+        channel: "test-channel",
+        messageId: "workout-message-2",
+        runId: "workout-hook-run-2",
+        metadata: { mediaPath, mediaType: "image/png" },
+      },
+      {},
+    );
+    const pendingText = (pending as { reply: { text: string } }).reply.text;
+    expect(pendingText).toContain(
+      "- exercises[0].load.value (conflict): 20 kg / 25 kg",
+    );
+    const confirmationId = /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(
+      pendingText,
+    )?.[1];
+    const command = commands.find(({ name }) => name === "stella-confirm");
+    const handler = command?.handler as (context: {
+      args?: string;
+    }) => Promise<{ text: string }>;
+
+    await expect(
+      handler({
+        args: `${confirmationId} {"exercises[0].load.value":{"kind":"kg","value":25,"unit":"kg","raw":"25"}}`,
+      }),
+    ).resolves.toMatchObject({
+      text: expect.stringMatching(
+        /^Workout recorded: stage 1, week 1, monday, full-body\nobservation: [0-9a-f-]{36}$/u,
+      ),
+    });
+  });
+
   it("rejects extraction before calling OpenClaw when model config is absent", async () => {
     const extractStructuredWithModel = vi.fn();
     const api = compatibleApi({
@@ -415,6 +564,7 @@ describe("Plugin registration", () => {
     expect(commands.map(({ name }) => name)).toEqual([
       "stella-status",
       "stella-setup",
+      "stella-confirm",
     ]);
   });
 

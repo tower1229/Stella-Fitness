@@ -1,6 +1,6 @@
 export type ObservationField<T> = {
   readonly value: T;
-  readonly confidence: number;
+  readonly confidence: "high" | "low";
 };
 
 export type WorkoutLoad =
@@ -104,4 +104,10 @@ export type WorkoutLogObservation = WorkoutLogFacts & {
     readonly recordedAt: string;
     readonly confirmedFields: readonly string[];
   };
+  readonly uncertainty: readonly {
+    readonly path: string;
+    readonly kind: "unknown" | "low-confidence" | "conflict";
+    readonly candidates?: readonly string[];
+    readonly resolution: "user-confirmed";
+  }[];
 };
