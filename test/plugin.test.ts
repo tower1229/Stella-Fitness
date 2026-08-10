@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import plugin from "../src/plugin.js";
-import { STATUS_TEXT } from "../src/status.js";
+import plugin, { registerStellaFitnessPlugin } from "../src/plugin.js";
+import { createSanitizedMediaCopy } from "../src/media/sanitized-copy.js";
+
+const UNCONFIGURED_STATUS =
+  "Stella Fitness: ready\ncontract: openclaw@2026.7.1-2\nscope: recording-only\nextraction: unconfigured";
 
 describe("Plugin registration", () => {
   it("registers status CLI metadata without loading full runtime contracts", () => {
@@ -43,19 +46,22 @@ describe("Plugin registration", () => {
     });
     await expect(
       (command?.handler as () => Promise<unknown>)(),
-    ).resolves.toEqual({ text: STATUS_TEXT });
+    ).resolves.toEqual({ text: UNCONFIGURED_STATUS });
 
     expect(hooks.has("before_agent_reply")).toBe(true);
     expect(hooks.has("before_agent_run")).toBe(true);
     await expect(
       hooks.get("before_agent_reply")?.({ cleanedBody: "stella status" }),
-    ).resolves.toEqual({ handled: true, reply: { text: STATUS_TEXT } });
+    ).resolves.toEqual({
+      handled: true,
+      reply: { text: UNCONFIGURED_STATUS },
+    });
     await expect(
       hooks.get("before_agent_run")?.({ prompt: "stella status" }),
     ).resolves.toEqual({
       outcome: "block",
       reason: "stella-status-is-plugin-owned",
-      message: STATUS_TEXT,
+      message: UNCONFIGURED_STATUS,
       category: "plugin-command",
     });
     expect(cliRegistrations).toEqual([
@@ -71,6 +77,84 @@ describe("Plugin registration", () => {
         },
       }),
     ]);
+  });
+
+  it("connects configured Plugin runtime to OpenClaw structured extraction", async () => {
+    const extractStructuredWithModel = vi.fn().mockResolvedValue({
+      text: '{"stage":1}',
+      parsed: {
+        stage: 1,
+        week: 1,
+        weekday: "monday",
+        exercises: [],
+        uncertainFields: [],
+      },
+      provider: "operator-provider",
+      model: "operator-model",
+      contentType: "json",
+    });
+    const api = compatibleApi({
+      commands: [],
+      hooks: new Map(),
+      cliRegistrations: [],
+      pluginConfig: {
+        extraction: {
+          provider: "operator-provider",
+          model: "operator-model",
+        },
+      },
+      extractStructuredWithModel,
+    });
+
+    const runtime = registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const output = await runtime?.extractWorkoutLog({
+      runId: "plugin-run-1",
+      media: createSanitizedMediaCopy({
+        bytes: Buffer.from("sanitized"),
+        fileName: "workout.jpg",
+        mime: "image/jpeg",
+      }),
+      timeoutMs: 2_000,
+      signal: new AbortController().signal,
+    });
+
+    expect(output).toMatchObject({
+      status: "candidate",
+      execution: {
+        provider: "operator-provider",
+        model: "operator-model",
+      },
+    });
+    expect(extractStructuredWithModel).toHaveBeenCalledOnce();
+  });
+
+  it("rejects extraction before calling OpenClaw when model config is absent", async () => {
+    const extractStructuredWithModel = vi.fn();
+    const api = compatibleApi({
+      commands: [],
+      hooks: new Map(),
+      cliRegistrations: [],
+      extractStructuredWithModel,
+    });
+    const runtime = registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(
+      runtime?.extractWorkoutLog({
+        runId: "plugin-unconfigured",
+        media: createSanitizedMediaCopy({
+          bytes: Buffer.from("sanitized"),
+          fileName: "workout.jpg",
+          mime: "image/jpeg",
+        }),
+        timeoutMs: 2_000,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("extraction is unconfigured");
+    expect(extractStructuredWithModel).not.toHaveBeenCalled();
   });
 
   it("fails registration before exposing commands when the host is incompatible", () => {
@@ -95,12 +179,19 @@ function compatibleApi(options: {
   commands: Array<Record<string, unknown>>;
   hooks: Map<string, (...args: unknown[]) => unknown>;
   cliRegistrations: Array<Record<string, unknown>>;
+  pluginConfig?: Record<string, unknown>;
+  extractStructuredWithModel?: ReturnType<typeof vi.fn>;
 }) {
   return {
     registrationMode: "full",
+    config: {},
+    pluginConfig: options.pluginConfig,
     runtime: {
       version: "2026.7.1-2",
-      mediaUnderstanding: { extractStructuredWithModel: vi.fn() },
+      mediaUnderstanding: {
+        extractStructuredWithModel:
+          options.extractStructuredWithModel ?? vi.fn(),
+      },
     },
     registerCommand(command: Record<string, unknown>) {
       options.commands.push(command);

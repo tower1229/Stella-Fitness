@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createOpenClawExtractionRuntime } from "../src/extraction/openclaw.js";
+import { createSanitizedMediaCopy } from "../src/media/sanitized-copy.js";
 
 describe("OpenClaw structured extraction adapter", () => {
   it("uses operator-owned model config and preserves observable execution metadata", async () => {
@@ -18,9 +19,8 @@ describe("OpenClaw structured extraction adapter", () => {
     });
 
     const result = await runtime.extract({
-      image: Buffer.from("sanitized-image"),
-      fileName: "sanitized.jpg",
-      mime: "image/jpeg",
+      runId: "run-1",
+      media: sanitizedFixture(),
       timeoutMs: 1_500,
       signal: new AbortController().signal,
     });
@@ -33,6 +33,17 @@ describe("OpenClaw structured extraction adapter", () => {
         timeoutMs: 1_500,
         jsonMode: true,
         schemaName: "stella_workout_log_candidate_v1",
+        jsonSchema: expect.objectContaining({
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "stage",
+            "week",
+            "weekday",
+            "exercises",
+            "uncertainFields",
+          ],
+        }),
         input: [
           {
             type: "image",
@@ -70,9 +81,8 @@ describe("OpenClaw structured extraction adapter", () => {
     });
     const controller = new AbortController();
     const extraction = runtime.extract({
-      image: Buffer.from("sanitized-image"),
-      fileName: "sanitized.jpg",
-      mime: "image/jpeg",
+      runId: "run-2",
+      media: sanitizedFixture(),
       timeoutMs: 1_500,
       signal: controller.signal,
     });
@@ -83,3 +93,11 @@ describe("OpenClaw structured extraction adapter", () => {
     await expect(extraction).rejects.toMatchObject({ name: "AbortError" });
   });
 });
+
+function sanitizedFixture() {
+  return createSanitizedMediaCopy({
+    bytes: Buffer.from("sanitized-image"),
+    fileName: "sanitized.jpg",
+    mime: "image/jpeg",
+  });
+}

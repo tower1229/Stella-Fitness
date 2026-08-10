@@ -1,6 +1,14 @@
-export const STATUS_TEXT =
-  "Stella Fitness: ready\ncontract: openclaw@2026.7.1-2\nscope: recording-only";
+export type ExtractionConfigurationState = "configured" | "unconfigured";
 
-export function createStatusResponse(): { text: string } {
-  return { text: STATUS_TEXT };
+export function createStatusResponse(
+  extraction: ExtractionConfigurationState,
+): { text: string } {
+  return {
+    text: [
+      "Stella Fitness: ready",
+      "contract: openclaw@2026.7.1-2",
+      "scope: recording-only",
+      `extraction: ${extraction}`,
+    ].join("\n"),
+  };
 }

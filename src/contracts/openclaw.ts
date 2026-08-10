@@ -31,7 +31,6 @@ export class OpenClawContractError extends Error {
 
 export function assertOpenClawContract(
   host: ContractHost,
-  _personalDataAccess?: () => void,
 ): typeof LOCKED_OPENCLAW_CONTRACT {
   if (
     !LOCKED_OPENCLAW_CONTRACT.runtimeVersions.includes(

@@ -3,6 +3,8 @@ import type {
   ExtractionResult,
   ExtractionRuntime,
 } from "../extraction/runtime.js";
+import { rejectOnAbort, throwIfAborted } from "../extraction/cancellation.js";
+import { createStellaFitnessRuntime } from "../plugin-runtime.js";
 
 type HarnessInput = Omit<ExtractionRequest, "signal"> & {
   signal?: AbortSignal;
@@ -13,29 +15,23 @@ type ScenarioHarnessOptions = {
 };
 
 export function createScenarioHarness(options: ScenarioHarnessOptions) {
+  const pluginRuntime = createStellaFitnessRuntime(options);
+
   return {
     async extract(input: HarnessInput) {
       const controller = new AbortController();
       const signal = input.signal ?? controller.signal;
       throwIfAborted(signal);
 
-      const result = await rejectOnAbort(
-        options.extractionRuntime.extract({
-          image: input.image,
-          fileName: input.fileName,
-          mime: input.mime,
+      return await rejectOnAbort(
+        pluginRuntime.extractWorkoutLog({
+          runId: input.runId,
+          media: input.media,
           timeoutMs: input.timeoutMs,
           signal,
         }),
         signal,
       );
-      throwIfAborted(signal);
-
-      return {
-        status: "candidate" as const,
-        candidate: result.parsed,
-        execution: result.metadata,
-      };
     },
   };
 }
@@ -67,33 +63,4 @@ export class ControlledExtractionRuntime implements ExtractionRuntime {
     }
     return result;
   }
-}
-
-function throwIfAborted(signal: AbortSignal): void {
-  if (!signal.aborted) {
-    return;
-  }
-
-  const error = new Error("Extraction cancelled");
-  error.name = "AbortError";
-  throw error;
-}
-
-async function rejectOnAbort<T>(
-  promise: Promise<T>,
-  signal: AbortSignal,
-): Promise<T> {
-  throwIfAborted(signal);
-
-  return await new Promise<T>((resolve, reject) => {
-    const onAbort = () => {
-      const error = new Error("Extraction cancelled");
-      error.name = "AbortError";
-      reject(error);
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(resolve, reject).finally(() => {
-      signal.removeEventListener("abort", onAbort);
-    });
-  });
 }

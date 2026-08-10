@@ -24,25 +24,31 @@ describe("locked OpenClaw contract", () => {
   });
 
   it("fails before personal data is accessed when a required surface is missing", () => {
-    const personalDataAccess = vi.fn();
     const host = compatibleHost();
     host.runtime.mediaUnderstanding.extractStructuredWithModel = undefined;
 
-    expect(() => assertOpenClawContract(host, personalDataAccess)).toThrow(
+    expect(() => assertOpenClawContract(host)).toThrow(
       new OpenClawContractError("structured-media"),
     );
-    expect(personalDataAccess).not.toHaveBeenCalled();
   });
 
   it("rejects an incompatible host version before personal data is accessed", () => {
-    const personalDataAccess = vi.fn();
-    const host = compatibleHost();
-    host.runtime.version = "2026.7.2";
+    let structuredMediaAccesses = 0;
+    const host = {
+      runtime: {
+        version: "2026.7.2",
+        get mediaUnderstanding() {
+          structuredMediaAccesses += 1;
+          return { extractStructuredWithModel: vi.fn() };
+        },
+      },
+      on: vi.fn(),
+    };
 
-    expect(() => assertOpenClawContract(host, personalDataAccess)).toThrow(
+    expect(() => assertOpenClawContract(host)).toThrow(
       new OpenClawContractError("host-version"),
     );
-    expect(personalDataAccess).not.toHaveBeenCalled();
+    expect(structuredMediaAccesses).toBe(0);
   });
 });
 

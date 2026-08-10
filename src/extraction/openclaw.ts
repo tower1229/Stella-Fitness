@@ -5,6 +5,8 @@ import type {
   ExtractionResult,
   ExtractionRuntime,
 } from "./runtime.js";
+import { rejectOnAbort, throwIfAborted } from "./cancellation.js";
+import { WORKOUT_LOG_CANDIDATE_SCHEMA } from "./candidate.js";
 
 type ExtractStructuredWithModel =
   OpenClawPluginApi["runtime"]["mediaUnderstanding"]["extractStructuredWithModel"];
@@ -18,11 +20,6 @@ type OpenClawExtractionOptions = {
   };
 };
 
-const WORKOUT_LOG_CANDIDATE_SCHEMA = {
-  type: "object",
-  additionalProperties: true,
-} as const;
-
 export function createOpenClawExtractionRuntime(
   options: OpenClawExtractionOptions,
 ): ExtractionRuntime {
@@ -34,9 +31,9 @@ export function createOpenClawExtractionRuntime(
         input: [
           {
             type: "image",
-            buffer: request.image,
-            fileName: request.fileName,
-            mime: request.mime,
+            buffer: request.media.bytes,
+            fileName: request.media.fileName,
+            mime: request.media.mime,
           },
         ],
         instructions:
@@ -75,31 +72,4 @@ function compactMetadata(metadata: {
   return Object.fromEntries(
     Object.entries(metadata).filter((entry) => entry[1] !== undefined),
   );
-}
-
-async function rejectOnAbort<T>(
-  promise: Promise<T>,
-  signal: AbortSignal,
-): Promise<T> {
-  throwIfAborted(signal);
-
-  return await new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(abortError());
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(resolve, reject).finally(() => {
-      signal.removeEventListener("abort", onAbort);
-    });
-  });
-}
-
-function throwIfAborted(signal: AbortSignal): void {
-  if (signal.aborted) {
-    throw abortError();
-  }
-}
-
-function abortError(): Error {
-  const error = new Error("Extraction cancelled");
-  error.name = "AbortError";
-  return error;
 }

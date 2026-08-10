@@ -1,3 +1,5 @@
+import type { SanitizedMediaCopy } from "../media/sanitized-copy.js";
+
 export type ExtractionExecutionMetadata = {
   provider?: string;
   model?: string;
@@ -5,9 +7,8 @@ export type ExtractionExecutionMetadata = {
 };
 
 export type ExtractionRequest = {
-  image: Buffer;
-  fileName: string;
-  mime: string;
+  runId: string;
+  media: SanitizedMediaCopy;
   timeoutMs: number;
   signal: AbortSignal;
 };

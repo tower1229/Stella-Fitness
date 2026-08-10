@@ -4,12 +4,13 @@ import {
   ControlledExtractionRuntime,
   createScenarioHarness,
 } from "../src/scenario/harness.js";
+import { createSanitizedMediaCopy } from "../src/media/sanitized-copy.js";
 
 describe("scenario-level Plugin harness", () => {
   it("injects a controlled extraction result without a live provider", async () => {
     const runtime = new ControlledExtractionRuntime([
       {
-        parsed: { stage: 1, week: 1, weekday: "monday", exercises: [] },
+        parsed: candidate(),
         metadata: {
           provider: "controlled",
           model: "fixture-v1",
@@ -20,15 +21,14 @@ describe("scenario-level Plugin harness", () => {
     const harness = createScenarioHarness({ extractionRuntime: runtime });
 
     const output = await harness.extract({
-      image: Buffer.from("fixture-image"),
-      fileName: "workout.jpg",
-      mime: "image/jpeg",
+      runId: "scenario-1",
+      media: sanitizedFixture(),
       timeoutMs: 2_000,
     });
 
     expect(output).toEqual({
       status: "candidate",
-      candidate: { stage: 1, week: 1, weekday: "monday", exercises: [] },
+      candidate: candidate(),
       execution: {
         provider: "controlled",
         model: "fixture-v1",
@@ -37,8 +37,11 @@ describe("scenario-level Plugin harness", () => {
     });
     expect(runtime.requests).toEqual([
       expect.objectContaining({
-        fileName: "workout.jpg",
-        mime: "image/jpeg",
+        runId: "scenario-1",
+        media: expect.objectContaining({
+          fileName: "workout.jpg",
+          mime: "image/jpeg",
+        }),
         timeoutMs: 2_000,
         signal: expect.any(AbortSignal),
       }),
@@ -53,9 +56,8 @@ describe("scenario-level Plugin harness", () => {
 
     await expect(
       harness.extract({
-        image: Buffer.from("fixture-image"),
-        fileName: "workout.jpg",
-        mime: "image/jpeg",
+        runId: "scenario-cancelled",
+        media: sanitizedFixture(),
         timeoutMs: 2_000,
         signal: controller.signal,
       }),
@@ -67,9 +69,8 @@ describe("scenario-level Plugin harness", () => {
     const harness = createScenarioHarness({ extractionRuntime: runtime });
     const controller = new AbortController();
     const extraction = harness.extract({
-      image: Buffer.from("fixture-image"),
-      fileName: "workout.jpg",
-      mime: "image/jpeg",
+      runId: "scenario-pending",
+      media: sanitizedFixture(),
       timeoutMs: 2_000,
       signal: controller.signal,
     });
@@ -78,4 +79,80 @@ describe("scenario-level Plugin harness", () => {
 
     await expect(extraction).rejects.toMatchObject({ name: "AbortError" });
   });
+
+  it("deduplicates repeated run IDs before invoking extraction again", async () => {
+    const runtime = new ControlledExtractionRuntime([
+      { parsed: candidate(), metadata: { provider: "controlled" } },
+    ]);
+    const harness = createScenarioHarness({ extractionRuntime: runtime });
+    const input = {
+      runId: "scenario-idempotent",
+      media: sanitizedFixture(),
+      timeoutMs: 2_000,
+    };
+
+    const first = await harness.extract(input);
+    const second = await harness.extract(input);
+
+    expect(second).toEqual(first);
+    expect(runtime.requests).toHaveLength(1);
+  });
+
+  it("rejects schema-invalid controlled output", async () => {
+    const runtime = new ControlledExtractionRuntime([
+      { parsed: { stage: 1 }, metadata: { provider: "controlled" } },
+    ]);
+    const harness = createScenarioHarness({ extractionRuntime: runtime });
+
+    await expect(
+      harness.extract({
+        runId: "scenario-invalid",
+        media: sanitizedFixture(),
+        timeoutMs: 2_000,
+      }),
+    ).rejects.toMatchObject({ name: "InvalidWorkoutLogCandidateError" });
+  });
+
+  it("preserves conflicts as structured uncertainty instead of choosing a value", async () => {
+    const conflict = {
+      path: "exercises[0].load",
+      kind: "conflict",
+      candidates: ["20 kg", "25 kg"],
+    } as const;
+    const runtime = new ControlledExtractionRuntime([
+      {
+        parsed: { ...candidate(), uncertainFields: [conflict] },
+        metadata: { provider: "controlled" },
+      },
+    ]);
+    const harness = createScenarioHarness({ extractionRuntime: runtime });
+
+    await expect(
+      harness.extract({
+        runId: "scenario-conflict",
+        media: sanitizedFixture(),
+        timeoutMs: 2_000,
+      }),
+    ).resolves.toMatchObject({
+      candidate: { uncertainFields: [conflict] },
+    });
+  });
 });
+
+function candidate() {
+  return {
+    stage: 1,
+    week: 1,
+    weekday: "monday",
+    exercises: [],
+    uncertainFields: [],
+  };
+}
+
+function sanitizedFixture() {
+  return createSanitizedMediaCopy({
+    bytes: Buffer.from("fixture-image"),
+    fileName: "workout.jpg",
+    mime: "image/jpeg",
+  });
+}
