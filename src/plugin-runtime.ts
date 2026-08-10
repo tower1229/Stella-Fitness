@@ -356,6 +356,7 @@ async function executeWorkoutLogIngest(options: {
     upload: options.request.upload,
   });
   let lease: SanitizedMediaLease | undefined;
+  let execution: ExtractionExecutionMetadata | undefined;
   const onCallerAbort = () => {
     options.controller.abort(
       processingAbortError("cancelled", "Extraction cancelled"),
@@ -372,7 +373,7 @@ async function executeWorkoutLogIngest(options: {
   }, options.request.timeoutMs);
 
   try {
-    lease = await rejectOnAbort(
+    lease = await acquireSanitizedMedia(
       options.mediaSanitizer.sanitize(options.request.upload, artifact.id),
       options.controller.signal,
     );
@@ -385,6 +386,7 @@ async function executeWorkoutLogIngest(options: {
       }),
       options.controller.signal,
     );
+    execution = result.metadata;
     let candidate: WorkoutLogCandidate;
     try {
       candidate = parseWorkoutLogCandidate(result.parsed);
@@ -425,6 +427,7 @@ async function executeWorkoutLogIngest(options: {
         status: "failed",
         artifact: artifactReference(artifact),
         ...(lease === undefined ? {} : { payload: payloadReference(lease) }),
+        ...(execution === undefined ? {} : { execution }),
         errorCategory,
       },
     });
@@ -435,6 +438,24 @@ async function executeWorkoutLogIngest(options: {
     clearTimeout(timeout);
     options.request.signal.removeEventListener("abort", onCallerAbort);
     await lease?.dispose();
+  }
+}
+
+async function acquireSanitizedMedia(
+  pendingLease: Promise<SanitizedMediaLease>,
+  signal: AbortSignal,
+): Promise<SanitizedMediaLease> {
+  try {
+    return await rejectOnAbort(pendingLease, signal);
+  } catch (error) {
+    if (signal.aborted) {
+      void pendingLease
+        .then(async (lateLease) => {
+          await lateLease.dispose();
+        })
+        .catch(() => undefined);
+    }
+    throw error;
   }
 }
 

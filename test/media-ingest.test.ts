@@ -10,13 +10,17 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import sharp from "sharp";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   ExtractionRequest,
   ExtractionResult,
   ExtractionRuntime,
 } from "../src/extraction/runtime.js";
+import type {
+  MediaSanitizer,
+  SanitizedMediaLease,
+} from "../src/media/sanitizer.js";
 import {
   ControlledExtractionRuntime,
   createScenarioHarness,
@@ -82,11 +86,20 @@ describe("workout-log Raw Artifact ingest", () => {
     expect(submitted.mime).toBe("image/png");
     expect(submitted.fileName).toMatch(/\.png$/u);
     const metadata = await sharp(submitted.bytes).metadata();
-    expect(metadata).toMatchObject({ width: 1, height: 2, format: "png" });
+    expect(metadata).toMatchObject({ width: 10, height: 20, format: "png" });
     expect(metadata.orientation).toBeUndefined();
     expect(metadata.exif).toBeUndefined();
     expect(metadata.xmp).toBeUndefined();
     expect(metadata.iptc).toBeUndefined();
+    const orientedPixels = await sharp(submitted.bytes).raw().toBuffer();
+    const top = orientedPixels.subarray(0, 3);
+    const bottom = orientedPixels.subarray(-3);
+    expect(top[0]).toBeGreaterThan(240);
+    expect(top[1]).toBeLessThan(10);
+    expect(top[2]).toBeLessThan(10);
+    expect(bottom[0]).toBeLessThan(10);
+    expect(bottom[1]).toBeLessThan(10);
+    expect(bottom[2]).toBeGreaterThan(240);
 
     expect(output.processing).toMatchObject({
       schemaVersion: "stella-fitness/processing/workout-log/v0.1",
@@ -152,8 +165,11 @@ describe("workout-log Raw Artifact ingest", () => {
 
   it("cleans transient media and records a runtime failure", async () => {
     const directories = temporaryDirectories();
+    const runtime = new RejectingExtractionRuntime(
+      new Error("provider unavailable"),
+    );
     const harness = readyHarness(
-      rejectingRuntime(new Error("provider unavailable")),
+      runtime,
       directories,
     );
 
@@ -170,11 +186,13 @@ describe("workout-log Raw Artifact ingest", () => {
       status: "failed",
       errorCategory: "extraction-failed",
     });
+    expect(runtime.transientBytes!.every((byte) => byte === 0)).toBe(true);
   });
 
   it("owns the timeout and cleans transient media when the runtime never settles", async () => {
     const directories = temporaryDirectories();
-    const harness = readyHarness(pendingRuntime(), directories);
+    const runtime = new PendingExtractionRuntime();
+    const harness = readyHarness(runtime, directories);
 
     await expect(
       harness.ingestWorkoutLog({
@@ -189,11 +207,13 @@ describe("workout-log Raw Artifact ingest", () => {
       status: "failed",
       errorCategory: "timeout",
     });
+    expect(runtime.transientBytes!.every((byte) => byte === 0)).toBe(true);
   });
 
   it("cleans transient media after caller cancellation", async () => {
     const directories = temporaryDirectories();
-    const harness = readyHarness(pendingRuntime(), directories);
+    const runtime = new PendingExtractionRuntime();
+    const harness = readyHarness(runtime, directories);
     const controller = new AbortController();
     const extraction = harness.ingestWorkoutLog({
       runId: "media-cancelled",
@@ -201,6 +221,7 @@ describe("workout-log Raw Artifact ingest", () => {
       timeoutMs: 2_000,
       signal: controller.signal,
     });
+    await vi.waitFor(() => expect(runtime.transientBytes).toBeDefined());
 
     controller.abort("user-cancelled");
 
@@ -210,16 +231,19 @@ describe("workout-log Raw Artifact ingest", () => {
       status: "failed",
       errorCategory: "cancelled",
     });
+    expect(runtime.transientBytes!.every((byte) => byte === 0)).toBe(true);
   });
 
   it("aborts in-flight work and cleans transient media on shutdown", async () => {
     const directories = temporaryDirectories();
-    const harness = readyHarness(pendingRuntime(), directories);
+    const runtime = new PendingExtractionRuntime();
+    const harness = readyHarness(runtime, directories);
     const extraction = harness.ingestWorkoutLog({
       runId: "media-shutdown",
       upload: upload(await orientedJpeg()),
       timeoutMs: 2_000,
     });
+    await vi.waitFor(() => expect(runtime.transientBytes).toBeDefined());
 
     await harness.shutdown();
 
@@ -228,6 +252,68 @@ describe("workout-log Raw Artifact ingest", () => {
     expect(singleProcessingRecord(directories)).toMatchObject({
       status: "failed",
       errorCategory: "shutdown",
+    });
+    expect(runtime.transientBytes!.every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("disposes a sanitized buffer that resolves after cancellation", async () => {
+    const directories = temporaryDirectories();
+    const sanitizer = new DelayedMediaSanitizer();
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      mediaSanitizer: sanitizer,
+      personalDataDirectory: () => directories.personalDataDirectory,
+      runtimeDirectory: () => directories.runtimeDirectory,
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    const controller = new AbortController();
+    const extraction = harness.ingestWorkoutLog({
+      runId: "media-late-sanitizer",
+      upload: upload(await orientedJpeg()),
+      timeoutMs: 2_000,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(sanitizer.started).toBe(true));
+
+    controller.abort("user-cancelled");
+    await expect(extraction).rejects.toMatchObject({ name: "AbortError" });
+    sanitizer.resolve();
+
+    await vi.waitFor(() =>
+      expect(sanitizer.bytes.every((byte) => byte === 0)).toBe(true),
+    );
+  });
+
+  it("keeps runtime execution metadata when candidate validation fails", async () => {
+    const directories = temporaryDirectories();
+    const runtime = new ControlledExtractionRuntime([
+      {
+        parsed: { stage: 1 },
+        metadata: {
+          provider: "controlled",
+          model: "fixture-v1",
+          contentType: "json",
+        },
+      },
+    ]);
+    const harness = readyHarness(runtime, directories);
+
+    await expect(
+      harness.ingestWorkoutLog({
+        runId: "media-invalid-candidate",
+        upload: upload(await orientedJpeg()),
+        timeoutMs: 2_000,
+      }),
+    ).rejects.toMatchObject({ name: "InvalidWorkoutLogCandidateError" });
+
+    expect(singleProcessingRecord(directories)).toMatchObject({
+      status: "failed",
+      errorCategory: "invalid-result",
+      execution: {
+        provider: "controlled",
+        model: "fixture-v1",
+        contentType: "json",
+      },
     });
   });
 });
@@ -247,26 +333,59 @@ function readyHarness(
   });
 }
 
-function rejectingRuntime(error: Error): ExtractionRuntime {
-  return {
-    async extract(): Promise<ExtractionResult> {
-      throw error;
-    },
-  };
+class RejectingExtractionRuntime implements ExtractionRuntime {
+  transientBytes?: Buffer;
+
+  constructor(readonly error: Error) {}
+
+  async extract(request: ExtractionRequest): Promise<ExtractionResult> {
+    this.transientBytes = request.media.bytes;
+    throw this.error;
+  }
 }
 
-function pendingRuntime(): ExtractionRuntime {
-  return {
-    async extract(request: ExtractionRequest): Promise<ExtractionResult> {
-      return await new Promise<ExtractionResult>((_resolve, reject) => {
-        request.signal.addEventListener(
-          "abort",
-          () => reject(request.signal.reason),
-          { once: true },
-        );
-      });
-    },
-  };
+class PendingExtractionRuntime implements ExtractionRuntime {
+  transientBytes?: Buffer;
+
+  async extract(request: ExtractionRequest): Promise<ExtractionResult> {
+    this.transientBytes = request.media.bytes;
+    return await new Promise<ExtractionResult>((_resolve, reject) => {
+      request.signal.addEventListener(
+        "abort",
+        () => reject(request.signal.reason),
+        { once: true },
+      );
+    });
+  }
+}
+
+class DelayedMediaSanitizer implements MediaSanitizer {
+  readonly bytes = Buffer.from("late-sanitized-buffer");
+  started = false;
+  #resolve?: (lease: SanitizedMediaLease) => void;
+
+  async sanitize(): Promise<SanitizedMediaLease> {
+    this.started = true;
+    return await new Promise<SanitizedMediaLease>((resolve) => {
+      this.#resolve = resolve;
+    });
+  }
+
+  resolve(): void {
+    const bytes = this.bytes;
+    this.#resolve?.({
+      media: {
+        bytes,
+        fileName: "late.png",
+        mime: "image/png",
+      } as SanitizedMediaLease["media"],
+      transport: "buffer",
+      sha256: sha256(bytes),
+      async dispose() {
+        bytes.fill(0);
+      },
+    });
+  }
 }
 
 function temporaryDirectories() {
@@ -280,13 +399,20 @@ function temporaryDirectories() {
 }
 
 async function orientedJpeg(): Promise<Buffer> {
-  return await sharp(
-    Buffer.from([
-      255, 0, 0,
-      0, 0, 255,
-    ]),
-    { raw: { width: 2, height: 1, channels: 3 } },
-  )
+  const width = 20;
+  const height = 10;
+  const pixels = Buffer.alloc(width * height * 3);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 3;
+      pixels[offset] = x < width / 2 ? 255 : 0;
+      pixels[offset + 1] = 0;
+      pixels[offset + 2] = x < width / 2 ? 0 : 255;
+    }
+  }
+  return await sharp(pixels, {
+    raw: { width, height, channels: 3 },
+  })
     .jpeg()
     .withMetadata({ orientation: 6 })
     .withExifMerge({

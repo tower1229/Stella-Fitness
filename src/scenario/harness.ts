@@ -5,6 +5,7 @@ import type {
 } from "../extraction/runtime.js";
 import type { WorkoutLogIngestRequest } from "../domain/media.js";
 import { throwIfAborted } from "../extraction/cancellation.js";
+import type { MediaSanitizer } from "../media/sanitizer.js";
 import { createStellaFitnessRuntime } from "../plugin-runtime.js";
 import type { ConfigurationPreflightResult } from "../preflight.js";
 
@@ -16,6 +17,7 @@ type ScenarioHarnessOptions = {
   extractionRuntime: ExtractionRuntime;
   personalDataDirectory?: () => string | undefined;
   runtimeDirectory?: () => string | undefined;
+  mediaSanitizer?: MediaSanitizer;
   preflight: () => ConfigurationPreflightResult;
 };
 
