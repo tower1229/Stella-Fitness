@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { ProgramRecord, ProgramSpec } from "../../domain/program.js";
 
 const MAIN_EXERCISES = [
@@ -5,6 +7,10 @@ const MAIN_EXERCISES = [
   "dumbbell-bench-press",
   "dumbbell-deadlift",
 ] as const;
+const SESSION_FIXTURE_SHA256 =
+  "abb2e4872b7e237c1bb439454751ead6b9ca75b2be4af0b42524849d09fba76e";
+const TEMPLATE_FIXTURE_SHA256 =
+  "2464f2d628a0f2c2d9d0fd6401f8705e2f9d5c7de4fea348c0a20d5a893abdd8";
 
 export function validateZhuoshuV02Fidelity(
   program: ProgramSpec,
@@ -17,6 +23,14 @@ export function validateZhuoshuV02Fidelity(
   const sessions = program.weeks.flatMap(({ sessions }) => sessions);
   if (program.weeks.length !== 12 || sessions.length !== 44) {
     issues.push("zhuoshu v0.2 must contain 12 weeks and 44 sessions");
+  }
+  if (fidelityHash(program.weeks) !== SESSION_FIXTURE_SHA256) {
+    issues.push(
+      "zhuoshu v0.2 session prescriptions do not match the canonical fixture",
+    );
+  }
+  if (fidelityHash(program.templates) !== TEMPLATE_FIXTURE_SHA256) {
+    issues.push("zhuoshu v0.2 templates do not match the canonical fixture");
   }
 
   const mainProtocol = program.testingProtocols["main-12rm"];
@@ -51,7 +65,27 @@ export function validateZhuoshuV02Fidelity(
   validateSessionTemplates(program, issues);
   validateRecoveryTemplates(program, issues);
   validateSettledTransitions(program, issues);
+  validateSettledAliases(program, issues);
   return issues;
+}
+
+function validateSettledAliases(program: ProgramSpec, issues: string[]): void {
+  const overheadPress = program.exerciseAliases["dumbbell-overhead-press"];
+  if (
+    overheadPress?.canonical_display_name !== "哑铃推肩" ||
+    !sameStringSet(overheadPress.aliases, ["哑铃推肩", "哑铃推举"])
+  ) {
+    issues.push(
+      "zhuoshu v0.2 overhead press aliases do not match settled identity",
+    );
+  }
+  const curl = program.exerciseAliases["dumbbell-curl"];
+  if (
+    curl?.canonical_display_name !== "哑铃弯举" ||
+    !sameStringSet(curl.aliases, ["哑铃弯举"])
+  ) {
+    issues.push("zhuoshu v0.2 curl aliases do not match settled identity");
+  }
 }
 
 function validateStrengthTest(program: ProgramSpec, issues: string[]): void {
@@ -192,4 +226,25 @@ function asRecord(input: unknown): ProgramRecord | undefined {
   return typeof input === "object" && input !== null && !Array.isArray(input)
     ? (input as ProgramRecord)
     : undefined;
+}
+
+function fidelityHash(input: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(sortKeys(input)))
+    .digest("hex");
+}
+
+function sortKeys(input: unknown): unknown {
+  if (Array.isArray(input)) {
+    return input.map(sortKeys);
+  }
+  const record = asRecord(input);
+  if (record === undefined) {
+    return input;
+  }
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .map((key) => [key, sortKeys(record[key])]),
+  );
 }

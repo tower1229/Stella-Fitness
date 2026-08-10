@@ -62,6 +62,13 @@ describe("ProgramSpec validator", () => {
       "week 5 must contain 4 sessions for phase phase-2",
     ],
     [
+      "coordinated prescription rewrite within the 44 sessions",
+      (program: Fixture) => {
+        program.weeks[0]!.sessions[0]!.sets = 99;
+      },
+      "zhuoshu v0.2 session prescriptions do not match the canonical fixture",
+    ],
+    [
       "missing template",
       (program: Fixture) => {
         program.weeks[0]!.sessions[0]!.template = "missing-template";
@@ -200,6 +207,14 @@ describe("ProgramSpec validator", () => {
       "ordinary pull-up rest must be self_selected",
     ],
     [
+      "coordinated template prescription rewrite",
+      (program: Fixture) => {
+        program.templates["phase2-torso"]!.exercises![0]!.exercise =
+          "invented-pull-up";
+      },
+      "zhuoshu v0.2 templates do not match the canonical fixture",
+    ],
+    [
       "template inheritance cycle",
       (program: Fixture) => {
         program.templates["phase2-torso-recovery"]!.based_on =
@@ -246,12 +261,34 @@ describe("ProgramSpec validator", () => {
       },
       "day must be a supported weekday",
     ],
+    [
+      "coordinated alias rewrite",
+      (program: Fixture) => {
+        program.exercise_aliases[
+          "dumbbell-overhead-press"
+        ]!.canonical_display_name = "错误";
+        program.exercise_aliases["dumbbell-overhead-press"]!.aliases = [
+          "错误",
+          "哑铃推举",
+        ];
+      },
+      "zhuoshu v0.2 overhead press aliases do not match settled identity",
+    ],
   ])("fails closed for %s", async (_label, corrupt, expected) => {
     const program = (await programFixture()) as Fixture;
     corrupt(program);
 
     expect(() => validateProgramSpec(program)).toThrow(InvalidProgramSpecError);
     expect(() => validateProgramSpec(program)).toThrow(expected);
+  });
+
+  it("keeps Built-in fidelity separate from the generic schema validator", async () => {
+    const program = (await programFixture()) as Fixture;
+    program.id = "another-program";
+    program.version = "1.0.0";
+    program.weeks[0]!.sessions[0]!.sets = 99;
+
+    expect(() => validateProgramSpec(program)).not.toThrow();
   });
 });
 
@@ -447,12 +484,15 @@ function isoDate(dayOffset: number): string {
 }
 
 type Fixture = {
+  id: string;
+  version: string;
   schema_version: string;
   weeks: Array<{
     sessions: Array<{
       day: string;
       type: string;
       status: string;
+      sets?: number;
       template?: string;
       tests?: Array<{
         exercise: string;
@@ -485,6 +525,10 @@ type Fixture = {
   testing_protocols: Record<
     string,
     { type: string; applies_to?: string[]; exercise?: string }
+  >;
+  exercise_aliases: Record<
+    string,
+    { canonical_display_name: string; aliases: string[] }
   >;
 };
 
