@@ -1,0 +1,105 @@
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+
+import type {
+  ExtractionRequest,
+  ExtractionResult,
+  ExtractionRuntime,
+} from "./runtime.js";
+
+type ExtractStructuredWithModel =
+  OpenClawPluginApi["runtime"]["mediaUnderstanding"]["extractStructuredWithModel"];
+
+type OpenClawExtractionOptions = {
+  extractStructuredWithModel: ExtractStructuredWithModel;
+  openclawConfig: Parameters<ExtractStructuredWithModel>[0]["cfg"];
+  model: {
+    provider: string;
+    model: string;
+  };
+};
+
+const WORKOUT_LOG_CANDIDATE_SCHEMA = {
+  type: "object",
+  additionalProperties: true,
+} as const;
+
+export function createOpenClawExtractionRuntime(
+  options: OpenClawExtractionOptions,
+): ExtractionRuntime {
+  return {
+    async extract(request: ExtractionRequest): Promise<ExtractionResult> {
+      throwIfAborted(request.signal);
+
+      const extraction = options.extractStructuredWithModel({
+        input: [
+          {
+            type: "image",
+            buffer: request.image,
+            fileName: request.fileName,
+            mime: request.mime,
+          },
+        ],
+        instructions:
+          "Extract only candidate workout-log facts. Preserve blanks and uncertainty. Do not diagnose, advise, or infer health, safety, nutrition, or training quality.",
+        schemaName: "stella_workout_log_candidate_v1",
+        jsonSchema: WORKOUT_LOG_CANDIDATE_SCHEMA,
+        jsonMode: true,
+        cfg: options.openclawConfig,
+        provider: options.model.provider,
+        model: options.model.model,
+        timeoutMs: request.timeoutMs,
+      });
+
+      const result = await rejectOnAbort(extraction, request.signal);
+      if (result.parsed === undefined) {
+        throw new Error("OpenClaw returned no structured extraction result");
+      }
+
+      return {
+        parsed: result.parsed,
+        metadata: compactMetadata({
+          provider: result.provider,
+          model: result.model,
+          contentType: result.contentType,
+        }),
+      };
+    },
+  };
+}
+
+function compactMetadata(metadata: {
+  provider?: string | undefined;
+  model?: string | undefined;
+  contentType?: "json" | "text" | undefined;
+}): ExtractionResult["metadata"] {
+  return Object.fromEntries(
+    Object.entries(metadata).filter((entry) => entry[1] !== undefined),
+  );
+}
+
+async function rejectOnAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  throwIfAborted(signal);
+
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw abortError();
+  }
+}
+
+function abortError(): Error {
+  const error = new Error("Extraction cancelled");
+  error.name = "AbortError";
+  return error;
+}
