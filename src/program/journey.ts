@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import {
   mkdir,
-  link,
   readFile,
   readdir,
   rename,
@@ -42,8 +42,7 @@ const INITIAL_12RM_EXERCISES = [
 ] as const;
 const SETUP_FILE = join("program", "setup.json");
 const INITIAL_12RM_DIRECTORY = join("observations", "special-session");
-const RUNTIME_LOCK_FILE = "program-setup.lock";
-const RUNTIME_RECOVERY_LOCK_FILE = "program-setup-recovery.lock";
+const RUNTIME_LOCK_DATABASE = "program-setup-lock.sqlite";
 
 export type RequiredPrerequisiteId = (typeof REQUIRED_PREREQUISITES)[number];
 export type Initial12RMExerciseId = (typeof INITIAL_12RM_EXERCISES)[number];
@@ -359,11 +358,13 @@ export function createProgramJourney(options: {
         if (existingObservationId !== undefined) {
           const existing = (await readInitial12RMObservations(personalDataDirectory))
             .observations.find(({ id }) => id === existingObservationId);
-          if (existing?.provenance.confirmationId === input.confirmationId) {
-            assertSameInitial12RM(existing, input);
-            return existing;
+          if (existing !== undefined) {
+            if (existing.provenance.confirmationId === input.confirmationId) {
+              assertSameInitial12RM(existing, input);
+              return existing;
+            }
+            throw new Error(`Course-start 12RM is already recorded for ${input.exerciseId}`);
           }
-          throw new Error(`Course-start 12RM is already recorded for ${input.exerciseId}`);
         }
         const observation = await persistInitial12RM(personalDataDirectory, input);
         await writeUpdatedSetup(personalDataDirectory, (setup) => ({
@@ -537,97 +538,39 @@ async function writeUpdatedSetup(
 
 async function withSetupLock<T>(runtimeDirectory: string, run: () => Promise<T>): Promise<T> {
   await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
-  const lockPath = join(runtimeDirectory, RUNTIME_LOCK_FILE);
-  const recoveryLockPath = join(runtimeDirectory, RUNTIME_RECOVERY_LOCK_FILE);
-  const candidatePath = join(runtimeDirectory, `program-setup.${process.pid}.${randomUUID()}.lock`);
-  await writeFile(candidatePath, `${JSON.stringify({
-    pid: process.pid,
-    createdAt: new Date().toISOString(),
-  })}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
-  try {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (await lockExists(recoveryLockPath)) {
-        await recoverDeadRecoveryLock(recoveryLockPath);
-        await new Promise<void>((resolve) => setTimeout(resolve, 10));
-        continue;
-      }
-      try {
-        await link(candidatePath, lockPath);
-        try {
-          return await run();
-        } finally {
-          await unlink(lockPath).catch(() => undefined);
-        }
-      } catch (error) {
-        if (!isAlreadyExists(error)) throw error;
-        await recoverDeadSetupLock({
-          candidatePath,
-          lockPath,
-          recoveryLockPath,
-        });
-        await new Promise<void>((resolve) => setTimeout(resolve, 10));
-      }
-    }
-    throw new Error("Program Setup is busy");
-  } finally {
-    await unlink(candidatePath).catch(() => undefined);
-  }
-}
-
-async function recoverDeadSetupLock(options: {
-  readonly candidatePath: string;
-  readonly lockPath: string;
-  readonly recoveryLockPath: string;
-}): Promise<void> {
-  try {
-    await link(options.candidatePath, options.recoveryLockPath);
-  } catch (error) {
-    if (!isAlreadyExists(error)) throw error;
-    return;
-  }
-  try {
-    if (await isDeadLockOwner(options.lockPath)) {
-      await unlink(options.lockPath).catch((error: unknown) => {
-        if (!isMissing(error)) throw error;
-      });
-    }
-  } finally {
-    await unlink(options.recoveryLockPath).catch(() => undefined);
-  }
-}
-
-async function recoverDeadRecoveryLock(recoveryLockPath: string): Promise<void> {
-  if (await isDeadLockOwner(recoveryLockPath)) {
-    await unlink(recoveryLockPath).catch((error: unknown) => {
-      if (!isMissing(error)) throw error;
-    });
-  }
-}
-
-async function isDeadLockOwner(lockPath: string): Promise<boolean> {
-  try {
-    const value: unknown = JSON.parse(await readFile(lockPath, "utf8"));
-    if (!isRecord(value) || !Number.isInteger(value.pid)) return true;
+  const databasePath = join(runtimeDirectory, RUNTIME_LOCK_DATABASE);
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const database = new DatabaseSync(databasePath);
+    let transactionOpen = false;
     try {
-      process.kill(value.pid as number, 0);
-      return false;
+      database.exec("BEGIN IMMEDIATE");
+      transactionOpen = true;
+      const result = await run();
+      database.exec("COMMIT");
+      transactionOpen = false;
+      return result;
     } catch (error) {
-      return error instanceof Error && "code" in error && error.code === "ESRCH";
+      if (transactionOpen) {
+        try {
+          database.exec("ROLLBACK");
+        } catch {
+          // Closing the connection below also releases an interrupted transaction.
+        }
+        transactionOpen = false;
+      }
+      if (!isSqliteBusy(error)) throw error;
+    } finally {
+      database.close();
     }
-  } catch (error) {
-    if (isMissing(error)) return false;
-    return true;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
+  throw new Error("Program Setup is busy");
 }
 
-async function lockExists(path: string): Promise<boolean> {
-  return await readFile(path).then(
-    () => true,
-    (error: unknown) => {
-      if (isMissing(error)) return false;
-      throw error;
-    },
-  );
+function isSqliteBusy(error: unknown): boolean {
+  return error instanceof Error &&
+    (("errcode" in error && error.errcode === 5) ||
+      /SQLITE_BUSY|database is locked/iu.test(error.message));
 }
 
 async function persistInitial12RM(

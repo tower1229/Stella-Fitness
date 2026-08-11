@@ -408,7 +408,7 @@ export function registerStellaFitnessPlugin(
           : { source: sourceIdentity };
       const correctionId = bodyWeightCorrectionId(event.cleanedBody);
       if (correctionId === undefined) {
-        const result = await recordJourneyAwareBodyWeight(stellaRuntime, {
+        const result = await stellaRuntime.recordBodyWeight({
           text: event.cleanedBody,
           receivedAt,
           ...source,
@@ -418,7 +418,7 @@ export function registerStellaFitnessPlugin(
           reply: {
             text: result.status === "clarification"
               ? result.question
-              : formatJourneyBodyWeight(result),
+              : formatBodyWeightRecording(result),
           },
         };
       }

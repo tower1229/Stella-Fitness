@@ -217,6 +217,20 @@ describe("Program Journey", () => {
     await expect(
       harness.recordInitial12RM({ ...input, valueKg: 34 }),
     ).rejects.toThrow("confirmation ID was reused for different facts");
+    unlinkSync(join(
+      root,
+      "personal",
+      "observations",
+      "special-session",
+      `${first.id}.json`,
+    ));
+    const replacement = await harness.recordInitial12RM({
+      ...input,
+      confirmationId: "00000000-0000-4000-8000-000000000018",
+      source: { ...input.source, text: "高脚杯深蹲 12RM 33 kg after deletion" },
+      valueKg: 33,
+    });
+    expect(replacement.id).not.toBe(first.id);
 
     const concurrentInput = {
       ...input,
@@ -267,7 +281,7 @@ describe("Program Journey", () => {
     ).toHaveLength(3);
   });
 
-  it("fails closed before writes, enforces step order, accepts limited readiness and recovers a stale runtime lock", async () => {
+  it("fails closed before writes, enforces step order and accepts limited readiness with a Runtime lock", async () => {
     const root = mkdtempSync(join(tmpdir(), "stella-journey-boundaries-"));
     temporaryRoots.push(root);
     const personal = join(root, "personal");
@@ -309,29 +323,13 @@ describe("Program Journey", () => {
       recordedAt: "2026-08-11T04:01:00.000Z",
       source: { kind: "user-text", text: "too early" },
     })).rejects.toThrow("unavailable in PREREQUISITES_REQUIRED");
-    mkdirSync(runtime, { recursive: true });
-    writeFileSync(join(runtime, "program-setup.lock"), JSON.stringify({
-      pid: 999_999_999,
-      createdAt: new Date().toISOString(),
-    }));
     await expect(limited.acknowledgePrerequisite({
       prerequisiteId: "adjustable-dumbbells",
       acknowledgedAt: "2026-08-11T00:00:00.000Z",
       source: { kind: "user-text", text: "ready" },
     })).resolves.toMatchObject({ state: "PREREQUISITES_REQUIRED" });
-    expect(existsSync(join(runtime, "program-setup.lock"))).toBe(false);
-
-    writeFileSync(join(runtime, "program-setup.lock"), JSON.stringify({
-      pid: process.pid,
-      createdAt: "2000-01-01T00:00:00.000Z",
-    }));
-    await expect(limited.acknowledgePrerequisite({
-      prerequisiteId: "pull-up-bar",
-      acknowledgedAt: "2026-08-11T01:00:00.000Z",
-      source: { kind: "user-text", text: "ready" },
-    })).rejects.toThrow("Program Setup is busy");
-    expect(existsSync(join(runtime, "program-setup.lock"))).toBe(true);
-    unlinkSync(join(runtime, "program-setup.lock"));
+    expect(existsSync(join(runtime, "program-setup-lock.sqlite"))).toBe(true);
+    expect(existsSync(join(root, "personal", "program", "setup.lock"))).toBe(false);
   });
 
   it("serializes the baseline gate so concurrent different facts cannot both commit", async () => {
@@ -427,6 +425,14 @@ describe("Program Journey", () => {
           message: "Course-start 12RM Observation is schema-invalid",
         }),
       ],
+    });
+    await expect(swappedHarness.recordInitial12RM(initial12RMInput(
+      "dumbbell-bench-press",
+      25,
+      "00000000-0000-4000-8000-000000000019",
+    ))).resolves.toMatchObject({
+      exerciseId: "dumbbell-bench-press",
+      result: { value: 25 },
     });
   });
 });

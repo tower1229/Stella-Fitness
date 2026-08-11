@@ -253,6 +253,9 @@ describe("Plugin registration", () => {
         ),
       ),
     ).toHaveLength(1);
+    expect(
+      readdirSync(personalDataDirectory.personalDataDirectory),
+    ).not.toContain("program");
     await expect(
       hooks.get("before_agent_run")?.({ prompt: "今天体重 68.4 kg" }),
     ).resolves.toEqual({
