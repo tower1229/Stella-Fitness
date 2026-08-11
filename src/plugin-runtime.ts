@@ -161,6 +161,14 @@ type CandidateSessionContext = {
   readonly plannedSession?: ResolvedWorkoutSession;
 };
 
+type UpdateSpecialSessionState = (
+  personalDataDirectory: string,
+  observation: Extract<
+    WorkoutLogObservation,
+    { kind: "workout-special-session" }
+  >,
+) => Promise<ProgramState>;
+
 export function createStellaFitnessRuntime(options: {
   extractionRuntime: ExtractionRuntime;
   personalDataDirectory?: () => string | undefined;
@@ -174,13 +182,10 @@ export function createStellaFitnessRuntime(options: {
   const mediaSanitizer = options.mediaSanitizer ?? createBufferMediaSanitizer();
   let stopped = false;
   let programStateUpdateTail: Promise<void> = Promise.resolve();
-  const updateSpecialSessionState = (
-    personalDataDirectory: string,
-    observation: Extract<
-      WorkoutLogObservation,
-      { kind: "workout-special-session" }
-    >,
-  ): Promise<ProgramState> => {
+  const updateSpecialSessionState: UpdateSpecialSessionState = (
+    personalDataDirectory,
+    observation,
+  ) => {
     const update = programStateUpdateTail.then(async () =>
       await persistSpecialSessionState({
         personalDataDirectory,
@@ -468,13 +473,7 @@ async function executeWorkoutLogIngest(options: {
   request: WorkoutLogIngestRequest;
   controller: AbortController;
   confirmations: Map<string, PendingWorkoutLogConfirmation>;
-  updateSpecialSessionState: (
-    personalDataDirectory: string,
-    observation: Extract<
-      WorkoutLogObservation,
-      { kind: "workout-special-session" }
-    >,
-  ) => Promise<ProgramState>;
+  updateSpecialSessionState: UpdateSpecialSessionState;
 }): Promise<PluginExtractionOutput> {
   const startedAt = new Date().toISOString();
   const artifact = await persistRawWorkoutLogArtifact({
@@ -637,13 +636,7 @@ async function recordConfirmedWorkoutLog(options: {
   readonly personalDataDirectory: string;
   readonly pending: PendingWorkoutLogConfirmation;
   readonly values: Readonly<Record<string, unknown>>;
-  readonly updateSpecialSessionState: (
-    personalDataDirectory: string,
-    observation: Extract<
-      WorkoutLogObservation,
-      { kind: "workout-special-session" }
-    >,
-  ) => Promise<ProgramState>;
+  readonly updateSpecialSessionState: UpdateSpecialSessionState;
 }): Promise<ConfirmedWorkoutLogOutput> {
   const requiredPaths = options.pending.candidate.uncertainFields.map(
     ({ path }) => path,
@@ -718,13 +711,7 @@ async function commitSpecialSessionState(options: {
   readonly personalDataDirectory: string;
   readonly persisted: Awaited<ReturnType<typeof persistWorkoutLogObservation>>;
   readonly plannedSession: ResolvedWorkoutSession | undefined;
-  readonly updateSpecialSessionState: (
-    personalDataDirectory: string,
-    observation: Extract<
-      WorkoutLogObservation,
-      { kind: "workout-special-session" }
-    >,
-  ) => Promise<ProgramState>;
+  readonly updateSpecialSessionState: UpdateSpecialSessionState;
 }): Promise<ProgramState | undefined> {
   if (
     options.persisted.observation.kind !== "workout-special-session" ||
