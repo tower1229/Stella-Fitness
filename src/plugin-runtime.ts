@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import type {
   RawArtifactRecord,
@@ -9,6 +11,8 @@ import type {
   BodyWeightObservation,
   BodyWeightView,
   ObservationSource,
+  TrainingRecordView,
+  WorkoutProgramContext,
   WorkoutLogObservation,
 } from "./domain/observation.js";
 import type {
@@ -66,7 +70,15 @@ import {
   persistWorkoutLogProcessingRecord,
 } from "./storage/media.js";
 import {
+  activeWorkoutLogById,
+  activeWorkoutLogCorrectionByRunId,
+  activeTrainingRecordWithArtifactSha,
+  activeWorkoutLogWithLogicalIdentity,
+  rebuildTrainingRecordView,
+} from "./storage/training-record.js";
+import {
   persistWorkoutLogObservation,
+  relinkWorkoutLogArtifact,
   rollbackWorkoutLogObservation,
 } from "./storage/workout-log.js";
 
@@ -103,6 +115,9 @@ export type StellaFitnessRuntime = {
   ingestWorkoutLog(
     request: WorkoutLogIngestRequest,
   ): Promise<PluginExtractionOutput>;
+  correctWorkoutLog(
+    request: WorkoutLogIngestRequest & { readonly replacesObservationId: string },
+  ): Promise<PluginExtractionOutput>;
   confirmWorkoutLog(input: {
     readonly confirmationId: string;
     readonly values: Readonly<Record<string, unknown>>;
@@ -134,6 +149,7 @@ export type StellaFitnessRuntime = {
       }
   >;
   bodyWeightTimeline(): Promise<BodyWeightView>;
+  trainingRecordView(): Promise<TrainingRecordView>;
 };
 
 const MAX_CACHED_RUNS = 256;
@@ -150,6 +166,7 @@ type PendingWorkoutLogConfirmation = {
   readonly artifact: RawArtifactRecord;
   readonly runId: string;
   readonly execution: ExtractionExecutionMetadata;
+  readonly replacesObservationId?: string;
   result?: {
     readonly fingerprint: string;
     readonly promise: Promise<ConfirmedWorkoutLogOutput>;
@@ -159,6 +176,7 @@ type PendingWorkoutLogConfirmation = {
 type CandidateSessionContext = {
   readonly candidate: WorkoutLogCandidate;
   readonly plannedSession?: ResolvedWorkoutSession;
+  readonly programContext?: WorkoutProgramContext;
 };
 
 type UpdateSpecialSessionState = (
@@ -197,6 +215,69 @@ export function createStellaFitnessRuntime(options: {
       () => undefined,
     );
     return update;
+  };
+  const startWorkoutLogIngest = (
+    request: WorkoutLogIngestRequest,
+    replacesObservationId?: string,
+  ): Promise<PluginExtractionOutput> => {
+    const readiness = preflight();
+    if (readiness.readiness !== "READY") {
+      return Promise.reject(
+        new Error(
+          `Stella Fitness cannot accept workout media in ${readiness.readiness}: ${readiness.reasons
+            .map(({ code }) => code)
+            .join(", ")}`,
+        ),
+      );
+    }
+    if (request.runId.trim().length === 0) {
+      return Promise.reject(new Error("Extraction run ID must not be blank"));
+    }
+    if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0) {
+      return Promise.reject(
+        new Error("Extraction timeout must be a positive integer"),
+      );
+    }
+    if (stopped) {
+      return Promise.reject(new Error("Stella Fitness runtime is shut down"));
+    }
+    requiredRuntimeDirectory(options);
+
+    const fingerprint = fingerprintRequest(request, replacesObservationId);
+    const existing = runs.get(request.runId);
+    if (existing !== undefined) {
+      if (existing.fingerprint !== fingerprint) {
+        return Promise.reject(
+          new Error("Extraction run ID was reused for different media"),
+        );
+      }
+      return rejectOnAbort(existing.promise, request.signal);
+    }
+
+    const controller = new AbortController();
+    const entry: RunEntry = {
+      fingerprint,
+      promise: executeWorkoutLogIngest({
+        extractionRuntime: options.extractionRuntime,
+        mediaSanitizer,
+        personalDataDirectory: requiredPersonalDataDirectory(options),
+        request,
+        controller,
+        confirmations,
+        updateSpecialSessionState,
+        ...(replacesObservationId === undefined
+          ? {}
+          : { replacesObservationId }),
+      }),
+      settled: false,
+      controller,
+    };
+    runs.set(request.runId, entry);
+    void entry.promise.then(
+      () => markSettledAndTrim(runs, entry),
+      () => markSettledAndTrim(runs, entry),
+    );
+    return entry.promise;
   };
 
   return {
@@ -285,62 +366,18 @@ export function createStellaFitnessRuntime(options: {
       assertPersonalDataPreflight(preflight());
       return await rebuildBodyWeightView(requiredPersonalDataDirectory(options));
     },
-    ingestWorkoutLog(request) {
-      const readiness = preflight();
-      if (readiness.readiness !== "READY") {
-        return Promise.reject(
-          new Error(
-            `Stella Fitness cannot accept workout media in ${readiness.readiness}: ${readiness.reasons
-              .map(({ code }) => code)
-              .join(", ")}`,
-          ),
-        );
-      }
-      if (request.runId.trim().length === 0) {
-        return Promise.reject(new Error("Extraction run ID must not be blank"));
-      }
-      if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0) {
-        return Promise.reject(
-          new Error("Extraction timeout must be a positive integer"),
-        );
-      }
-      if (stopped) {
-        return Promise.reject(new Error("Stella Fitness runtime is shut down"));
-      }
-      requiredRuntimeDirectory(options);
-
-      const fingerprint = fingerprintRequest(request);
-      const existing = runs.get(request.runId);
-      if (existing !== undefined) {
-        if (existing.fingerprint !== fingerprint) {
-          return Promise.reject(
-            new Error("Extraction run ID was reused for different media"),
-          );
-        }
-        return rejectOnAbort(existing.promise, request.signal);
-      }
-
-      const controller = new AbortController();
-      const entry: RunEntry = {
-        fingerprint,
-        promise: executeWorkoutLogIngest({
-          extractionRuntime: options.extractionRuntime,
-          mediaSanitizer,
-          personalDataDirectory: requiredPersonalDataDirectory(options),
-          request,
-          controller,
-          confirmations,
-          updateSpecialSessionState,
-        }),
-        settled: false,
-        controller,
-      };
-      runs.set(request.runId, entry);
-      void entry.promise.then(
-        () => markSettledAndTrim(runs, entry),
-        () => markSettledAndTrim(runs, entry),
+    async trainingRecordView() {
+      assertPersonalDataPreflight(preflight());
+      return await rebuildTrainingRecordView(
+        requiredPersonalDataDirectory(options),
       );
-      return entry.promise;
+    },
+    ingestWorkoutLog(request) {
+      return startWorkoutLogIngest(request);
+    },
+    correctWorkoutLog(request) {
+      const { replacesObservationId, ...ingestRequest } = request;
+      return startWorkoutLogIngest(ingestRequest, replacesObservationId);
     },
     confirmWorkoutLog(input) {
       assertPersonalDataPreflight(preflight());
@@ -440,7 +477,10 @@ function assertSetupPreflight(preflight: ConfigurationPreflightResult): void {
   }
 }
 
-function fingerprintRequest(request: WorkoutLogIngestRequest): string {
+function fingerprintRequest(
+  request: WorkoutLogIngestRequest,
+  replacesObservationId?: string,
+): string {
   return createHash("sha256")
     .update(request.upload.mime)
     .update("\0")
@@ -449,6 +489,8 @@ function fingerprintRequest(request: WorkoutLogIngestRequest): string {
     .update(request.upload.receivedAt)
     .update("\0")
     .update(request.upload.bytes)
+    .update("\0")
+    .update(replacesObservationId ?? "")
     .digest("hex");
 }
 
@@ -474,8 +516,69 @@ async function executeWorkoutLogIngest(options: {
   controller: AbortController;
   confirmations: Map<string, PendingWorkoutLogConfirmation>;
   updateSpecialSessionState: UpdateSpecialSessionState;
+  replacesObservationId?: string;
 }): Promise<PluginExtractionOutput> {
   const startedAt = new Date().toISOString();
+  const uploadSha256 = createHash("sha256")
+    .update(options.request.upload.bytes)
+    .digest("hex");
+  const correctionRetry = options.replacesObservationId === undefined
+    ? undefined
+    : await activeWorkoutLogCorrectionByRunId(
+        options.personalDataDirectory,
+        options.request.runId,
+      );
+  if (correctionRetry !== undefined) {
+    if (
+      correctionRetry.provenance.kind !== "workout-log-correction" ||
+      correctionRetry.provenance.replacesObservationId !==
+        options.replacesObservationId ||
+      correctionRetry.source.sha256 !== uploadSha256
+    ) {
+      throw new Error("Workout-log correction run ID was reused for different facts");
+    }
+    const activeCorrectionRecord = (
+      await rebuildTrainingRecordView(options.personalDataDirectory)
+    ).records.find(
+      ({ observation }) => observation.id === correctionRetry.id,
+    );
+    const restored = await restoreMissingWorkoutLogSource({
+      personalDataDirectory: options.personalDataDirectory,
+      request: options.request,
+      observation: correctionRetry,
+      sourceStatus: activeCorrectionRecord?.sourceStatus ?? "source_missing",
+    });
+    return duplicateWorkoutLogOutput({
+      personalDataDirectory: options.personalDataDirectory,
+      request: options.request,
+      observation: restored.observation,
+      startedAt,
+      artifact: restored.artifact,
+      execution: { provider: "deduplicated" },
+    });
+  }
+  const duplicate = options.replacesObservationId === undefined
+    ? await activeTrainingRecordWithArtifactSha(
+        options.personalDataDirectory,
+        uploadSha256,
+      )
+    : undefined;
+  if (duplicate !== undefined) {
+    const restored = await restoreMissingWorkoutLogSource({
+      personalDataDirectory: options.personalDataDirectory,
+      request: options.request,
+      observation: duplicate.observation,
+      sourceStatus: duplicate.sourceStatus,
+    });
+    return duplicateWorkoutLogOutput({
+      personalDataDirectory: options.personalDataDirectory,
+      request: options.request,
+      observation: restored.observation,
+      startedAt,
+      artifact: restored.artifact,
+      execution: { provider: "deduplicated" },
+    });
+  }
   const artifact = await persistRawWorkoutLogArtifact({
     personalDataDirectory: options.personalDataDirectory,
     upload: options.request.upload,
@@ -525,6 +628,37 @@ async function executeWorkoutLogIngest(options: {
     });
     candidate = context.candidate;
     const { plannedSession } = context;
+    const replaced = options.replacesObservationId === undefined
+      ? undefined
+      : await activeWorkoutLogById(
+          options.personalDataDirectory,
+          options.replacesObservationId,
+        );
+    if (
+      options.replacesObservationId !== undefined &&
+      replaced === undefined
+    ) {
+      throw new Error(
+        `Workout-log Observation ${options.replacesObservationId} is not an active fact`,
+      );
+    }
+    const logicalDuplicate = options.replacesObservationId === undefined
+      ? await activeWorkoutLogWithLogicalIdentity(
+          options.personalDataDirectory,
+          candidate,
+          context.programContext,
+        )
+      : undefined;
+    if (logicalDuplicate !== undefined) {
+      return await duplicateWorkoutLogOutput({
+        personalDataDirectory: options.personalDataDirectory,
+        request: options.request,
+        observation: logicalDuplicate,
+        startedAt,
+        artifact,
+        execution: result.metadata,
+      });
+    }
     const recordedAt = new Date().toISOString();
     const confirmationId =
       candidate.uncertainFields.length === 0 ? undefined : randomUUID();
@@ -537,6 +671,18 @@ async function executeWorkoutLogIngest(options: {
             runId: options.request.runId,
             recordedAt,
             ...(plannedSession === undefined ? {} : { plannedSession }),
+            ...(options.replacesObservationId === undefined
+              ? {}
+              : { replacesObservationId: options.replacesObservationId }),
+            ...(replaced === undefined
+              ? {}
+              : { occurredAt: replaced.occurredAt }),
+            ...((replaced?.programContext ?? context.programContext) === undefined
+              ? {}
+              : {
+                  programContext:
+                    replaced?.programContext ?? context.programContext!,
+                }),
           })
         : undefined;
     const programState = persistedObservation === undefined
@@ -596,6 +742,9 @@ async function executeWorkoutLogIngest(options: {
       artifact,
       runId: options.request.runId,
       execution: result.metadata,
+      ...(options.replacesObservationId === undefined
+        ? {}
+        : { replacesObservationId: options.replacesObservationId }),
     });
     return {
       status: "confirmation",
@@ -632,12 +781,113 @@ async function executeWorkoutLogIngest(options: {
   }
 }
 
+async function duplicateWorkoutLogOutput(options: {
+  readonly personalDataDirectory: string;
+  readonly request: WorkoutLogIngestRequest;
+  readonly observation: WorkoutLogObservation;
+  readonly startedAt: string;
+  readonly artifact: RawArtifactRecord;
+  readonly execution: ExtractionExecutionMetadata;
+}): Promise<PluginExtractionOutput> {
+  const processing = await persistWorkoutLogProcessingRecord({
+    personalDataDirectory: options.personalDataDirectory,
+    record: {
+      schemaVersion: "stella-fitness/processing/workout-log/v0.1",
+      operation: "workout-log-extraction",
+      runId: options.request.runId,
+      startedAt: options.startedAt,
+      completedAt: new Date().toISOString(),
+      status: "succeeded",
+      artifact: artifactReference(options.artifact),
+      execution: options.execution,
+      result: {
+        kind: "workout-log-observation",
+        observationId: options.observation.id,
+        path: joinObservationPath(options.observation.id),
+      },
+    },
+  });
+  return {
+    status: "recorded",
+    observation: options.observation,
+    execution: options.execution,
+    artifact: options.artifact,
+    processing,
+  };
+}
+
+async function readArtifactForObservation(
+  personalDataDirectory: string,
+  observation: WorkoutLogObservation,
+): Promise<RawArtifactRecord> {
+  const artifactRecordPath = join(
+    personalDataDirectory,
+    dirname(observation.source.path),
+    "artifact.json",
+  );
+  return JSON.parse(
+    await readFile(artifactRecordPath, "utf8"),
+  ) as RawArtifactRecord;
+}
+
+async function restoreMissingWorkoutLogSource(options: {
+  readonly personalDataDirectory: string;
+  readonly request: WorkoutLogIngestRequest;
+  readonly observation: WorkoutLogObservation;
+  readonly sourceStatus: "available" | "source_missing";
+}): Promise<{
+  readonly observation: WorkoutLogObservation;
+  readonly artifact: RawArtifactRecord;
+}> {
+  if (options.sourceStatus === "available") {
+    return {
+      observation: options.observation,
+      artifact: await readArtifactForObservation(
+        options.personalDataDirectory,
+        options.observation,
+      ),
+    };
+  }
+  const artifact = await persistRawWorkoutLogArtifact({
+    personalDataDirectory: options.personalDataDirectory,
+    upload: options.request.upload,
+  });
+  return {
+    observation: await relinkWorkoutLogArtifact({
+      personalDataDirectory: options.personalDataDirectory,
+      observation: options.observation,
+      artifact,
+      runId: options.request.runId,
+      replacedAt: new Date().toISOString(),
+    }),
+    artifact,
+  };
+}
+
+function joinObservationPath(observationId: string): string {
+  return join("observations", "workout-log", `${observationId}.json`);
+}
+
 async function recordConfirmedWorkoutLog(options: {
   readonly personalDataDirectory: string;
   readonly pending: PendingWorkoutLogConfirmation;
   readonly values: Readonly<Record<string, unknown>>;
   readonly updateSpecialSessionState: UpdateSpecialSessionState;
 }): Promise<ConfirmedWorkoutLogOutput> {
+  const replaced = options.pending.replacesObservationId === undefined
+    ? undefined
+    : await activeWorkoutLogById(
+        options.personalDataDirectory,
+        options.pending.replacesObservationId,
+      );
+  if (
+    options.pending.replacesObservationId !== undefined &&
+    replaced === undefined
+  ) {
+    throw new Error(
+      `Workout-log Observation ${options.pending.replacesObservationId} is not an active fact`,
+    );
+  }
   const requiredPaths = options.pending.candidate.uncertainFields.map(
     ({ path }) => path,
   );
@@ -672,6 +922,15 @@ async function recordConfirmedWorkoutLog(options: {
       (field) => ({ ...field, resolution: "user-confirmed" as const }),
     ),
     ...(plannedSession === undefined ? {} : { plannedSession }),
+    ...(options.pending.replacesObservationId === undefined
+      ? {}
+      : { replacesObservationId: options.pending.replacesObservationId }),
+    ...(replaced === undefined ? {} : { occurredAt: replaced.occurredAt }),
+    ...((replaced?.programContext ?? context.programContext) === undefined
+      ? {}
+      : {
+          programContext: replaced?.programContext ?? context.programContext!,
+        }),
   });
   const programState = await commitSpecialSessionState({
     personalDataDirectory: options.personalDataDirectory,
@@ -792,9 +1051,16 @@ async function resolveCandidateSessionContext(options: {
   if (activeProgram === undefined) {
     return { candidate: options.candidate };
   }
+  const programContext: WorkoutProgramContext = {
+    stateId: activeProgram.state.id,
+    programId: activeProgram.state.program.id,
+    programVersion: activeProgram.state.program.version,
+    cycleStart: activeProgram.state.cycle.startDate,
+  };
   if ("testResults" in options.candidate) {
     return {
       candidate: options.candidate,
+      programContext,
       plannedSession: resolveSpecialSession({
         candidate: options.candidate,
         program: activeProgram.program,
@@ -807,7 +1073,9 @@ async function resolveCandidateSessionContext(options: {
     program: activeProgram.program,
     state: activeProgram.state,
   });
-  return recovery ?? { candidate: options.candidate };
+  return recovery === undefined
+    ? { candidate: options.candidate, programContext }
+    : { ...recovery, programContext };
 }
 
 function setCandidateFieldValue(

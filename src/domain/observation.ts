@@ -119,21 +119,43 @@ export type BodyWeightView = {
   }[];
 };
 
+export type WorkoutProgramContext = {
+  readonly stateId: string;
+  readonly programId: string;
+  readonly programVersion: string;
+  readonly cycleStart: string;
+};
+
+export type WorkoutArtifactSource = {
+  readonly kind: "workout-log-image";
+  readonly artifactId: string;
+  readonly path: string;
+  readonly sha256: string;
+};
+
 type WorkoutObservationEnvelope = {
   readonly id: string;
   readonly occurredAt: string;
-  readonly source: {
-    readonly kind: "workout-log-image";
-    readonly artifactId: string;
-    readonly path: string;
-    readonly sha256: string;
-  };
-  readonly provenance: {
-    readonly kind: "workout-log-recording";
+  readonly source: WorkoutArtifactSource;
+  readonly sourceHistory?: readonly (WorkoutArtifactSource & {
+    readonly replacedAt: string;
     readonly runId: string;
-    readonly recordedAt: string;
-    readonly confirmedFields: readonly string[];
-  };
+  })[];
+  readonly programContext?: WorkoutProgramContext;
+  readonly provenance:
+    | {
+        readonly kind: "workout-log-recording";
+        readonly runId: string;
+        readonly recordedAt: string;
+        readonly confirmedFields: readonly string[];
+      }
+    | {
+        readonly kind: "workout-log-correction";
+        readonly runId: string;
+        readonly recordedAt: string;
+        readonly confirmedFields: readonly string[];
+        readonly replacesObservationId: string;
+      };
   readonly uncertainty: readonly {
     readonly path: string;
     readonly kind:
@@ -172,3 +194,15 @@ export type WorkoutLogObservation =
   | OrdinaryWorkoutLogObservation
   | RecoverySessionObservation
   | SpecialSessionObservation;
+
+export type TrainingRecordView = {
+  readonly schemaVersion: "stella-fitness/view/training-record/v0.1";
+  readonly records: readonly {
+    readonly observation: WorkoutLogObservation;
+    readonly sourceStatus: "available" | "source_missing";
+  }[];
+  readonly errors: readonly {
+    readonly file: string;
+    readonly message: string;
+  }[];
+};

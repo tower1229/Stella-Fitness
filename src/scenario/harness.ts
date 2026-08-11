@@ -57,6 +57,20 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
         signal: input.signal ?? new AbortController().signal,
       });
     },
+    correctWorkoutLog(
+      input: HarnessInput & { readonly replacesObservationId: string },
+    ) {
+      return pluginRuntime.correctWorkoutLog({
+        runId: input.runId,
+        upload: input.upload,
+        timeoutMs: input.timeoutMs,
+        signal: input.signal ?? new AbortController().signal,
+        replacesObservationId: input.replacesObservationId,
+      });
+    },
+    trainingRecordView() {
+      return pluginRuntime.trainingRecordView();
+    },
     confirmWorkoutLog(
       input: Parameters<typeof pluginRuntime.confirmWorkoutLog>[0],
     ) {

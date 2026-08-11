@@ -156,7 +156,7 @@ export function registerStellaFitnessPlugin(
       if (upload === undefined) {
         return;
       }
-      const result = await stellaRuntime.ingestWorkoutLog({
+      const request = {
         runId:
           event.runId ??
           event.messageId ??
@@ -164,7 +164,14 @@ export function registerStellaFitnessPlugin(
         upload,
         timeoutMs: 60_000,
         signal: new AbortController().signal,
-      });
+      };
+      const correctionId = workoutLogCorrectionId(event);
+      const result = correctionId === undefined
+        ? await stellaRuntime.ingestWorkoutLog(request)
+        : await stellaRuntime.correctWorkoutLog({
+            ...request,
+            replacesObservationId: correctionId,
+          });
       return {
         handled: true,
         reply: { text: formatWorkoutLogResult(result) },
@@ -353,13 +360,32 @@ function formatWorkoutLogResult(
 }
 
 function formatWorkoutLogRecording(
-  result: Awaited<ReturnType<StellaFitnessRuntime["confirmWorkoutLog"]>>,
+  result: { readonly observation: Awaited<
+    ReturnType<StellaFitnessRuntime["confirmWorkoutLog"]>
+  >["observation"] },
 ): string {
   const { observation } = result;
+  if (observation.provenance.kind === "workout-log-correction") {
+    return [
+      `Workout corrected: stage ${observation.stage.value}, week ${observation.week.value}, ${observation.weekday.value}, ${observation.sessionType.value}`,
+      `correction: ${observation.id} replaces: ${observation.provenance.replacesObservationId}`,
+    ].join("\n");
+  }
   return [
     `Workout recorded: stage ${observation.stage.value}, week ${observation.week.value}, ${observation.weekday.value}, ${observation.sessionType.value}`,
     `observation: ${observation.id}`,
   ].join("\n");
+}
+
+function workoutLogCorrectionId(
+  event: PluginHookInboundClaimEvent,
+): string | undefined {
+  const text = [event.content, event.body, event.bodyForAgent]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  return /(?:纠正训练(?:日志|记录)|correct\s+workout\s+log)\s+([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/iu.exec(
+    text,
+  )?.[1];
 }
 
 function normalizeStatusInput(input: string): string {

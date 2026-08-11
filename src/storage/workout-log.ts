@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { RawArtifactRecord } from "../domain/media.js";
-import type { WorkoutLogObservation } from "../domain/observation.js";
+import type {
+  WorkoutProgramContext,
+  WorkoutLogObservation,
+} from "../domain/observation.js";
 import type {
   PlannedSession,
   ResolvedWorkoutSession,
@@ -24,6 +27,9 @@ export async function persistWorkoutLogObservation(options: {
   readonly confirmedFields?: readonly string[];
   readonly resolvedUncertainty?: WorkoutLogObservation["uncertainty"];
   readonly plannedSession?: ResolvedWorkoutSession;
+  readonly replacesObservationId?: string;
+  readonly occurredAt?: string;
+  readonly programContext?: WorkoutProgramContext;
 }): Promise<{
   readonly observation: WorkoutLogObservation;
   readonly path: string;
@@ -36,19 +42,30 @@ export async function persistWorkoutLogObservation(options: {
   const { uncertainFields: _uncertainFields, ...facts } = options.candidate;
   const envelope = {
     id,
-    occurredAt: options.artifact.provenance.receivedAt,
+    occurredAt: options.occurredAt ?? options.artifact.provenance.receivedAt,
     source: {
       kind: "workout-log-image" as const,
       artifactId: options.artifact.id,
       path: options.artifact.path,
       sha256: options.artifact.sha256,
     },
-    provenance: {
-      kind: "workout-log-recording" as const,
-      runId: options.runId,
-      recordedAt: options.recordedAt,
-      confirmedFields: options.confirmedFields ?? [],
-    },
+    ...(options.programContext === undefined
+      ? {}
+      : { programContext: options.programContext }),
+    provenance: options.replacesObservationId === undefined
+      ? {
+          kind: "workout-log-recording" as const,
+          runId: options.runId,
+          recordedAt: options.recordedAt,
+          confirmedFields: options.confirmedFields ?? [],
+        }
+      : {
+          kind: "workout-log-correction" as const,
+          runId: options.runId,
+          recordedAt: options.recordedAt,
+          confirmedFields: options.confirmedFields ?? [],
+          replacesObservationId: options.replacesObservationId,
+        },
     uncertainty: options.resolvedUncertainty ?? [],
   };
   const observation: WorkoutLogObservation = "testResults" in facts
@@ -105,6 +122,53 @@ export async function rollbackWorkoutLogObservation(options: {
       }
     },
   );
+}
+
+export async function relinkWorkoutLogArtifact(options: {
+  readonly personalDataDirectory: string;
+  readonly observation: WorkoutLogObservation;
+  readonly artifact: RawArtifactRecord;
+  readonly runId: string;
+  readonly replacedAt: string;
+}): Promise<WorkoutLogObservation> {
+  if (options.observation.source.sha256 !== options.artifact.sha256) {
+    throw new Error("Workout-log artifact relink must preserve the source hash");
+  }
+  const observation: WorkoutLogObservation = {
+    ...options.observation,
+    source: {
+      kind: "workout-log-image",
+      artifactId: options.artifact.id,
+      path: options.artifact.path,
+      sha256: options.artifact.sha256,
+    },
+    sourceHistory: [
+      ...(options.observation.sourceHistory ?? []),
+      {
+        ...options.observation.source,
+        replacedAt: options.replacedAt,
+        runId: options.runId,
+      },
+    ],
+  };
+  const observationPath = join(
+    options.personalDataDirectory,
+    WORKOUT_LOG_OBSERVATION_DIRECTORY,
+    `${observation.id}.json`,
+  );
+  const temporaryPath = `${observationPath}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(
+      temporaryPath,
+      `${JSON.stringify(observation, null, 2)}\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
+    );
+    await rename(temporaryPath, observationPath);
+  } catch (error) {
+    await unlink(temporaryPath).catch(() => undefined);
+    throw error;
+  }
+  return observation;
 }
 
 function missingPlannedSpecialSession(): never {

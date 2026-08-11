@@ -495,6 +495,79 @@ describe("Plugin registration", () => {
     });
   });
 
+  it("routes an explicitly identified workout correction through image ingress", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const personalDataDirectory = configuredPersonalDirectory();
+    const mediaPath = join(
+      personalDataDirectory.personalDataDirectory,
+      "workout-correction.png",
+    );
+    writeFileSync(mediaPath, rawMediaUploadFixture().bytes);
+    const correctedCandidate = workoutLogCandidate();
+    correctedCandidate.exercises[0]!.sets[0]!.value = 12;
+    const extractStructuredWithModel = vi.fn()
+      .mockResolvedValueOnce({
+        parsed: workoutLogCandidate(),
+        provider: "operator-provider",
+        model: "operator-model",
+      })
+      .mockResolvedValueOnce({
+        parsed: correctedCandidate,
+        provider: "operator-provider",
+        model: "operator-model",
+      });
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: {
+        ...personalDataDirectory,
+        extraction: { provider: "operator-provider", model: "operator-model" },
+      },
+      openclawConfig: permittedOpenClawConfig({ allowModel: true }),
+      extractStructuredWithModel,
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const inbound = hooks.get("inbound_claim")!;
+    const original = await inbound(
+      {
+        content: "训练日志",
+        channel: "test-channel",
+        runId: "workout-correction-original",
+        metadata: { mediaPath, mediaType: "image/png" },
+      },
+      {},
+    ) as { reply: { text: string } };
+    const originalId = /observation: ([0-9a-f-]{36})/u.exec(
+      original.reply.text,
+    )?.[1];
+
+    const correction = await inbound(
+      {
+        content: `纠正训练记录 ${originalId}`,
+        channel: "test-channel",
+        runId: "workout-correction-reupload",
+        metadata: { mediaPath, mediaType: "image/png" },
+      },
+      {},
+    );
+
+    expect(correction).toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          new RegExp(
+            `^Workout corrected: stage 1, week 1, monday, full-body\\ncorrection: [0-9a-f-]{36} replaces: ${originalId}$`,
+            "u",
+          ),
+        ),
+      },
+    });
+    expect(extractStructuredWithModel).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects extraction before calling OpenClaw when model config is absent", async () => {
     const extractStructuredWithModel = vi.fn();
     const api = compatibleApi({

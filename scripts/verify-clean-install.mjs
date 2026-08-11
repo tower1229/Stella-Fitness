@@ -68,8 +68,8 @@ try {
   if (inspection.plugin.status !== "loaded") {
     throw new Error(`Plugin did not load: ${inspection.plugin.status}`);
   }
-  if (inspection.plugin.hookCount !== 2) {
-    throw new Error(`Expected 2 conversation hooks, got ${inspection.plugin.hookCount}`);
+  if (inspection.plugin.hookCount !== 3) {
+    throw new Error(`Expected 3 Plugin hooks, got ${inspection.plugin.hookCount}`);
   }
   if (!inspection.plugin.commands.includes("stella-status")) {
     throw new Error("Plugin command stella-status was not registered");
@@ -87,7 +87,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ installed: true, loaded: true, hooks: 2, diagnostics: 0, status })}\n`,
+    `${JSON.stringify({ installed: true, loaded: true, hooks: 3, diagnostics: 0, status })}\n`,
   );
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
