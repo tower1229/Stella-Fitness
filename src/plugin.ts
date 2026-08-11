@@ -5,6 +5,8 @@ import { basename, join } from "node:path";
 import {
   definePluginEntry,
   type OpenClawConfig,
+  type PluginCommandContext,
+  type PluginCommandResult,
   type PluginHookInboundClaimEvent,
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
@@ -114,6 +116,8 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
+      const bindingReply = await requireProgramJourneyBinding(context);
+      if (bindingReply !== undefined) return bindingReply;
       const prerequisiteId = context.args?.trim();
       if (prerequisiteId === undefined || prerequisiteId.length === 0) {
         return {
@@ -140,6 +144,8 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
+      const bindingReply = await requireProgramJourneyBinding(context);
+      if (bindingReply !== undefined) return bindingReply;
       const text = context.args?.trim();
       if (text === undefined || text.length === 0) {
         return { text: "Usage: /stella-weight <weight with kg or lb>" };
@@ -161,6 +167,8 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
+      const bindingReply = await requireProgramJourneyBinding(context);
+      if (bindingReply !== undefined) return bindingReply;
       const input = parseInitial12RMCommand(context.args);
       if (input === undefined) {
         return {
@@ -197,6 +205,8 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
+      const bindingReply = await requireProgramJourneyBinding(context);
+      if (bindingReply !== undefined) return bindingReply;
       const cycleStart = context.args?.trim() ?? "";
       const state = await stellaRuntime.activateProgram(cycleStart);
       return {
@@ -215,6 +225,8 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
+      const bindingReply = await requireProgramJourneyBinding(context);
+      if (bindingReply !== undefined) return bindingReply;
       const input = parseFactsCommand(context.args);
       if (input === undefined) {
         return { text: "Usage: /stella-facts <today|next> [YYYY-MM-DD]" };
@@ -229,6 +241,8 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
+      const bindingReply = await requireProgramJourneyBinding(context);
+      if (bindingReply !== undefined) return bindingReply;
       const input = parsePrintableCommand(context.args);
       if (input === undefined) {
         return { text: "Usage: /stella-print <today|week|phase> [YYYY-MM-DD]" };
@@ -961,8 +975,24 @@ function formatJourneyStatus(
     ...(status.missingInitial12RMExerciseIds.length === 0
       ? []
       : [`missing-initial-12rm: ${status.missingInitial12RMExerciseIds.join(", ")}`]),
+    ...status.errors.map(({ file, message }) => `error: ${file} - ${message}`),
     `next: ${status.nextStep.code} - ${status.nextStep.prompt}`,
   ].join("\n");
+}
+
+async function requireProgramJourneyBinding(
+  context: PluginCommandContext,
+): Promise<PluginCommandResult | undefined> {
+  const binding = await context.requestConversationBinding({
+    summary: "Stella Fitness workout recording",
+    detachHint: "Detach the Stella Fitness conversation binding to stop recording here.",
+    data: { workflow: "program-journey" },
+  });
+  if (binding.status === "bound") return undefined;
+  if (binding.status === "pending") return binding.reply;
+  return {
+    text: `conversation-binding: unavailable (${binding.message})`,
+  };
 }
 
 function parseInitial12RMCommand(args: string | undefined): {

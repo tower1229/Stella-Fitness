@@ -43,6 +43,7 @@ const INITIAL_12RM_EXERCISES = [
 const SETUP_FILE = join("program", "setup.json");
 const INITIAL_12RM_DIRECTORY = join("observations", "special-session");
 const RUNTIME_LOCK_FILE = "program-setup.lock";
+const RUNTIME_RECOVERY_LOCK_FILE = "program-setup-recovery.lock";
 
 export type RequiredPrerequisiteId = (typeof REQUIRED_PREREQUISITES)[number];
 export type Initial12RMExerciseId = (typeof INITIAL_12RM_EXERCISES)[number];
@@ -94,6 +95,7 @@ export type ProgramJourneyStatus = {
   readonly nextStep: { readonly code: string; readonly prompt: string };
   readonly missingPrerequisiteIds: readonly RequiredPrerequisiteId[];
   readonly missingInitial12RMExerciseIds: readonly Initial12RMExerciseId[];
+  readonly errors: readonly { readonly file: string; readonly message: string }[];
   readonly requiredCheckpointWeek?: 4 | 8 | 12;
 };
 
@@ -144,7 +146,10 @@ export function createProgramJourney(options: {
         ? undefined
         : await resolveBodyWeightReference(personalDataDirectory, setup.baselineObservationId);
       const initial = await readInitial12RMObservations(personalDataDirectory);
-      const initialById = new Map(initial.map((observation) => [observation.id, observation]));
+      const bodyWeightView = await rebuildBodyWeightView(personalDataDirectory);
+      const initialById = new Map(
+        initial.observations.map((observation) => [observation.id, observation]),
+      );
       const missingPrerequisiteIds = REQUIRED_PREREQUISITES.filter(
         (id) => setup.prerequisiteAcknowledgements[id] === undefined,
       );
@@ -157,6 +162,7 @@ export function createProgramJourney(options: {
         program: { id: "zhuoshu-12-week", version: "0.2.0" },
         missingPrerequisiteIds,
         missingInitial12RMExerciseIds,
+        errors: [...bodyWeightView.errors, ...initial.errors],
       };
       if (missingPrerequisiteIds.length > 0) {
         return {
@@ -270,33 +276,6 @@ export function createProgramJourney(options: {
     > {
       assertJourneyPreflight(options.preflight());
       await ensureSetup(personalDataDirectory);
-      const journeyStatus = input.role === "baseline"
-        ? await this.status()
-        : await this.status({
-            date: await checkpointGateDate(
-              personalDataDirectory,
-              input.checkpointWeek,
-            ),
-          });
-      if (
-        input.role === "baseline" &&
-        journeyStatus.state !== "BASELINE_WEIGHT_REQUIRED"
-      ) {
-        throw new Error(`Baseline body weight is unavailable in ${journeyStatus.state}`);
-      }
-      if (
-        input.role === "checkpoint" &&
-        (journeyStatus.state !== "PHASE_CHECKPOINT_REQUIRED" ||
-          journeyStatus.requiredCheckpointWeek !== input.checkpointWeek)
-      ) {
-        throw new Error(`Checkpoint body weight is unavailable in ${journeyStatus.state}`);
-      }
-      if (
-        input.role === "baseline" &&
-        (await readActiveProgramIfPresent({ personalDataDirectory })) !== undefined
-      ) {
-        throw new Error("Baseline body weight cannot change after activation; record a correction or checkpoint");
-      }
       const candidate = parseBodyWeightInput(input);
       if ("status" in candidate) {
         return candidate;
@@ -304,26 +283,49 @@ export function createProgramJourney(options: {
       if (input.role === "checkpoint" && ![4, 8, 12].includes(input.checkpointWeek ?? 0)) {
         throw new Error("Checkpoint week must be 4, 8 or 12");
       }
-      const observation = await persistBodyWeightObservation({
-        personalDataDirectory,
-        amount: candidate.amount,
-        unit: candidate.unit,
-        occurredAt: candidate.occurredAt,
-        source: { kind: "user-text", text: input.text, ...input.source },
-        recordedAt: new Date(input.receivedAt).toISOString(),
-      });
-      await updateSetup(personalDataDirectory, runtimeDirectory, (setup) =>
-        input.role === "baseline"
-          ? { ...setup, baselineObservationId: observation.id }
-          : {
-              ...setup,
-              checkpointObservationIds: {
-                ...setup.checkpointObservationIds,
-                [String(input.checkpointWeek)]: observation.id,
+      return await withSetupLock(runtimeDirectory, async () => {
+        const journeyStatus = input.role === "baseline"
+          ? await this.status()
+          : await this.status({
+              date: await checkpointGateDate(
+                personalDataDirectory,
+                input.checkpointWeek,
+              ),
+            });
+        if (
+          input.role === "baseline" &&
+          journeyStatus.state !== "BASELINE_WEIGHT_REQUIRED"
+        ) {
+          throw new Error(`Baseline body weight is unavailable in ${journeyStatus.state}`);
+        }
+        if (
+          input.role === "checkpoint" &&
+          (journeyStatus.state !== "PHASE_CHECKPOINT_REQUIRED" ||
+            journeyStatus.requiredCheckpointWeek !== input.checkpointWeek)
+        ) {
+          throw new Error(`Checkpoint body weight is unavailable in ${journeyStatus.state}`);
+        }
+        const observation = await persistBodyWeightObservation({
+          personalDataDirectory,
+          amount: candidate.amount,
+          unit: candidate.unit,
+          occurredAt: candidate.occurredAt,
+          source: { kind: "user-text", text: input.text, ...input.source },
+          recordedAt: new Date(input.receivedAt).toISOString(),
+        });
+        await writeUpdatedSetup(personalDataDirectory, (setup) =>
+          input.role === "baseline"
+            ? { ...setup, baselineObservationId: observation.id }
+            : {
+                ...setup,
+                checkpointObservationIds: {
+                  ...setup.checkpointObservationIds,
+                  [String(input.checkpointWeek)]: observation.id,
+                },
               },
-            },
-      );
-      return { status: "recorded", role: input.role, observation };
+        );
+        return { status: "recorded" as const, role: input.role, observation };
+      });
     },
 
     async recordInitial12RM(input: {
@@ -352,6 +354,17 @@ export function createProgramJourney(options: {
         throw new Error(`Course-start 12RM is unavailable in ${journeyStatus.state}`);
       }
       return await withSetupLock(runtimeDirectory, async () => {
+        const setup = await readSetup(personalDataDirectory);
+        const existingObservationId = setup.initial12RMObservationIds[input.exerciseId];
+        if (existingObservationId !== undefined) {
+          const existing = (await readInitial12RMObservations(personalDataDirectory))
+            .observations.find(({ id }) => id === existingObservationId);
+          if (existing?.provenance.confirmationId === input.confirmationId) {
+            assertSameInitial12RM(existing, input);
+            return existing;
+          }
+          throw new Error(`Course-start 12RM is already recorded for ${input.exerciseId}`);
+        }
         const observation = await persistInitial12RM(personalDataDirectory, input);
         await writeUpdatedSetup(personalDataDirectory, (setup) => ({
           ...setup,
@@ -379,7 +392,9 @@ export function createProgramJourney(options: {
       }
       const setup = await readSetup(personalDataDirectory);
       const observations = await readInitial12RMObservations(personalDataDirectory);
-      const byId = new Map(observations.map((observation) => [observation.id, observation]));
+      const byId = new Map(
+        observations.observations.map((observation) => [observation.id, observation]),
+      );
       const bindings: Record<string, Readonly<Record<"A", SymbolicLoadBinding>>> = {};
       for (const exerciseId of INITIAL_12RM_EXERCISES) {
         const observationId = setup.initial12RMObservationIds[exerciseId]!;
@@ -523,6 +538,7 @@ async function writeUpdatedSetup(
 async function withSetupLock<T>(runtimeDirectory: string, run: () => Promise<T>): Promise<T> {
   await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
   const lockPath = join(runtimeDirectory, RUNTIME_LOCK_FILE);
+  const recoveryLockPath = join(runtimeDirectory, RUNTIME_RECOVERY_LOCK_FILE);
   const candidatePath = join(runtimeDirectory, `program-setup.${process.pid}.${randomUUID()}.lock`);
   await writeFile(candidatePath, `${JSON.stringify({
     pid: process.pid,
@@ -530,6 +546,11 @@ async function withSetupLock<T>(runtimeDirectory: string, run: () => Promise<T>)
   })}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
   try {
     for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (await lockExists(recoveryLockPath)) {
+        await recoverDeadRecoveryLock(recoveryLockPath);
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        continue;
+      }
       try {
         await link(candidatePath, lockPath);
         try {
@@ -539,12 +560,11 @@ async function withSetupLock<T>(runtimeDirectory: string, run: () => Promise<T>)
         }
       } catch (error) {
         if (!isAlreadyExists(error)) throw error;
-        if (await isStaleLock(lockPath)) {
-          await unlink(lockPath).catch((unlinkError: unknown) => {
-            if (!isMissing(unlinkError)) throw unlinkError;
-          });
-          continue;
-        }
+        await recoverDeadSetupLock({
+          candidatePath,
+          lockPath,
+          recoveryLockPath,
+        });
         await new Promise<void>((resolve) => setTimeout(resolve, 10));
       }
     }
@@ -554,14 +574,40 @@ async function withSetupLock<T>(runtimeDirectory: string, run: () => Promise<T>)
   }
 }
 
-async function isStaleLock(lockPath: string): Promise<boolean> {
+async function recoverDeadSetupLock(options: {
+  readonly candidatePath: string;
+  readonly lockPath: string;
+  readonly recoveryLockPath: string;
+}): Promise<void> {
+  try {
+    await link(options.candidatePath, options.recoveryLockPath);
+  } catch (error) {
+    if (!isAlreadyExists(error)) throw error;
+    return;
+  }
+  try {
+    if (await isDeadLockOwner(options.lockPath)) {
+      await unlink(options.lockPath).catch((error: unknown) => {
+        if (!isMissing(error)) throw error;
+      });
+    }
+  } finally {
+    await unlink(options.recoveryLockPath).catch(() => undefined);
+  }
+}
+
+async function recoverDeadRecoveryLock(recoveryLockPath: string): Promise<void> {
+  if (await isDeadLockOwner(recoveryLockPath)) {
+    await unlink(recoveryLockPath).catch((error: unknown) => {
+      if (!isMissing(error)) throw error;
+    });
+  }
+}
+
+async function isDeadLockOwner(lockPath: string): Promise<boolean> {
   try {
     const value: unknown = JSON.parse(await readFile(lockPath, "utf8"));
-    if (!isRecord(value) || !Number.isInteger(value.pid) || typeof value.createdAt !== "string") {
-      return true;
-    }
-    const age = Date.now() - new Date(value.createdAt).getTime();
-    if (!Number.isFinite(age) || age > 30_000) return true;
+    if (!isRecord(value) || !Number.isInteger(value.pid)) return true;
     try {
       process.kill(value.pid as number, 0);
       return false;
@@ -572,6 +618,16 @@ async function isStaleLock(lockPath: string): Promise<boolean> {
     if (isMissing(error)) return false;
     return true;
   }
+}
+
+async function lockExists(path: string): Promise<boolean> {
+  return await readFile(path).then(
+    () => true,
+    (error: unknown) => {
+      if (isMissing(error)) return false;
+      throw error;
+    },
+  );
 }
 
 async function persistInitial12RM(
@@ -598,7 +654,7 @@ async function persistInitial12RM(
   assertTimestamp(input.recordedAt, "recordedAt");
   const directory = join(personalDataDirectory, INITIAL_12RM_DIRECTORY);
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const existing = (await readInitial12RMObservations(personalDataDirectory)).find(
+  const existing = (await readInitial12RMObservations(personalDataDirectory)).observations.find(
     ({ provenance }) => provenance.confirmationId === input.confirmationId,
   );
   if (existing !== undefined) {
@@ -631,7 +687,7 @@ async function findInitial12RMByConfirmation(
   personalDataDirectory: string,
   confirmationId: string,
 ): Promise<CourseStart12RMObservation | undefined> {
-  return (await readInitial12RMObservations(personalDataDirectory)).find(
+  return (await readInitial12RMObservations(personalDataDirectory)).observations.find(
     ({ provenance }) => provenance.confirmationId === confirmationId,
   );
 }
@@ -653,22 +709,32 @@ function assertSameInitial12RM(
   }
 }
 
-async function readInitial12RMObservations(personalDataDirectory: string): Promise<readonly CourseStart12RMObservation[]> {
+async function readInitial12RMObservations(personalDataDirectory: string): Promise<{
+  readonly observations: readonly CourseStart12RMObservation[];
+  readonly errors: readonly { readonly file: string; readonly message: string }[];
+}> {
   const directory = join(personalDataDirectory, INITIAL_12RM_DIRECTORY);
   const files = await readdir(directory).catch((error: unknown) => {
     if (isMissing(error)) return [];
     throw error;
   });
   const observations: CourseStart12RMObservation[] = [];
+  const errors: Array<{ file: string; message: string }> = [];
   for (const file of files.filter((name) => name.endsWith(".json")).sort()) {
     try {
       const observation = parseInitial12RM(await readFile(join(directory, file), "utf8"));
-      if (file === `${observation.id}.json`) observations.push(observation);
-    } catch {
-      continue;
+      if (file !== `${observation.id}.json`) {
+        throw new Error("Course-start 12RM Observation filename does not match its ID");
+      }
+      observations.push(observation);
+    } catch (error) {
+      errors.push({
+        file: join(INITIAL_12RM_DIRECTORY, file),
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
-  return observations;
+  return { observations, errors };
 }
 
 function parseInitial12RM(source: string): CourseStart12RMObservation {

@@ -178,6 +178,42 @@ describe("Plugin registration", () => {
     expect(commands.map(({ name }) => name)).not.toContain("stella-setup");
   });
 
+  it("does not let a global Journey command write before conversation binding approval", async () => {
+    const commands: Array<Record<string, unknown>> = [];
+    const personalDataDirectory = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands,
+      hooks: new Map(),
+      cliRegistrations: [],
+      pluginConfig: personalDataDirectory,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const command = commands.find(({ name }) => name === "stella-prerequisite");
+    const requestConversationBinding = vi.fn().mockResolvedValue({
+      status: "pending",
+      reply: { text: "Approve binding", body: "approval-card" },
+    });
+    const handler = command?.handler as (context: {
+      args: string;
+      channel: string;
+      commandBody: string;
+      isAuthorizedSender: boolean;
+      requestConversationBinding: typeof requestConversationBinding;
+    }) => Promise<unknown>;
+
+    await expect(handler({
+      args: "adjustable-dumbbells",
+      channel: "test",
+      commandBody: "/stella-prerequisite adjustable-dumbbells",
+      isAuthorizedSender: true,
+      requestConversationBinding,
+    })).resolves.toEqual({ text: "Approve binding", body: "approval-card" });
+    expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
+  });
+
   it("claims clear body-weight text and returns only the recorded facts", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const personalDataDirectory = configuredPersonalDirectory();

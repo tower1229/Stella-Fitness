@@ -208,6 +208,12 @@ describe("Program Journey", () => {
 
     const first = await harness.recordInitial12RM(input);
     await expect(harness.recordInitial12RM(input)).resolves.toEqual(first);
+    await expect(harness.recordInitial12RM({
+      ...input,
+      confirmationId: "00000000-0000-4000-8000-000000000016",
+      valueKg: 34,
+      source: { ...input.source, text: "高脚杯深蹲 12RM 34 kg" },
+    })).rejects.toThrow("already recorded for goblet-squat");
     await expect(
       harness.recordInitial12RM({ ...input, valueKg: 34 }),
     ).rejects.toThrow("confirmation ID was reused for different facts");
@@ -243,9 +249,16 @@ describe("Program Journey", () => {
         valueKg: 42,
         source: { ...conflictingInput.source, text: "哑铃硬拉 12RM 42 kg" },
       }),
+      harness.recordInitial12RM({
+        ...conflictingInput,
+        confirmationId: "00000000-0000-4000-8000-000000000017",
+        valueKg: 44,
+        source: { ...conflictingInput.source, text: "哑铃硬拉 12RM 44 kg" },
+      }),
     ]);
     expect(conflicting.map(({ status }) => status).sort()).toEqual([
       "fulfilled",
+      "rejected",
       "rejected",
     ]);
     expect(
@@ -307,6 +320,57 @@ describe("Program Journey", () => {
       source: { kind: "user-text", text: "ready" },
     })).resolves.toMatchObject({ state: "PREREQUISITES_REQUIRED" });
     expect(existsSync(join(runtime, "program-setup.lock"))).toBe(false);
+
+    writeFileSync(join(runtime, "program-setup.lock"), JSON.stringify({
+      pid: process.pid,
+      createdAt: "2000-01-01T00:00:00.000Z",
+    }));
+    await expect(limited.acknowledgePrerequisite({
+      prerequisiteId: "pull-up-bar",
+      acknowledgedAt: "2026-08-11T01:00:00.000Z",
+      source: { kind: "user-text", text: "ready" },
+    })).rejects.toThrow("Program Setup is busy");
+    expect(existsSync(join(runtime, "program-setup.lock"))).toBe(true);
+    unlinkSync(join(runtime, "program-setup.lock"));
+  });
+
+  it("serializes the baseline gate so concurrent different facts cannot both commit", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-baseline-race-"));
+    temporaryRoots.push(root);
+    const harness = journeyHarness(root);
+    for (const [index, prerequisiteId] of [
+      "adjustable-dumbbells",
+      "pull-up-bar",
+      "printed-workout-log",
+    ].entries()) {
+      await harness.acknowledgePrerequisite({
+        prerequisiteId,
+        acknowledgedAt: `2026-08-11T0${index}:00:00.000Z`,
+        source: { kind: "user-text", text: prerequisiteId },
+      });
+    }
+    const results = await Promise.allSettled([
+      harness.recordJourneyBodyWeight({
+        role: "baseline",
+        text: "68.4 kg",
+        receivedAt: "2026-08-11T03:00:00.000Z",
+        source: { messageId: "baseline-a" },
+      }),
+      harness.recordJourneyBodyWeight({
+        role: "baseline",
+        text: "68.6 kg",
+        receivedAt: "2026-08-11T03:00:01.000Z",
+        source: { messageId: "baseline-b" },
+      }),
+    ]);
+    expect(results.map(({ status }) => status).sort()).toEqual([
+      "fulfilled",
+      "rejected",
+    ]);
+    expect(
+      readdirSync(join(root, "personal", "observations", "body-weight"))
+        .filter((file) => file.endsWith(".json")),
+    ).toHaveLength(1);
   });
 
   it("rejects schema-invalid nested setup and cross-exercise 12RM references", async () => {
@@ -346,6 +410,23 @@ describe("Program Journey", () => {
         "goblet-squat",
         "dumbbell-bench-press",
       ]),
+    });
+
+    const invalidObservationPath = join(
+      root,
+      "personal",
+      "observations",
+      "special-session",
+      `${first.id}.json`,
+    );
+    writeFileSync(invalidObservationPath, "{}\n");
+    await expect(swappedHarness.programJourneyStatus()).resolves.toMatchObject({
+      errors: [
+        expect.objectContaining({
+          file: expect.stringContaining(`${first.id}.json`),
+          message: "Course-start 12RM Observation is schema-invalid",
+        }),
+      ],
     });
   });
 });
