@@ -412,7 +412,7 @@ describe("Plugin registration", () => {
     ).toHaveLength(1);
   });
 
-  it("exposes only uncertain image fields through the confirmation command", async () => {
+  it("confirms uncertain image fields through a bound conversation", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const commands: Array<Record<string, unknown>> = [];
     const personalDataDirectory = configuredPersonalDirectory();
@@ -479,19 +479,22 @@ describe("Plugin registration", () => {
     const confirmationId = /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(
       pendingText,
     )?.[1];
-    const command = commands.find(({ name }) => name === "stella-confirm");
-    const handler = command?.handler as (context: {
-      args?: string;
-    }) => Promise<{ text: string }>;
-
     await expect(
-      handler({
-        args: `${confirmationId} {"exercises[0].load.value":{"kind":"kg","value":25,"unit":"kg","raw":"25"}}`,
-      }),
-    ).resolves.toMatchObject({
-      text: expect.stringMatching(
-        /^Workout recorded: stage 1, week 1, monday, full-body\nobservation: [0-9a-f-]{36}$/u,
+      hooks.get("inbound_claim")?.(
+        {
+          content: `/stella-confirm ${confirmationId} {"exercises[0].load.value":{"kind":"kg","value":25,"unit":"kg","raw":"25"}}`,
+          channel: "test-channel",
+          messageId: "workout-confirmation-2",
+        },
+        {},
       ),
+    ).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /^Workout recorded: stage 1, week 1, monday, full-body\nobservation: [0-9a-f-]{36}$/u,
+        ),
+      },
     });
   });
 

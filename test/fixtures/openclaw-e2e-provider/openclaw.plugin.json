@@ -1,0 +1,14 @@
+{
+  "id": "stella-fitness-e2e-provider",
+  "name": "Stella Fitness E2E Provider",
+  "description": "Deterministic structured extraction provider for local channel E2E verification",
+  "version": "0.0.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

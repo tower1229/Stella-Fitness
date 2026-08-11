@@ -149,6 +149,15 @@ export function registerStellaFitnessPlugin(
   api.on(
     "inbound_claim",
     async (event) => {
+      const confirmationInput = workoutLogConfirmationInput(event);
+      if (confirmationInput !== undefined) {
+        const confirmation = parseWorkoutConfirmationCommand(confirmationInput);
+        const result = await stellaRuntime.confirmWorkoutLog(confirmation);
+        return {
+          handled: true,
+          reply: { text: formatWorkoutLogRecording(result) },
+        };
+      }
       if (!isWorkoutLogImageInput(event)) {
         return;
       }
@@ -260,6 +269,15 @@ function isWorkoutLogImageInput(event: PluginHookInboundClaimEvent): boolean {
     .filter((value): value is string => typeof value === "string")
     .join(" ");
   return /(?:训练(?:日志|记录)|记录训练|workout\s*log)/iu.test(text);
+}
+
+function workoutLogConfirmationInput(
+  event: PluginHookInboundClaimEvent,
+): string | undefined {
+  const text = [event.content, event.body, event.bodyForAgent]
+    .find((value): value is string => typeof value === "string" &&
+      /^\s*\/stella-confirm(?:@\w+)?(?:\s|$)/iu.test(value));
+  return text?.replace(/^\s*\/stella-confirm(?:@\w+)?\s*/iu, "");
 }
 
 async function workoutLogUpload(

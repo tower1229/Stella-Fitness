@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { verifyTelegramChannelFlow } from "./verify-channel-e2e.mjs";
+
 const workspace = fileURLToPath(new URL("../", import.meta.url));
 const temporaryRoot = mkdtempSync(join(tmpdir(), "stella-clean-install-"));
 const openclaw = resolve(workspace, "node_modules/.bin/openclaw");
@@ -97,9 +99,17 @@ try {
     throw new Error(`Unexpected status response: ${JSON.stringify(status)}`);
   }
   const recording = await verifyInstalledRecordingFlow();
+  const channel = await verifyTelegramChannelFlow({
+    workspace,
+    temporaryRoot,
+    openclaw,
+    stateDir,
+    commandEnvironment,
+    run,
+  });
 
   process.stdout.write(
-    `${JSON.stringify({ installed: true, loaded: true, hooks: 3, commands, diagnostics: 0, recording, status })}\n`,
+    `${JSON.stringify({ installed: true, loaded: true, hooks: 3, commands, diagnostics: 0, recording, channel, status })}\n`,
   );
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });

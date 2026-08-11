@@ -56,6 +56,8 @@ export type WorkoutLogProcessingRecord = {
     | {
         readonly kind: "workout-log-confirmation";
         readonly confirmationId: string;
+        readonly candidate: unknown;
+        readonly replacesObservationId?: string;
       };
   readonly errorCategory?:
     | "cancelled"

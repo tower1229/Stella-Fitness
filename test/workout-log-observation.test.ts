@@ -259,6 +259,64 @@ describe("workout-log Observation recording", () => {
     });
   });
 
+  it("resumes a pending workout-log confirmation after runtime restart", async () => {
+    const personalDataDirectory = temporaryDirectory("stella-personal-");
+    const runtimeDirectory = temporaryDirectory("stella-runtime-");
+    const candidate = completedTorsoPage();
+    candidate.exercises[1]!.load = field(null, "low");
+    candidate.uncertainFields = [{
+      path: "exercises[1].load.value",
+      kind: "low-confidence",
+    }];
+    const options = {
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => runtimeDirectory,
+      preflight: () => ({ readiness: "READY" as const, reasons: [] }),
+    };
+    const first = createScenarioHarness({
+      ...options,
+      extractionRuntime: new ControlledExtractionRuntime([
+        { parsed: candidate, metadata: { provider: "controlled" } },
+      ]),
+    });
+    const pending = await first.ingestWorkoutLog({
+      runId: "workout-confirmation-restart-1",
+      upload: rawMediaUploadFixture(),
+      timeoutMs: 2_000,
+    });
+    if (pending.status !== "confirmation") {
+      throw new Error("Expected workout-log field confirmation");
+    }
+    await first.shutdown();
+
+    const restarted = createScenarioHarness({
+      ...options,
+      extractionRuntime: new ControlledExtractionRuntime([]),
+    });
+    const recorded = await restarted.confirmWorkoutLog({
+      confirmationId: pending.confirmationId,
+      values: {
+        "exercises[1].load.value": {
+          kind: "kg",
+          value: 26,
+          unit: "kg",
+          raw: "26",
+        },
+      },
+    });
+
+    expect(recorded).toMatchObject({
+      status: "recorded",
+      observation: {
+        provenance: {
+          runId: "workout-confirmation-restart-1",
+          confirmedFields: ["exercises[1].load.value"],
+        },
+      },
+    });
+    await restarted.shutdown();
+  });
+
   it("keeps bodyweight and exercise variants distinct from missing load", async () => {
     const candidate = completedTorsoPage();
     candidate.stage = field(3);

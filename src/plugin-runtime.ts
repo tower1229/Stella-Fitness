@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type {
@@ -196,6 +196,10 @@ export function createStellaFitnessRuntime(options: {
 }): StellaFitnessRuntime {
   const runs = new Map<string, RunEntry>();
   const confirmations = new Map<string, PendingWorkoutLogConfirmation>();
+  const confirmationRestores = new Map<
+    string,
+    Promise<PendingWorkoutLogConfirmation | undefined>
+  >();
   const preflight = options.preflight;
   const mediaSanitizer = options.mediaSanitizer ?? createBufferMediaSanitizer();
   let stopped = false;
@@ -379,14 +383,22 @@ export function createStellaFitnessRuntime(options: {
       const { replacesObservationId, ...ingestRequest } = request;
       return startWorkoutLogIngest(ingestRequest, replacesObservationId);
     },
-    confirmWorkoutLog(input) {
+    async confirmWorkoutLog(input) {
       assertPersonalDataPreflight(preflight());
       if (stopped) {
-        return Promise.reject(new Error("Stella Fitness runtime is shut down"));
+        throw new Error("Stella Fitness runtime is shut down");
       }
-      const pending = confirmations.get(input.confirmationId);
+      const personalDataDirectory = requiredPersonalDataDirectory(options);
+      const pending =
+        confirmations.get(input.confirmationId) ??
+        await restorePendingWorkoutLogConfirmation({
+          personalDataDirectory,
+          confirmationId: input.confirmationId,
+          confirmations,
+          confirmationRestores,
+        });
       if (pending === undefined) {
-        return Promise.reject(new Error("Workout-log confirmation is unavailable"));
+        throw new Error("Workout-log confirmation is unavailable");
       }
       const fingerprint = createHash("sha256")
         .update(
@@ -400,14 +412,15 @@ export function createStellaFitnessRuntime(options: {
         )
         .digest("hex");
       if (pending.result !== undefined) {
-        return pending.result.fingerprint === fingerprint
-          ? pending.result.promise
-          : Promise.reject(
-              new Error("Workout-log confirmation was reused with different values"),
-            );
+        if (pending.result.fingerprint !== fingerprint) {
+          throw new Error(
+            "Workout-log confirmation was reused with different values",
+          );
+        }
+        return pending.result.promise;
       }
       const promise = recordConfirmedWorkoutLog({
-        personalDataDirectory: requiredPersonalDataDirectory(options),
+        personalDataDirectory,
         pending,
         values: input.values,
         updateSpecialSessionState,
@@ -713,6 +726,10 @@ async function executeWorkoutLogIngest(options: {
               result: {
                 kind: "workout-log-confirmation" as const,
                 confirmationId: confirmationId!,
+                candidate: candidateExtractionShape(candidate),
+                ...(options.replacesObservationId === undefined
+                  ? {}
+                  : { replacesObservationId: options.replacesObservationId }),
               },
             }
           : {
@@ -779,6 +796,164 @@ async function executeWorkoutLogIngest(options: {
     options.request.signal.removeEventListener("abort", onCallerAbort);
     await lease?.dispose();
   }
+}
+
+async function restorePendingWorkoutLogConfirmation(options: {
+  readonly personalDataDirectory: string;
+  readonly confirmationId: string;
+  readonly confirmations: Map<string, PendingWorkoutLogConfirmation>;
+  readonly confirmationRestores: Map<
+    string,
+    Promise<PendingWorkoutLogConfirmation | undefined>
+  >;
+}): Promise<PendingWorkoutLogConfirmation | undefined> {
+  const existingRestore = options.confirmationRestores.get(options.confirmationId);
+  if (existingRestore !== undefined) {
+    return await existingRestore;
+  }
+  const restore = readPendingWorkoutLogConfirmation(
+    options.personalDataDirectory,
+    options.confirmationId,
+  ).then((pending) => {
+    if (pending !== undefined) {
+      options.confirmations.set(options.confirmationId, pending);
+    }
+    return pending;
+  });
+  options.confirmationRestores.set(options.confirmationId, restore);
+  try {
+    return await restore;
+  } finally {
+    if (options.confirmationRestores.get(options.confirmationId) === restore) {
+      options.confirmationRestores.delete(options.confirmationId);
+    }
+  }
+}
+
+async function readPendingWorkoutLogConfirmation(
+  personalDataDirectory: string,
+  confirmationId: string,
+): Promise<PendingWorkoutLogConfirmation | undefined> {
+  const directory = join(personalDataDirectory, "processing", "workout-log");
+  const files = await readdir(directory).catch((error: unknown) => {
+    if (isMissingFile(error)) return [];
+    throw error;
+  });
+  const records = await Promise.all(
+    files
+      .filter((file) => file.endsWith(".json"))
+      .sort()
+      .map(async (file) => {
+        const value: unknown = JSON.parse(await readFile(join(directory, file), "utf8"));
+        return value;
+      }),
+  );
+  const awaiting = records.find((value) =>
+    isRecord(value) &&
+    value.schemaVersion === "stella-fitness/processing/workout-log/v0.1" &&
+    value.operation === "workout-log-extraction" &&
+    value.status === "awaiting-confirmation" &&
+    isRecord(value.result) &&
+    value.result.kind === "workout-log-confirmation" &&
+    value.result.confirmationId === confirmationId,
+  );
+  if (!isRecord(awaiting) || !isRecord(awaiting.result)) {
+    return undefined;
+  }
+  if (
+    typeof awaiting.runId !== "string" ||
+    !isRecord(awaiting.artifact) ||
+    typeof awaiting.artifact.id !== "string" ||
+    typeof awaiting.artifact.path !== "string" ||
+    typeof awaiting.artifact.sha256 !== "string" ||
+    !isExtractionExecutionMetadata(awaiting.execution)
+  ) {
+    throw new Error("Pending workout-log confirmation is schema-invalid");
+  }
+  const completed = records.some((value) =>
+    isRecord(value) &&
+    value.schemaVersion === "stella-fitness/processing/workout-log/v0.1" &&
+    value.operation === "workout-log-confirmation" &&
+    value.runId === awaiting.runId &&
+    value.status === "succeeded",
+  );
+  if (completed) return undefined;
+  const artifact = await readConfirmationArtifact(
+    personalDataDirectory,
+    awaiting.artifact,
+  );
+  const replacesObservationId = awaiting.result.replacesObservationId;
+  if (
+    replacesObservationId !== undefined &&
+    typeof replacesObservationId !== "string"
+  ) {
+    throw new Error("Pending workout-log confirmation is schema-invalid");
+  }
+  return {
+    candidate: parseWorkoutLogCandidate(awaiting.result.candidate),
+    artifact,
+    runId: awaiting.runId,
+    execution: awaiting.execution,
+    ...(replacesObservationId === undefined ? {} : { replacesObservationId }),
+  };
+}
+
+async function readConfirmationArtifact(
+  personalDataDirectory: string,
+  reference: Record<string, unknown>,
+): Promise<RawArtifactRecord> {
+  const artifactPath = String(reference.path);
+  const artifactMatch = /^raw-artifacts\/workout-log\/([0-9a-f-]{36})\/original\.(?:jpe?g|png|webp)$/iu.exec(
+    artifactPath,
+  );
+  if (
+    artifactMatch?.[1]?.toLowerCase() !== String(reference.id).toLowerCase() ||
+    !/^[0-9a-f]{64}$/u.test(String(reference.sha256))
+  ) {
+    throw new Error("Pending workout-log artifact is schema-invalid");
+  }
+  const source: unknown = JSON.parse(
+    await readFile(
+      join(personalDataDirectory, dirname(artifactPath), "artifact.json"),
+      "utf8",
+    ),
+  );
+  if (
+    !isRecord(source) ||
+    source.schemaVersion !== "stella-fitness/raw-artifact/v0.1" ||
+    source.kind !== "workout-log-image" ||
+    source.id !== reference.id ||
+    source.path !== reference.path ||
+    source.sha256 !== reference.sha256 ||
+    typeof source.size !== "number" ||
+    typeof source.originalFileName !== "string" ||
+    !["image/jpeg", "image/png", "image/webp"].includes(String(source.mime)) ||
+    !isRecord(source.provenance) ||
+    source.provenance.kind !== "openclaw-media" ||
+    typeof source.provenance.receivedAt !== "string"
+  ) {
+    throw new Error("Pending workout-log artifact is schema-invalid");
+  }
+  return source as RawArtifactRecord;
+}
+
+function isExtractionExecutionMetadata(
+  value: unknown,
+): value is ExtractionExecutionMetadata {
+  return isRecord(value) &&
+    (value.provider === undefined || typeof value.provider === "string") &&
+    (value.model === undefined || typeof value.model === "string") &&
+    (value.contentType === undefined ||
+      value.contentType === "json" ||
+      value.contentType === "text");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isMissingFile(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 async function duplicateWorkoutLogOutput(options: {
