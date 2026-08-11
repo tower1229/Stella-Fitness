@@ -4,9 +4,9 @@
 >
 > **正常训练，纸笔记录；训练后拍照，形成可追溯数字记录。**
 
-Stella Fitness 是一个拟以 **OpenClaw Native Plugin** 实现的训练计划执行与记录工具。它把来源训练计划转换为确定性的 `ProgramSpec`，解析用户当前训练日，并把纸质训练日志与体重记录低摩擦地转换为可纠错、可重建的结构化事实。
+Stella Fitness 是一个 **OpenClaw Native Plugin** 训练计划执行与记录工具。它把来源训练计划转换为确定性的 `ProgramSpec`，解析用户当前训练日，并把纸质训练日志与体重记录低摩擦地转换为可纠错、可重建的结构化事实。
 
-当前仓库已经完成需求与来源研究，尚未创建 Plugin 实现，也不可安装使用。
+当前仓库已有可构建、可测试并可在 clean OpenClaw 环境安装检查的 Plugin 实现；课程派生制品授权和最终发布闸门通过前，不公开发行。
 
 ```text
 Program Source → ProgramSpec → Planned Session
@@ -66,7 +66,7 @@ Stella Fitness 只回答事实问题：
 - 用户必须显式配置 Personal Data Directory；
 - canonical 用户数据不得静默写入 Runtime Directory；
 - 原始上传文件保持字节不变；
-- 提交给 OpenClaw media runtime 前生成应用方向且去除 EXIF/GPS 的临时副本；
+- 提交给 OpenClaw media runtime 前生成应用方向且去除 EXIF/GPS 的临时 `Sanitized Media Copy`；
 - 临时副本在成功、失败、超时和取消路径均清理；
 - Plugin 无遥测、自动数据贡献或隐式 Benchmark 复用；
 - 用户通过文件系统或自己的 Personal Data Repository 管理、备份和删除数据。
@@ -119,6 +119,12 @@ Privacy Review 已批准。训练/营养监督和 Safety Review 因对应能力�
 
 Plugin 代码、通用 schema 及非课程派生的项目原创材料采用 [Apache License 2.0](LICENSE)。该许可不覆盖 `sources/originals/` 中的原始 DOCX/XLSX、课程派生内容或用户 Personal Data Directory 中的数据，详见 [NOTICE](NOTICE) 与 [ADR-018](docs/decisions/ADR-018-apache-2-code-separate-content-rights.md)。
 
+## 验证证据边界
+
+Tests demonstrate implementation fidelity only; they are not professional endorsement.
+
+测试结果只证明制品安装、数据流和记录行为符合实现规格，不证明训练计划具有专业背书，也不扩展 Stella Fitness 的 recording-only 能力边界。
+
 ## 状态
 
-**Stella Fitness 当前不是可运行产品。** 产品范围与隐私边界已经批准，原有 Supervision/Nutrition Domain 和 Safety 实施 blocker 已随功能移除而关闭；下一步是按锁定 OpenClaw 版本启动 Plugin 基础实现。
+**Stella Fitness 当前可供内部实现验证，但不可公开发行。** Plugin 已可构建、安装和执行；公开发行继续由精确课程派生授权、制品检查和 ClawHub live gate 共同阻止，任一证据缺失都必须失败关闭。

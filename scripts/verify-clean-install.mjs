@@ -77,6 +77,17 @@ try {
   if (!inspection.plugin.commands.includes("stella-setup")) {
     throw new Error("Plugin command stella-setup was not registered");
   }
+  const commands = [...inspection.plugin.commands].sort();
+  const expectedCommands = [
+    "stella-confirm",
+    "stella-setup",
+    "stella-status",
+  ];
+  if (JSON.stringify(commands) !== JSON.stringify(expectedCommands)) {
+    throw new Error(
+      `Plugin exposes unexpected commands: ${JSON.stringify(commands)}`,
+    );
+  }
   if (inspection.diagnostics.length !== 0) {
     throw new Error(
       `Plugin diagnostics are not empty: ${JSON.stringify(inspection.diagnostics)}`,
@@ -87,7 +98,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ installed: true, loaded: true, hooks: 3, diagnostics: 0, status })}\n`,
+    `${JSON.stringify({ installed: true, loaded: true, hooks: 3, commands, diagnostics: 0, status })}\n`,
   );
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });

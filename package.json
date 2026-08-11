@@ -3,13 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "description": "Recording-only OpenClaw Plugin for deterministic training-plan execution and observation capture",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tower1229/Stella-Fitness.git"
+  },
+  "homepage": "https://github.com/tower1229/Stella-Fitness#readme",
+  "bugs": {
+    "url": "https://github.com/tower1229/Stella-Fitness/issues"
+  },
   "type": "module",
   "license": "Apache-2.0",
   "files": [
     "dist",
     "openclaw.plugin.json",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "COURSE-RIGHTS-NOTICE"
   ],
   "exports": {
     ".": "./dist/plugin.js",
@@ -23,7 +32,8 @@
     "verify:internal": "npm run typecheck && npm test && npm run build && npm run verify:package && npm run verify:clean-install",
     "verify:package": "node scripts/verify-package.mjs",
     "verify:clean-install": "node scripts/verify-clean-install.mjs",
-    "verify:release": "node scripts/verify-release.mjs"
+    "verify:clawhub": "node scripts/verify-clawhub.mjs",
+    "verify:release": "npm run verify:internal && npm run verify:clawhub && node scripts/verify-release.mjs"
   },
   "peerDependencies": {
     "openclaw": ">=2026.6.34"
@@ -35,6 +45,7 @@
   "devDependencies": {
     "@types/node": "26.1.0",
     "@types/ws": "8.18.1",
+    "clawhub": "0.23.3",
     "openclaw": "2026.6.34",
     "typescript": "6.0.3",
     "vitest": "3.2.4"

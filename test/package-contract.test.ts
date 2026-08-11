@@ -21,7 +21,8 @@ describe("installable Plugin package contract", () => {
       scripts: {
         "verify:internal": expect.any(String),
         "verify:clean-install": "node scripts/verify-clean-install.mjs",
-        "verify:release": "node scripts/verify-release.mjs",
+        "verify:clawhub": "node scripts/verify-clawhub.mjs",
+        "verify:release": expect.stringContaining("verify:clawhub"),
       },
       peerDependencies: { openclaw: ">=2026.6.34" },
       openclaw: {
@@ -48,7 +49,8 @@ describe("installable Plugin package contract", () => {
       packageJson.scripts["verify:release"],
     );
     expect(releaseGate).toContain(
-      "automated ClawHub evidence and clean-environment recording-flow verification are not implemented",
+      "Course-derivative authorization evidence is required",
     );
+    expect(releaseGate).not.toContain("STELLA_RELEASE_RIGHTS_APPROVED");
   });
 });
