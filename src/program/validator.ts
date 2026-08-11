@@ -1,5 +1,6 @@
 import type {
   ProgramRecord,
+  ProgramPrerequisite,
   ProgramSession,
   ProgramSpec,
   ProgramWeek,
@@ -34,6 +35,7 @@ export function validateProgramSpec(input: unknown): ProgramSpec {
     version: text(source.version, "version"),
     status: text(source.status, "status"),
     phases: recordArray(source.phases, "phases"),
+    prerequisites: validatePrerequisites(source.prerequisites),
     weeks,
     templates: recordMap(source.templates, "templates"),
     loadSymbols: recordMap(source.load_symbols, "load_symbols"),
@@ -44,6 +46,29 @@ export function validateProgramSpec(input: unknown): ProgramSpec {
   };
   validateRelationships(program);
   return program;
+}
+
+function validatePrerequisites(input: unknown): readonly ProgramPrerequisite[] {
+  return array(input, "prerequisites").map((value, index) => {
+    const prerequisite = record(value, `prerequisites[${index}]`);
+    const kind = text(prerequisite.kind, `prerequisites[${index}].kind`);
+    if (kind !== "equipment" && kind !== "printed-material") {
+      throw new InvalidProgramSpecError([
+        `prerequisites[${index}].kind must be equipment or printed-material`,
+      ]);
+    }
+    if (prerequisite.required !== true) {
+      throw new InvalidProgramSpecError([
+        `prerequisites[${index}].required must be true`,
+      ]);
+    }
+    return {
+      id: text(prerequisite.id, `prerequisites[${index}].id`),
+      kind,
+      required: true,
+      label: text(prerequisite.label, `prerequisites[${index}].label`),
+    };
+  });
 }
 
 function validateRelationships(program: ProgramSpec): void {

@@ -56,6 +56,18 @@ import {
   type ProgramState,
 } from "./program/state.js";
 import {
+  createProgramJourney,
+  type Initial12RMExerciseId,
+} from "./program/journey.js";
+import {
+  queryProgramFacts,
+  type ProgramFactsQuery,
+} from "./program/facts.js";
+import {
+  generatePrintableLog,
+  type PrintableLogRange,
+} from "./reporting/printable-log.js";
+import {
   applyStrengthTestBindings,
   resolveRecoverySession,
   resolveSpecialSession,
@@ -150,6 +162,36 @@ export type StellaFitnessRuntime = {
   >;
   bodyWeightTimeline(): Promise<BodyWeightView>;
   trainingRecordView(): Promise<TrainingRecordView>;
+  programJourneyStatus(input?: { readonly date?: string }): ReturnType<
+    ReturnType<typeof createProgramJourney>["status"]
+  >;
+  acknowledgePrerequisite(input: {
+    readonly prerequisiteId: string;
+    readonly acknowledgedAt: string;
+    readonly source: ObservationSource;
+  }): ReturnType<ReturnType<typeof createProgramJourney>["acknowledgePrerequisite"]>;
+  recordJourneyBodyWeight(input: {
+    readonly role: "baseline" | "checkpoint";
+    readonly checkpointWeek?: 4 | 8 | 12;
+    readonly text: string;
+    readonly receivedAt: string;
+    readonly source?: Omit<ObservationSource, "kind" | "text">;
+  }): ReturnType<ReturnType<typeof createProgramJourney>["recordBodyWeight"]>;
+  recordInitial12RM(input: {
+    readonly exerciseId: Initial12RMExerciseId;
+    readonly valueKg: number;
+    readonly confirmationId: string;
+    readonly occurredAt: string;
+    readonly recordedAt: string;
+    readonly source: ObservationSource;
+  }): ReturnType<ReturnType<typeof createProgramJourney>["recordInitial12RM"]>;
+  activateProgram(cycleStart: string): Promise<ProgramState>;
+  programFacts(query: ProgramFactsQuery): ReturnType<typeof queryProgramFacts>;
+  printableLog(input: {
+    readonly range: PrintableLogRange;
+    readonly date: string;
+  }): ReturnType<typeof generatePrintableLog>;
+  weightFacts(): ReturnType<ReturnType<typeof createProgramJourney>["weightFacts"]>;
 };
 
 const MAX_CACHED_RUNS = 256;
@@ -202,6 +244,10 @@ export function createStellaFitnessRuntime(options: {
   >();
   const preflight = options.preflight;
   const mediaSanitizer = options.mediaSanitizer ?? createBufferMediaSanitizer();
+  const journey = () => createProgramJourney({
+    personalDataDirectory: requiredPersonalDataDirectory(options),
+    preflight,
+  });
   let stopped = false;
   let programStateUpdateTail: Promise<void> = Promise.resolve();
   const updateSpecialSessionState: UpdateSpecialSessionState = (
@@ -286,6 +332,48 @@ export function createStellaFitnessRuntime(options: {
 
   return {
     preflight,
+    programJourneyStatus(input) {
+      return journey().status(input);
+    },
+    acknowledgePrerequisite(input) {
+      return journey().acknowledgePrerequisite(input);
+    },
+    recordJourneyBodyWeight(input) {
+      return journey().recordBodyWeight(input);
+    },
+    recordInitial12RM(input) {
+      return journey().recordInitial12RM(input);
+    },
+    activateProgram(cycleStart) {
+      return journey().activate(cycleStart);
+    },
+    async programFacts(query) {
+      if (query.kind !== "unsupported") {
+        const status = await journey().status(
+          "date" in query ? { date: query.date } : {},
+        );
+        if (status.state !== "ACTIVE") {
+          throw new Error(`Program Facts is unavailable in ${status.state}`);
+        }
+      }
+      return await queryProgramFacts({
+        personalDataDirectory: requiredPersonalDataDirectory(options),
+        query,
+      });
+    },
+    async printableLog(input) {
+      const status = await journey().status({ date: input.date });
+      if (status.state !== "ACTIVE") {
+        throw new Error(`Printable Log is unavailable in ${status.state}`);
+      }
+      return await generatePrintableLog({
+        personalDataDirectory: requiredPersonalDataDirectory(options),
+        ...input,
+      });
+    },
+    weightFacts() {
+      return journey().weightFacts();
+    },
     async selectProgram(programSpec) {
       assertSetupPreflight(preflight());
       const personalDataDirectory = options.personalDataDirectory?.();

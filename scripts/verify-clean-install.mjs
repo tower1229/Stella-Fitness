@@ -76,14 +76,20 @@ try {
   if (!inspection.plugin.commands.includes("stella-status")) {
     throw new Error("Plugin command stella-status was not registered");
   }
-  if (!inspection.plugin.commands.includes("stella-setup")) {
-    throw new Error("Plugin command stella-setup was not registered");
+  if (!inspection.plugin.commands.includes("stella-start")) {
+    throw new Error("Plugin command stella-start was not registered");
   }
   const commands = [...inspection.plugin.commands].sort();
   const expectedCommands = [
+    "stella-12rm",
+    "stella-activate",
     "stella-confirm",
-    "stella-setup",
+    "stella-facts",
+    "stella-prerequisite",
+    "stella-print",
+    "stella-start",
     "stella-status",
+    "stella-weight",
   ];
   if (JSON.stringify(commands) !== JSON.stringify(expectedCommands)) {
     throw new Error(
@@ -114,6 +120,7 @@ try {
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
 }
+
 
 async function verifyInstalledRecordingFlow() {
   const projectsRoot = join(stateDir, "npm", "projects");

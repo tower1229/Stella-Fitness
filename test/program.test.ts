@@ -22,6 +22,26 @@ describe("ProgramSpec validator", () => {
       version: "0.2.0",
     });
     expect(program.weeks).toHaveLength(12);
+    expect(program.prerequisites).toEqual([
+      {
+        id: "adjustable-dumbbells",
+        kind: "equipment",
+        required: true,
+        label: "可拆卸哑铃",
+      },
+      {
+        id: "pull-up-bar",
+        kind: "equipment",
+        required: true,
+        label: "引体向上杆",
+      },
+      {
+        id: "printed-workout-log",
+        kind: "printed-material",
+        required: true,
+        label: "打印训练日志",
+      },
+    ]);
     expect(program.weeks.flatMap(({ sessions }) => sessions)).toHaveLength(44);
     expect(
       program.weeks

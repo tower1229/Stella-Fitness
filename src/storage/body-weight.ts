@@ -169,6 +169,49 @@ export async function rebuildBodyWeightView(
   };
 }
 
+export async function resolveBodyWeightReference(
+  personalDataDirectory: string,
+  referenceId: string,
+): Promise<BodyWeightObservation | undefined> {
+  const directory = join(personalDataDirectory, OBSERVATION_DIRECTORY);
+  const files = await readdir(directory).catch((error: unknown) => {
+    if (isMissing(error)) return [];
+    throw error;
+  });
+  const observations: BodyWeightObservation[] = [];
+  for (const file of files.filter((name) => name.endsWith(".json"))) {
+    try {
+      const observation = parseBodyWeightObservation(
+        await readFile(join(directory, file), "utf8"),
+      );
+      if (file === `${observation.id}.json`) observations.push(observation);
+    } catch {
+      continue;
+    }
+  }
+  const byReplacedId = new Map<string, BodyWeightObservation>();
+  for (const observation of observations) {
+    if (observation.provenance.kind !== "body-weight-correction") continue;
+    const replacedId = observation.provenance.replacesObservationId;
+    if (byReplacedId.has(replacedId)) {
+      throw new Error(
+        `Body-weight Observation ${replacedId} has multiple active replacements`,
+      );
+    }
+    byReplacedId.set(replacedId, observation);
+  }
+  let current = observations.find(({ id }) => id === referenceId);
+  const visited = new Set<string>();
+  while (current !== undefined) {
+    if (visited.has(current.id)) return undefined;
+    visited.add(current.id);
+    const replacement = byReplacedId.get(current.id);
+    if (replacement === undefined) return current;
+    current = replacement;
+  }
+  return undefined;
+}
+
 function parseBodyWeightObservation(source: string): BodyWeightObservation {
   const value: unknown = JSON.parse(source);
   if (

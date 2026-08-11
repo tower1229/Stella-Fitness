@@ -29,6 +29,7 @@ try {
   const required = [
     "dist/plugin.js",
     "dist/scenario/harness.js",
+    "dist/program/fidelity/zhuoshu-v0.2.yaml",
     "openclaw.plugin.json",
     "package.json",
     "README.md",

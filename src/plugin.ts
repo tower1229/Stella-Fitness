@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
@@ -8,8 +8,6 @@ import {
   type PluginHookInboundClaimEvent,
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
-import { parse } from "yaml";
-
 import { assertOperatorModelPermission } from "./contracts/openclaw.js";
 import { createOpenClawExtractionRuntime } from "./extraction/openclaw.js";
 import type { ExtractionRuntime } from "./extraction/runtime.js";
@@ -82,54 +80,168 @@ export function registerStellaFitnessPlugin(
   });
 
   api.registerCommand({
-    name: "stella-setup",
-    description: "Select a ProgramSpec and confirm the cycle start date",
-    acceptsArgs: true,
+    name: "stella-start",
+    description: "Start or resume the default Stella Fitness Program Journey",
+    acceptsArgs: false,
     requireAuth: true,
     async handler(context) {
-      const input = parseSetupCommand(context.args);
-      if (input.kind === "help") {
-        return { text: setupHelp() };
-      }
-      if (input.kind === "select") {
-        const setup = await stellaRuntime.selectProgram(
-          parse(await readFile(input.programSpecPath, "utf8")),
-        );
-        return {
-          text: [
-            `ProgramSpec selected: ${setup.program.id}@${setup.program.version}`,
-            `setup: ${setup.id}`,
-            "Confirm the cycle start date with /stella-setup confirm YYYY-MM-DD",
-          ].join("\n"),
-        };
-      }
-      const state = await stellaRuntime.confirmCycleStart(input.cycleStart);
+      const status = await stellaRuntime.programJourneyStatus();
       const binding = await context.requestConversationBinding({
         summary: "Stella Fitness workout recording",
         detachHint: "Detach the Stella Fitness conversation binding to stop recording here.",
-        data: { workflow: "workout-recording" },
+        data: { workflow: "program-journey" },
       });
-      const stateText = [
-        `Program State initialized: ${state.id}`,
-        `program: ${state.program.id}@${state.program.version}`,
-        `cycle-start: ${state.cycle.startDate}`,
-      ];
+      const statusText = formatJourneyStatus(status);
       if (binding.status === "pending") {
         return {
           ...binding.reply,
           text: [
-            ...stateText,
+            statusText,
             binding.reply.text ?? "Approve the Stella Fitness conversation binding.",
           ].join("\n"),
         };
       }
       return {
         text: [
-          ...stateText,
+          statusText,
           binding.status === "bound"
             ? "conversation-binding: active"
             : `conversation-binding: unavailable (${binding.message})`,
         ].join("\n"),
+      };
+    },
+  });
+
+  api.registerCommand({
+    name: "stella-prerequisite",
+    description: "Acknowledge one non-medical Built-in Program prerequisite",
+    acceptsArgs: true,
+    requireAuth: true,
+    async handler(context) {
+      const prerequisiteId = context.args?.trim();
+      if (prerequisiteId === undefined || prerequisiteId.length === 0) {
+        return {
+          text: "Usage: /stella-prerequisite <adjustable-dumbbells|pull-up-bar|printed-workout-log>",
+        };
+      }
+      const status = await stellaRuntime.acknowledgePrerequisite({
+        prerequisiteId,
+        acknowledgedAt: new Date().toISOString(),
+        source: {
+          kind: "user-text",
+          text: context.commandBody,
+          channel: context.channel,
+          ...(context.sessionKey === undefined ? {} : { runId: context.sessionKey }),
+        },
+      });
+      return { text: formatJourneyStatus(status) };
+    },
+  });
+
+  api.registerCommand({
+    name: "stella-weight",
+    description: "Record a body-weight fact for the current Program Journey step",
+    acceptsArgs: true,
+    requireAuth: true,
+    async handler(context) {
+      const text = context.args?.trim();
+      if (text === undefined || text.length === 0) {
+        return { text: "Usage: /stella-weight <weight with kg or lb>" };
+      }
+      const result = await recordJourneyAwareBodyWeight(stellaRuntime, {
+        text,
+        receivedAt: new Date().toISOString(),
+        source: {
+          channel: context.channel,
+        },
+      });
+      return { text: formatJourneyBodyWeight(result) };
+    },
+  });
+
+  api.registerCommand({
+    name: "stella-12rm",
+    description: "Confirm one course-start 12RM result in kg",
+    acceptsArgs: true,
+    requireAuth: true,
+    async handler(context) {
+      const input = parseInitial12RMCommand(context.args);
+      if (input === undefined) {
+        return {
+          text: "Usage: /stella-12rm <goblet-squat|dumbbell-bench-press|dumbbell-deadlift> <kg> confirm",
+        };
+      }
+      const now = new Date().toISOString();
+      const observation = await stellaRuntime.recordInitial12RM({
+        ...input,
+        confirmationId: stableConfirmationId(context),
+        occurredAt: now,
+        recordedAt: now,
+        source: {
+          kind: "user-text",
+          text: context.commandBody,
+          channel: context.channel,
+          ...(context.sessionKey === undefined ? {} : { runId: context.sessionKey }),
+        },
+      });
+      const status = await stellaRuntime.programJourneyStatus();
+      return {
+        text: [
+          `Initial 12RM recorded: ${observation.exerciseId} ${observation.result.value} kg`,
+          `observation: ${observation.id}`,
+          formatJourneyStatus(status),
+        ].join("\n"),
+      };
+    },
+  });
+
+  api.registerCommand({
+    name: "stella-activate",
+    description: "Activate the Built-in Program on a confirmed Monday",
+    acceptsArgs: true,
+    requireAuth: true,
+    async handler(context) {
+      const cycleStart = context.args?.trim() ?? "";
+      const state = await stellaRuntime.activateProgram(cycleStart);
+      return {
+        text: [
+          `Program State activated: ${state.id}`,
+          `program: ${state.program.id}@${state.program.version}`,
+          `cycle-start: ${state.cycle.startDate}`,
+        ].join("\n"),
+      };
+    },
+  });
+
+  api.registerCommand({
+    name: "stella-facts",
+    description: "Read deterministic current or next Planned Session facts",
+    acceptsArgs: true,
+    requireAuth: true,
+    async handler(context) {
+      const input = parseFactsCommand(context.args);
+      if (input === undefined) {
+        return { text: "Usage: /stella-facts <today|next> [YYYY-MM-DD]" };
+      }
+      return { text: formatProgramFacts(await stellaRuntime.programFacts(input)) };
+    },
+  });
+
+  api.registerCommand({
+    name: "stella-print",
+    description: "Generate an A4 printable training log PDF",
+    acceptsArgs: true,
+    requireAuth: true,
+    async handler(context) {
+      const input = parsePrintableCommand(context.args);
+      if (input === undefined) {
+        return { text: "Usage: /stella-print <today|week|phase> [YYYY-MM-DD]" };
+      }
+      const result = await stellaRuntime.printableLog(input);
+      return {
+        text: `Printable Log: ${result.range}, ${result.pages} page(s)`,
+        mediaUrl: result.path,
+        trustedLocalMedia: true,
       };
     },
   });
@@ -148,7 +260,7 @@ export function registerStellaFitnessPlugin(
 
   api.on(
     "inbound_claim",
-    async (event) => {
+    async (event, context) => {
       const confirmationInput = workoutLogConfirmationInput(event);
       if (confirmationInput !== undefined) {
         const confirmation = parseWorkoutConfirmationCommand(confirmationInput);
@@ -158,7 +270,82 @@ export function registerStellaFitnessPlugin(
           reply: { text: formatWorkoutLogRecording(result) },
         };
       }
+      const boundCommand = parseBoundStellaCommand(event);
+      if (boundCommand !== undefined) {
+        if (context?.pluginBinding?.pluginId !== PLUGIN_ID) return;
+        return await handleBoundStellaCommand(
+          stellaRuntime,
+          event,
+          boundCommand,
+        );
+      }
+      if (context?.pluginBinding?.pluginId === PLUGIN_ID) {
+        const boundText = [event.content, event.body, event.bodyForAgent]
+          .find((value): value is string => typeof value === "string") ?? "";
+        const factKind = /(?:今天练什么|today(?:'s)?\s+(?:workout|session))/iu.test(boundText)
+          ? "today"
+          : /(?:下次练什么|next\s+(?:workout|session))/iu.test(boundText)
+            ? "next"
+            : undefined;
+        if (factKind !== undefined) {
+          const date = event.timestamp === undefined
+            ? new Date().toISOString().slice(0, 10)
+            : new Date(event.timestamp).toISOString().slice(0, 10);
+          const result = await stellaRuntime.programFacts({ kind: factKind, date });
+          return { handled: true, reply: { text: formatProgramFacts(result) } };
+        }
+        if (isBodyWeightInput(boundText)) {
+          const receivedAt = event.timestamp === undefined
+            ? new Date().toISOString()
+            : new Date(event.timestamp).toISOString();
+          const correctionId = bodyWeightCorrectionId(boundText);
+          if (correctionId !== undefined) {
+            const result = await stellaRuntime.correctBodyWeight({
+              replacesObservationId: correctionId,
+              text: boundText,
+              receivedAt,
+              source: {
+                channel: event.channel,
+                ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
+                ...(event.runId === undefined ? {} : { runId: event.runId }),
+              },
+            });
+            return {
+              handled: true,
+              reply: {
+                text: result.status === "clarification"
+                  ? result.question
+                  : formatBodyWeightCorrection(result),
+              },
+            };
+          }
+          const result = await recordJourneyAwareBodyWeight(stellaRuntime, {
+            text: boundText,
+            receivedAt,
+            source: {
+              channel: event.channel,
+              ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
+              ...(event.runId === undefined ? {} : { runId: event.runId }),
+            },
+          });
+          return {
+            handled: true,
+            reply: {
+              text: result.status === "clarification"
+                ? result.question
+                : formatJourneyBodyWeight(result),
+            },
+          };
+        }
+      }
       if (!isWorkoutLogImageInput(event)) {
+        if (context?.pluginBinding?.pluginId === PLUGIN_ID) {
+          const result = await stellaRuntime.programFacts({
+            kind: "unsupported",
+            question: event.content,
+          });
+          return { handled: true, reply: { text: formatProgramFacts(result) } };
+        }
         return;
       }
       const upload = await workoutLogUpload(event);
@@ -210,28 +397,33 @@ export function registerStellaFitnessPlugin(
           ? {}
           : { source: sourceIdentity };
       const correctionId = bodyWeightCorrectionId(event.cleanedBody);
-      const result =
-        correctionId === undefined
-          ? await stellaRuntime.recordBodyWeight({
-              text: event.cleanedBody,
-              receivedAt,
-              ...source,
-            })
-          : await stellaRuntime.correctBodyWeight({
-              replacesObservationId: correctionId,
-              text: event.cleanedBody,
-              receivedAt,
-              ...source,
-            });
+      if (correctionId === undefined) {
+        const result = await recordJourneyAwareBodyWeight(stellaRuntime, {
+          text: event.cleanedBody,
+          receivedAt,
+          ...source,
+        });
+        return {
+          handled: true,
+          reply: {
+            text: result.status === "clarification"
+              ? result.question
+              : formatJourneyBodyWeight(result),
+          },
+        };
+      }
+      const result = await stellaRuntime.correctBodyWeight({
+        replacesObservationId: correctionId,
+        text: event.cleanedBody,
+        receivedAt,
+        ...source,
+      });
       return {
         handled: true,
         reply: {
-          text:
-            result.status === "clarification"
-              ? result.question
-              : correctionId === undefined
-                ? formatBodyWeightRecording(result)
-                : formatBodyWeightCorrection(result),
+          text: result.status === "clarification"
+            ? result.question
+            : formatBodyWeightCorrection(result),
         },
       };
     },
@@ -278,6 +470,156 @@ function workoutLogConfirmationInput(
     .find((value): value is string => typeof value === "string" &&
       /^\s*\/stella-confirm(?:@\w+)?(?:\s|$)/iu.test(value));
   return text?.replace(/^\s*\/stella-confirm(?:@\w+)?\s*/iu, "");
+}
+
+type BoundStellaCommand = {
+  readonly name:
+    | "start"
+    | "status"
+    | "prerequisite"
+    | "weight"
+    | "12rm"
+    | "activate"
+    | "facts"
+    | "print";
+  readonly args: string;
+};
+
+function parseBoundStellaCommand(
+  event: PluginHookInboundClaimEvent,
+): BoundStellaCommand | undefined {
+  const text = [event.content, event.body, event.bodyForAgent]
+    .find((value): value is string => typeof value === "string") ?? "";
+  const match = /^\s*\/stella-(start|status|prerequisite|weight|12rm|activate|facts|print)(?:@\w+)?(?:\s+(.*))?\s*$/isu.exec(
+    text,
+  );
+  return match?.[1] === undefined
+    ? undefined
+    : {
+        name: match[1].toLowerCase() as BoundStellaCommand["name"],
+        args: match[2]?.trim() ?? "",
+      };
+}
+
+async function handleBoundStellaCommand(
+  runtime: StellaFitnessRuntime,
+  event: PluginHookInboundClaimEvent,
+  command: BoundStellaCommand,
+) {
+  const receivedAt = event.timestamp === undefined
+    ? new Date().toISOString()
+    : new Date(event.timestamp).toISOString();
+  const source = {
+    channel: event.channel,
+    ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
+    ...(event.runId === undefined ? {} : { runId: event.runId }),
+  };
+  if (command.name === "start" || command.name === "status") {
+    return {
+      handled: true,
+      reply: { text: formatJourneyStatus(await runtime.programJourneyStatus()) },
+    };
+  }
+  if (command.name === "prerequisite") {
+    const status = await runtime.acknowledgePrerequisite({
+      prerequisiteId: command.args,
+      acknowledgedAt: receivedAt,
+      source: {
+        kind: "user-text",
+        text: event.content,
+        ...source,
+      },
+    });
+    return { handled: true, reply: { text: formatJourneyStatus(status) } };
+  }
+  if (command.name === "weight") {
+    const result = await recordJourneyAwareBodyWeight(runtime, {
+      text: command.args,
+      receivedAt,
+      source,
+    });
+    return {
+      handled: true,
+      reply: {
+        text: result.status === "clarification"
+          ? result.question
+          : formatJourneyBodyWeight(result),
+      },
+    };
+  }
+  if (command.name === "12rm") {
+    const input = parseInitial12RMCommand(command.args);
+    if (input === undefined) {
+      return {
+        handled: true,
+        reply: {
+          text: "Usage: /stella-12rm <goblet-squat|dumbbell-bench-press|dumbbell-deadlift> <kg> confirm",
+        },
+      };
+    }
+    const observation = await runtime.recordInitial12RM({
+      ...input,
+      confirmationId: stableConfirmationId({
+        channel: event.channel,
+        ...(event.senderId === undefined ? {} : { senderId: event.senderId }),
+        ...(event.sessionKey === undefined ? {} : { sessionKey: event.sessionKey }),
+        commandBody: event.content,
+      }),
+      occurredAt: receivedAt,
+      recordedAt: receivedAt,
+      source: { kind: "user-text", text: event.content, ...source },
+    });
+    return {
+      handled: true,
+      reply: {
+        text: [
+          `Initial 12RM recorded: ${observation.exerciseId} ${observation.result.value} kg`,
+          `observation: ${observation.id}`,
+          formatJourneyStatus(await runtime.programJourneyStatus()),
+        ].join("\n"),
+      },
+    };
+  }
+  if (command.name === "activate") {
+    const state = await runtime.activateProgram(command.args);
+    return {
+      handled: true,
+      reply: {
+        text: [
+          `Program State activated: ${state.id}`,
+          `program: ${state.program.id}@${state.program.version}`,
+          `cycle-start: ${state.cycle.startDate}`,
+        ].join("\n"),
+      },
+    };
+  }
+  if (command.name === "facts") {
+    const input = parseFactsCommand(command.args);
+    return {
+      handled: true,
+      reply: {
+        text: input === undefined
+          ? "Usage: /stella-facts <today|next> [YYYY-MM-DD]"
+          : formatProgramFacts(await runtime.programFacts(input)),
+      },
+    };
+  }
+  const input = parsePrintableCommand(command.args);
+  if (input === undefined) {
+    return {
+      handled: true,
+      reply: { text: "Usage: /stella-print <today|week|phase> [YYYY-MM-DD]" },
+    };
+  }
+  const result = await runtime.printableLog(input);
+  return {
+    handled: true,
+    reply: {
+      text: `Printable Log: ${result.range}, ${result.pages} page(s)`,
+      mediaUrl: result.path,
+      trustedLocalMedia: true,
+    },
+  };
 }
 
 async function workoutLogUpload(
@@ -611,36 +953,145 @@ function resolveExtractionConfig(
   return { provider: record.provider, model: record.model };
 }
 
-type SetupCommandInput =
-  | { readonly kind: "help" }
-  | { readonly kind: "select"; readonly programSpecPath: string }
-  | { readonly kind: "confirm"; readonly cycleStart: string };
-
-function parseSetupCommand(args: string | undefined): SetupCommandInput {
-  const input = args?.trim() ?? "";
-  if (input === "" || input === "help") {
-    return { kind: "help" };
-  }
-  if (input.startsWith("select ")) {
-    const programSpecPath = input.slice("select ".length).trim();
-    if (programSpecPath.length === 0) {
-      return { kind: "help" };
-    }
-    return { kind: "select", programSpecPath };
-  }
-  const confirm = /^confirm\s+(\S+)$/.exec(input);
-  if (confirm?.[1] !== undefined) {
-    return { kind: "confirm", cycleStart: confirm[1] };
-  }
-  return { kind: "help" };
+function formatJourneyStatus(
+  status: Awaited<ReturnType<StellaFitnessRuntime["programJourneyStatus"]>>,
+): string {
+  return [
+    `Built-in Program: ${status.program.id}@${status.program.version}`,
+    `journey: ${status.state}`,
+    ...(status.missingPrerequisiteIds.length === 0
+      ? []
+      : [`missing-prerequisites: ${status.missingPrerequisiteIds.join(", ")}`]),
+    ...(status.missingInitial12RMExerciseIds.length === 0
+      ? []
+      : [`missing-initial-12rm: ${status.missingInitial12RMExerciseIds.join(", ")}`]),
+    `next: ${status.nextStep.code} - ${status.nextStep.prompt}`,
+  ].join("\n");
 }
 
-function setupHelp(): string {
+function parseInitial12RMCommand(args: string | undefined): {
+  readonly exerciseId:
+    | "goblet-squat"
+    | "dumbbell-bench-press"
+    | "dumbbell-deadlift";
+  readonly valueKg: number;
+} | undefined {
+  const match = /^\s*(goblet-squat|dumbbell-bench-press|dumbbell-deadlift)\s+(\d+(?:\.\d+)?)\s*(?:kg|公斤)?\s+confirm\s*$/iu.exec(
+    args ?? "",
+  );
+  if (match?.[1] === undefined || match[2] === undefined) return undefined;
+  const valueKg = Number(match[2]);
+  if (!Number.isFinite(valueKg) || valueKg <= 0) return undefined;
+  return {
+    exerciseId: match[1].toLowerCase() as
+      | "goblet-squat"
+      | "dumbbell-bench-press"
+      | "dumbbell-deadlift",
+    valueKg,
+  };
+}
+
+function stableConfirmationId(context: {
+  readonly channel: string;
+  readonly senderId?: string;
+  readonly sessionKey?: string;
+  readonly commandBody: string;
+}): string {
+  const hex = createHash("sha256")
+    .update(
+      [
+        context.channel,
+        context.senderId ?? "",
+        context.sessionKey ?? "",
+        context.commandBody,
+      ].join("\u0000"),
+    )
+    .digest("hex")
+    .slice(0, 32)
+    .split("");
+  hex[12] = "4";
+  hex[16] = "8";
+  return `${hex.slice(0, 8).join("")}-${hex.slice(8, 12).join("")}-${hex.slice(12, 16).join("")}-${hex.slice(16, 20).join("")}-${hex.slice(20).join("")}`;
+}
+
+function parseFactsCommand(args: string | undefined):
+  | { readonly kind: "today" | "next"; readonly date: string }
+  | undefined {
+  const match = /^\s*(today|next)(?:\s+(\d{4}-\d{2}-\d{2}))?\s*$/iu.exec(
+    args ?? "",
+  );
+  if (match?.[1] === undefined) return undefined;
+  return {
+    kind: match[1].toLowerCase() as "today" | "next",
+    date: match[2] ?? new Date().toISOString().slice(0, 10),
+  };
+}
+
+function parsePrintableCommand(args: string | undefined):
+  | { readonly range: "today" | "week" | "phase"; readonly date: string }
+  | undefined {
+  const match = /^\s*(today|week|phase)(?:\s+(\d{4}-\d{2}-\d{2}))?\s*$/iu.exec(
+    args ?? "",
+  );
+  if (match?.[1] === undefined) return undefined;
+  return {
+    range: match[1].toLowerCase() as "today" | "week" | "phase",
+    date: match[2] ?? new Date().toISOString().slice(0, 10),
+  };
+}
+
+function formatProgramFacts(
+  result: Awaited<ReturnType<StellaFitnessRuntime["programFacts"]>>,
+): string {
+  if (result.kind === "unsupported") return result.scope;
+  if (result.kind === "no-session") return `No ${result.relation} Planned Session.`;
+  if (result.kind === "symbol-fact") {
+    return `${result.exerciseId} ${result.symbol}: ${result.value} ${result.unit}`;
+  }
   return [
-    "Usage:",
-    "/stella-setup select <ProgramSpec YAML or JSON path>",
-    "/stella-setup confirm <YYYY-MM-DD>",
+    `${result.relation} Planned Session: ${result.session.date}`,
+    `stage: ${result.session.cycle.phase}, week: ${result.session.cycle.week}, day: ${result.session.day}`,
+    ...result.session.exercises.map((exercise) =>
+      `- ${exercise.displayName ?? exercise.exerciseId}: ${JSON.stringify(exercise.prescription)}${
+        exercise.resolvedLoad === undefined
+          ? ""
+          : `, ${exercise.resolvedLoad.symbol}=${exercise.resolvedLoad.value} ${exercise.resolvedLoad.unit}`
+      }`,
+    ),
   ].join("\n");
+}
+
+async function recordJourneyAwareBodyWeight(
+  runtime: StellaFitnessRuntime,
+  input: Parameters<StellaFitnessRuntime["recordBodyWeight"]>[0],
+) {
+  const status = await runtime.programJourneyStatus({
+    date: input.receivedAt.slice(0, 10),
+  });
+  if (status.state === "BASELINE_WEIGHT_REQUIRED") {
+    return await runtime.recordJourneyBodyWeight({ ...input, role: "baseline" });
+  }
+  if (
+    status.state === "PHASE_CHECKPOINT_REQUIRED" &&
+    status.requiredCheckpointWeek !== undefined
+  ) {
+    return await runtime.recordJourneyBodyWeight({
+      ...input,
+      role: "checkpoint",
+      checkpointWeek: status.requiredCheckpointWeek,
+    });
+  }
+  return await runtime.recordBodyWeight(input);
+}
+
+function formatJourneyBodyWeight(
+  result: Awaited<ReturnType<typeof recordJourneyAwareBodyWeight>>,
+): string {
+  if (result.status === "clarification") return result.question;
+  if ("role" in result) {
+    return `${result.role} body weight recorded: ${result.observation.value.amount} ${result.observation.value.unit}\nobservation: ${result.observation.id}`;
+  }
+  return formatBodyWeightRecording(result);
 }
 
 function resolvePersonalDataDirectory(

@@ -38,7 +38,7 @@ describe("course-derivative release authorization gate", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "Authorization digest does not match dist/program/fidelity/zhuoshu-v0.2.js",
+      "Authorization digest does not match dist/program/fidelity/zhuoshu-v0.2.yaml",
     );
   });
 
@@ -105,7 +105,7 @@ async function createReleaseFixture(
   const root = await mkdtemp(join(tmpdir(), "stella-release-test-"));
   temporaryRoots.push(root);
   const packageRoot = join(root, "package-source");
-  const derivative = "export const program = 'course-derived';\n";
+  const derivative = "id: zhuoshu-12-week\nversion: fixture\n";
   await mkdir(join(packageRoot, "dist/program/fidelity"), { recursive: true });
   await Promise.all([
     writeFile(
@@ -155,7 +155,7 @@ async function createReleaseFixture(
       ),
     ),
     writeFile(
-      join(packageRoot, "dist/program/fidelity/zhuoshu-v0.2.js"),
+      join(packageRoot, "dist/program/fidelity/zhuoshu-v0.2.yaml"),
       derivative,
     ),
     writeFile(join(packageRoot, "LICENSE"), "Apache License 2.0 fixture.\n"),
@@ -227,7 +227,7 @@ async function createAuthorization(
       },
       coveredDerivatives: [
         {
-          path: "dist/program/fidelity/zhuoshu-v0.2.js",
+          path: "dist/program/fidelity/zhuoshu-v0.2.yaml",
           sha256: derivativeDigest,
         },
       ],

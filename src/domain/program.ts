@@ -12,12 +12,20 @@ export type ProgramWeek = {
   readonly sessions: readonly ProgramSession[];
 };
 
+export type ProgramPrerequisite = {
+  readonly id: string;
+  readonly kind: "equipment" | "printed-material";
+  readonly required: true;
+  readonly label: string;
+};
+
 export type ProgramSpec = {
   readonly schemaVersion: string;
   readonly id: string;
   readonly version: string;
   readonly status: string;
   readonly phases: readonly ProgramRecord[];
+  readonly prerequisites: readonly ProgramPrerequisite[];
   readonly weeks: readonly ProgramWeek[];
   readonly templates: Readonly<Record<string, ProgramRecord>>;
   readonly loadSymbols: Readonly<Record<string, ProgramRecord>>;

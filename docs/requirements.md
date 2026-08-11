@@ -43,7 +43,10 @@ v1 不提供：
 ## 4. 核心用户流程
 
 ```text
-原课程 XLSX → 打印 → 纸笔填写 Actual → 训练后拍照
+安装 → 自动载入卓叔 12 周 Built-in Program
+→ 技术 preflight → 器材/打印材料确认 → baseline 体重
+→ 三主项独立初始 12RM → 星期一激活 → Planned Session / 可打印日志
+→ 纸笔填写 Actual → 训练后拍照
 → 图像结构化 → 必要字段确认 → Observation Record
 → 可重建 Training Record View
 ```
@@ -65,6 +68,8 @@ Program Engine 不评价处方质量。遇到 `status: unresolved` 或无效关�
 
 `A`、`A+1`、`N` 等是每个动作各自的符号节点，不得被模型解释成固定公斤增量。
 
+首版只有一个默认 Built-in Program，不提供计划选择器，也不要求用户输入 ProgramSpec 路径。持久化 Program Journey 必须依次暴露 `PREREQUISITES_REQUIRED`、`BASELINE_WEIGHT_REQUIRED`、`INITIAL_12RM_REQUIRED`、`READY_TO_ACTIVATE`、`ACTIVE` 或 `PHASE_CHECKPOINT_REQUIRED` 中唯一明确的下一步。Active Program State 只能在 prerequisites、baseline 和三个动作各自的 `A` 完整后，以星期一 cycle start 创建。
+
 ## 6. 训练日志抽取
 
 v1 只优先支持用户提供的原课程三阶段 XLSX 固定布局。
@@ -84,7 +89,7 @@ v1 只优先支持用户提供的原课程三阶段 XLSX 固定布局。
 
 ## 7. 体重记录
 
-用户可以记录带发生时间的体重 Observation。系统可以展示原始时间序列，但不得评价增减是否理想、推断原因或触发计划调整。
+用户可以记录带发生时间的体重 Observation。baseline 是激活门禁，第 4、8、12 周 checkpoint 是进入下一阶段或完成周期的交互门禁。系统可以确定性展示相对 baseline 和上一 checkpoint 的 kg、百分比变化及 `toward-goal`、`away-from-goal`、`unchanged`、`insufficient-data` 数学方向，但不得评价健康或理想程度、推断原因、后台监督或触发饮食/训练调整。
 
 ## 8. 数据模型
 
@@ -93,6 +98,7 @@ v1 只优先支持用户提供的原课程三阶段 XLSX 固定布局。
 - `Raw Artifact`：原始训练表图片等用户输入；
 - `Observation Record`：训练 actual、体重、用户原始备注等事实；
 - `Program State`：确定性的周期和符号重量绑定；
+- `Program Setup`：激活前 prerequisites、baseline 与 course-start 12RM 的稳定引用；
 - `Training Record View`：由 Program State 与 Observation Records 重建的事实视图；
 - `Processing Record`：抽取、确认、失败及 OpenClaw 执行元数据。
 
@@ -136,6 +142,8 @@ v1 只优先支持用户提供的原课程三阶段 XLSX 固定布局。
 - ProgramSpec validation 与 Program Engine；
 - Personal Data Directory 写入和确定性重建；
 - synthetic status/confirmation/recording replies。
+- Program Journey、Program Facts 和 Printable Log 的统一 Interface；
+- 绑定 conversation 中的范围拒绝，禁止把诊断、饮食、健康风险或计划调整问题转交通用 Agent。
 
 OpenClaw 负责 Provider、凭据、endpoint、授权和实际模型执行。Plugin 只能使用 operator 明确允许的模型，不另建 Provider 配置体系。
 
@@ -152,3 +160,4 @@ OpenClaw 负责 Provider、凭据、endpoint、授权和实际模型执行。Plu
 - 课程派生运行时制品只有在取得覆盖实际制品与渠道的授权后才能公开发行；
 - 发布制品不得包含用户数据、研发 pilot 或未授权来源内容；
 - clean install 与真实 OpenClaw load 是发行验收的一部分。
+- 安装包必须包含默认 Built-in Program 与项目自有 PDF 生成能力；公开发行仍须通过精确制品授权 gate。

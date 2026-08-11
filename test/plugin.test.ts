@@ -105,7 +105,7 @@ describe("Plugin registration", () => {
     ]);
   });
 
-  it("registers an explicit two-step Program setup command", async () => {
+  it("runs the Built-in Program journey without a ProgramSpec path or plan selector", async () => {
     const commands: Array<Record<string, unknown>> = [];
     const personalDataDirectory = configuredPersonalDirectory();
     const api = compatibleApi({
@@ -118,51 +118,49 @@ describe("Plugin registration", () => {
     registerStellaFitnessPlugin(
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
-    const setupCommand = commands.find(
-      (candidate) => candidate.name === "stella-setup",
+    const startCommand = commands.find(
+      (candidate) => candidate.name === "stella-start",
     );
     const requestConversationBinding = vi.fn().mockResolvedValue({
       status: "bound",
       binding: { bindingId: "stella-binding-1" },
     });
-    const handler = setupCommand?.handler as (context: {
+    const handler = startCommand?.handler as (context: {
       args?: string;
+      channel: string;
+      commandBody: string;
+      isAuthorizedSender: boolean;
       requestConversationBinding: typeof requestConversationBinding;
     }) => Promise<{ text: string }>;
 
     await expect(
       handler({
-        args: `select ${programFixturePath()}`,
+        channel: "test",
+        commandBody: "/stella-start",
+        isAuthorizedSender: true,
         requestConversationBinding,
       }),
     ).resolves.toMatchObject({
-      text: expect.stringContaining("ProgramSpec selected: zhuoshu-12-week@0.2.0"),
-    });
-    await expect(
-      handler({ args: "confirm 2026-08-10", requestConversationBinding }),
-    ).resolves.toMatchObject({
-      text: expect.stringMatching(
-        /Program State initialized:.+\n.+\n.+\nconversation-binding: active/su,
-      ),
+      text: expect.stringMatching(/zhuoshu-12-week@0\.2\.0.+PREREQUISITES_REQUIRED/su),
     });
     expect(requestConversationBinding).toHaveBeenCalledWith({
       summary: "Stella Fitness workout recording",
       detachHint:
         "Detach the Stella Fitness conversation binding to stop recording here.",
-      data: { workflow: "workout-recording" },
+      data: { workflow: "program-journey" },
     });
 
-    const state = JSON.parse(
+    const setup = JSON.parse(
       readFileSync(
-        join(personalDataDirectory.personalDataDirectory, "program", "state.json"),
+        join(personalDataDirectory.personalDataDirectory, "program", "setup.json"),
         "utf8",
       ),
     );
-    expect(state).toMatchObject({
-      schemaVersion: "stella-fitness/program-state/v0.2",
-      program: { id: "zhuoshu-12-week", version: "0.2.0" },
-      cycle: { startDate: "2026-08-10" },
+    expect(setup).toMatchObject({
+      schemaVersion: "stella-fitness/program-setup/v0.1",
+      prerequisiteAcknowledgements: {},
     });
+    expect(commands.map(({ name }) => name)).not.toContain("stella-setup");
   });
 
   it("claims clear body-weight text and returns only the recorded facts", async () => {
@@ -289,6 +287,50 @@ describe("Plugin registration", () => {
       hooks.get("before_agent_run")?.({ prompt: input }),
     ).resolves.toEqual({ outcome: "pass" });
     expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
+  });
+
+  it("refuses diagnosis and plan-adjustment questions in a Plugin-bound conversation", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: configuredPersonalDirectory(),
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(
+      hooks.get("inbound_claim")?.(
+        {
+          content: "体重没涨，我应该怎么调整饮食和训练？",
+          channel: "test",
+          isGroup: false,
+        },
+        { pluginBinding: { pluginId: "stella-fitness" } },
+      ),
+    ).resolves.toEqual({
+      handled: true,
+      reply: {
+        text:
+          "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+      },
+    });
+    await expect(
+      hooks.get("inbound_claim")?.(
+        {
+          content: "/stella-prerequisite adjustable-dumbbells",
+          channel: "test",
+          isGroup: false,
+        },
+        { pluginBinding: { pluginId: "stella-fitness" } },
+      ),
+    ).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("pull-up-bar") },
+    });
   });
 
   it("connects configured Plugin runtime to OpenClaw structured extraction", async () => {
@@ -670,7 +712,13 @@ describe("Plugin registration", () => {
     ).rejects.toThrow("STRUCTURED_MEDIA_REQUIRED");
     expect(commands.map(({ name }) => name)).toEqual([
       "stella-status",
-      "stella-setup",
+      "stella-start",
+      "stella-prerequisite",
+      "stella-weight",
+      "stella-12rm",
+      "stella-activate",
+      "stella-facts",
+      "stella-print",
       "stella-confirm",
     ]);
   });

@@ -14,6 +14,15 @@
 | 用户纠错可追溯 | correction records | rebuild case |
 | 重复上传不重复计入 | artifact hash/idempotency | duplicate case |
 | 体重只作事实记录 | Observation schema, ADR-024 | no-evaluation case |
+| 默认计划自动载入 | Built-in Program loader | clean-install channel journey |
+| Program Journey 唯一下一步 | Program Journey Interface | transition/restart tests |
+| baseline 与三个独立 `A` 激活门禁 | Program Setup + course-start 12RM Observation | activation happy/rejection cases |
+| 星期一 cycle start | Program State | activation rejection case |
+| today/next 确定性事实问答 | Program Facts Interface | channel + scenario facts cases |
+| A4 黑白可打印日志 | Printable Log Interface | PDF render + channel attachment |
+| Week 4/8/12 体重 checkpoint | Program Journey | phase checkpoint cases |
+| 体重数学方向、无建议 | Weight Facts View, ADR-024 | fixed kg/percent/direction fixtures |
+| 绑定会话拒绝超范围问题 | OpenClaw inbound adapter | bound-conversation refusal case |
 | Program Engine 确定性 | ProgramSpec | full 12-week fixtures |
 | `A/N` 每个动作独立 | Program State | binding fixtures |
 | recovery 保持计划身份 | ProgramSpec | recovery fixture |
@@ -30,5 +39,6 @@
 | 不保留隐藏监督分支 | ADR-024 | G-SCOPE-004 + code search |
 | 软件与内容权利分离 | ADR-018 | package inspection |
 | raw Office 文件不入包 | ADR-010/011 | artifact exclusion test |
+| Built-in Program 在安装包且授权 fail closed | package/release gate | artifact inspection |
 
 冻结需求变更时必须同步本矩阵、Golden Cases 和适用 ADR。

@@ -50,6 +50,9 @@ export type ProgramState = {
     Record<string, Readonly<Record<string, SymbolicLoadBinding>>>
   >;
   readonly assistanceBindings: Readonly<Record<string, AssistanceBinding>>;
+  readonly setup?: {
+    readonly baselineObservationId: string;
+  };
   readonly nextCycle?: {
     readonly restartFromWeek: 1;
     readonly symbolicLoadBindings: Readonly<
@@ -124,6 +127,8 @@ export async function selectProgramForSetup(options: {
 export async function confirmProgramSetup(options: {
   personalDataDirectory: string;
   cycleStart: string;
+  symbolicLoadBindings?: ProgramState["symbolicLoadBindings"];
+  baselineObservationId?: string;
 }): Promise<ProgramState> {
   assertCycleStart(options.cycleStart);
   const programDirectory = join(options.personalDataDirectory, PROGRAM_DIRECTORY);
@@ -142,8 +147,11 @@ export async function confirmProgramSetup(options: {
     id: selection.id,
     program: selection.program,
     cycle: { startDate: options.cycleStart },
-    symbolicLoadBindings: {},
+    symbolicLoadBindings: options.symbolicLoadBindings ?? {},
     assistanceBindings: {},
+    ...(options.baselineObservationId === undefined
+      ? {}
+      : { setup: { baselineObservationId: options.baselineObservationId } }),
     provenance: {
       kind: "program-selection-confirmation",
       selectionId: selection.id,
@@ -337,6 +345,9 @@ function parseState(source: string): ProgramState {
     typeof value.cycle.startDate !== "string" ||
     !isSymbolicLoadBindings(value.symbolicLoadBindings) ||
     !isAssistanceBindings(value.assistanceBindings) ||
+    (value.setup !== undefined &&
+      (!isRecord(value.setup) ||
+        typeof value.setup.baselineObservationId !== "string")) ||
     (value.nextCycle !== undefined && !isNextCycle(value.nextCycle)) ||
     !isRecord(value.provenance) ||
     value.provenance.kind !== "program-selection-confirmation" ||

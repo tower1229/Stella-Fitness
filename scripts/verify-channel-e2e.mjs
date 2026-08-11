@@ -19,10 +19,6 @@ export async function verifyTelegramChannelFlow(options) {
     options.workspace,
     "test/fixtures/openclaw-e2e-provider",
   );
-  const programSpec = resolve(
-    options.workspace,
-    "knowledge/programs/zhuoshu-12-week/program-spec.v0.2.yaml",
-  );
   let gateway;
   try {
     options.run(options.openclaw, [
@@ -40,18 +36,59 @@ export async function verifyTelegramChannelFlow(options) {
     gateway = startGateway(options, gatewayPort);
     await telegram.waitForCall(({ method }) => method === "getme");
 
-    telegram.pushText(`/stella-setup select ${programSpec}`);
-    await telegram.waitForText((text) =>
-      text.includes("ProgramSpec selected: zhuoshu-12-week@0.2"),
-    );
-
-    telegram.pushText("/stella-setup confirm 2026-08-10");
+    telegram.pushText("/stella-start");
     const approval = await telegram.waitForMessage((message) =>
       message.text.includes("Plugin bind approval required"),
     );
     const approvalData = await telegram.waitForCallbackData("Always allow");
     telegram.pushCallback(approvalData, approval.platformMessage);
     await telegram.waitForCall(({ method }) => method === "answercallbackquery");
+
+    const prerequisites = [
+      "adjustable-dumbbells",
+      "pull-up-bar",
+      "printed-workout-log",
+    ];
+    for (const [index, prerequisite] of prerequisites.entries()) {
+      telegram.pushText(`/stella-prerequisite ${prerequisite}`);
+      const remaining = prerequisites.slice(index + 1);
+      try {
+        await telegram.waitForText((text) =>
+          text.includes(`Built-in Program: zhuoshu-12-week@0.2.0`) &&
+          (remaining.length === 0
+            ? text.includes("journey: BASELINE_WEIGHT_REQUIRED")
+            : text.includes(`missing-prerequisites: ${remaining.join(", ")}`)),
+        );
+      } catch (error) {
+        throw new Error(
+          `${String(error)}\nPrerequisite: ${prerequisite}\nTelegram: ${JSON.stringify(telegram.snapshot())}\nGateway tail: ${gateway.logs().slice(-12_000)}`,
+        );
+      }
+    }
+    telegram.pushText("/stella-weight 2026-08-10T03:00:00Z 68.4 kg");
+    await telegram.waitForText((text) =>
+      text.startsWith("baseline body weight recorded: 68.4 kg"),
+    );
+    for (const [exercise, value] of [
+      ["goblet-squat", 32],
+      ["dumbbell-bench-press", 24],
+      ["dumbbell-deadlift", 40],
+    ]) {
+      telegram.pushText(`/stella-12rm ${exercise} ${value} kg confirm`);
+      await telegram.waitForText((text) =>
+        text.startsWith(`Initial 12RM recorded: ${exercise} ${value} kg`),
+      );
+    }
+    telegram.pushText("/stella-activate 2026-08-10");
+    await telegram.waitForText((text) =>
+      text.startsWith("Program State activated:"),
+    );
+    telegram.pushText("/stella-facts today 2026-08-10");
+    await telegram.waitForText((text) =>
+      text.startsWith("today Planned Session: 2026-08-10"),
+    );
+    telegram.pushText("/stella-print today 2026-08-10");
+    await telegram.waitForCall(({ method }) => method === "senddocument");
 
     telegram.pushPhoto("训练日志");
     const pending = await telegram.waitForText((text) =>
@@ -120,6 +157,13 @@ export async function verifyTelegramChannelFlow(options) {
     return {
       channel: "telegram",
       bindingApproved: true,
+      builtInProgram: true,
+      prerequisites: true,
+      baseline: true,
+      initial12RM: true,
+      activated: true,
+      facts: true,
+      printablePdf: true,
       imageIngress: true,
       gatewayRestarted: true,
       confirmationRecovered: true,
@@ -132,6 +176,7 @@ export async function verifyTelegramChannelFlow(options) {
     await telegram.close();
   }
 }
+
 
 function configureOpenClaw(options, input) {
   const set = (path, value, extra = []) =>
@@ -287,6 +332,21 @@ async function createFakeTelegramApi() {
         };
         messages.push(message);
         reply(response, platformMessage);
+        return;
+      }
+      if (method === "senddocument") {
+        reply(response, {
+          message_id: messageId++,
+          date: nowSeconds(),
+          chat: telegramChat(),
+          from: telegramBot(),
+          document: {
+            file_id: "printable-log",
+            file_unique_id: "printable-log-unique",
+            file_name: "stella-printable-log.pdf",
+            mime_type: "application/pdf",
+          },
+        });
         return;
       }
       if (method === "getmycommands") {

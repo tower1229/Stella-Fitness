@@ -25,6 +25,38 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
   const pluginRuntime = createStellaFitnessRuntime(options);
 
   return {
+    programJourneyStatus(
+      input?: Parameters<typeof pluginRuntime.programJourneyStatus>[0],
+    ) {
+      return pluginRuntime.programJourneyStatus(input);
+    },
+    acknowledgePrerequisite(
+      input: Parameters<typeof pluginRuntime.acknowledgePrerequisite>[0],
+    ) {
+      return pluginRuntime.acknowledgePrerequisite(input);
+    },
+    recordJourneyBodyWeight(
+      input: Parameters<typeof pluginRuntime.recordJourneyBodyWeight>[0],
+    ) {
+      return pluginRuntime.recordJourneyBodyWeight(input);
+    },
+    recordInitial12RM(
+      input: Parameters<typeof pluginRuntime.recordInitial12RM>[0],
+    ) {
+      return pluginRuntime.recordInitial12RM(input);
+    },
+    activateProgram(cycleStart: string) {
+      return pluginRuntime.activateProgram(cycleStart);
+    },
+    programFacts(input: Parameters<typeof pluginRuntime.programFacts>[0]) {
+      return pluginRuntime.programFacts(input);
+    },
+    printableLog(input: Parameters<typeof pluginRuntime.printableLog>[0]) {
+      return pluginRuntime.printableLog(input);
+    },
+    weightFacts() {
+      return pluginRuntime.weightFacts();
+    },
     selectProgram(programSpec: unknown) {
       return pluginRuntime.selectProgram(programSpec);
     },
