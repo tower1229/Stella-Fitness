@@ -36,17 +36,20 @@ try {
     "NOTICE",
   ];
   const forbiddenPrefixes = [
-    "sources/",
-    "knowledge/",
-    "test/",
-    "tests/",
     "docs/quality/",
-    "benchmarks/",
-    "pilot/",
     "node_modules/",
-    "personal-data/",
-    "runtime-data/",
   ];
+  const forbiddenSegments = new Set([
+    "sources",
+    "knowledge",
+    "test",
+    "tests",
+    "benchmark",
+    "benchmarks",
+    "pilot",
+    "personal-data",
+    "runtime-data",
+  ]);
   const forbiddenExtensions = [
     ".docx",
     ".xlsx",
@@ -60,6 +63,7 @@ try {
   ];
   const forbiddenPaths = files.filter((path) =>
     forbiddenPrefixes.some((prefix) => path.startsWith(prefix)) ||
+    path.split("/").some((segment) => forbiddenSegments.has(segment)) ||
     forbiddenExtensions.some((extension) =>
       path.toLowerCase().endsWith(extension),
     ),

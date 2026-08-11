@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -76,14 +76,19 @@ describe("real distribution artifact inspection", () => {
     });
   });
 
-  it("rejects raw Office sources even when npm includes them", async () => {
-    const fixture = await createReleaseFixture({ includeRawWorkbook: true });
+  it.each([
+    ["raw Office source", "sources/originals/workout-log.xlsx"],
+    ["personal data", "personal-data/observations/user.json"],
+    ["developer benchmark", "dist/benchmarks/case.json"],
+    ["pilot artifact", "dist/pilot/handwritten-case.json"],
+  ])("rejects %s even when npm includes it", async (_label, forbiddenPath) => {
+    const fixture = await createReleaseFixture({ forbiddenPath });
 
     const result = runPackageVerifier(fixture.tarball);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "Package includes forbidden path: sources/originals/workout-log.xlsx",
+      `Package includes forbidden path: ${forbiddenPath}`,
     );
   });
 });
@@ -95,7 +100,7 @@ type ReleaseFixture = {
 };
 
 async function createReleaseFixture(
-  options: { includeRawWorkbook?: boolean } = {},
+  options: { forbiddenPath?: string } = {},
 ): Promise<ReleaseFixture> {
   const root = await mkdtemp(join(tmpdir(), "stella-release-test-"));
   temporaryRoots.push(root);
@@ -115,7 +120,10 @@ async function createReleaseFixture(
           "openclaw.plugin.json",
           "COURSE-RIGHTS-NOTICE",
           "NOTICE",
-          ...(options.includeRawWorkbook ? ["sources"] : []),
+          ...(options.forbiddenPath === undefined ||
+          options.forbiddenPath.startsWith("dist/")
+            ? []
+            : [options.forbiddenPath.split("/")[0]]),
         ],
         exports: {
           ".": "./dist/plugin.js",
@@ -175,18 +183,9 @@ async function createReleaseFixture(
         "",
       ].join("\n"),
     ),
-    ...(options.includeRawWorkbook
-      ? [
-          mkdir(join(packageRoot, "sources/originals"), {
-            recursive: true,
-          }).then(() =>
-            writeFile(
-              join(packageRoot, "sources/originals/workout-log.xlsx"),
-              "raw workbook fixture",
-            ),
-          ),
-        ]
-      : []),
+    ...(options.forbiddenPath === undefined
+      ? []
+      : [writeForbiddenFixture(packageRoot, options.forbiddenPath)]),
   ]);
   const packOutput = execFileSync(
     "npm",
@@ -199,6 +198,11 @@ async function createReleaseFixture(
   );
   const [pack] = JSON.parse(packOutput) as [{ filename: string }];
   return { root, tarball: join(root, pack.filename), derivative };
+}
+
+async function writeForbiddenFixture(packageRoot: string, path: string) {
+  await mkdir(join(packageRoot, dirname(path)), { recursive: true });
+  await writeFile(join(packageRoot, path), "forbidden artifact fixture");
 }
 
 async function createAuthorization(

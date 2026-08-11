@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const workspace = fileURLToPath(new URL("../", import.meta.url));
 const temporaryRoot = mkdtempSync(join(tmpdir(), "stella-clean-install-"));
@@ -96,10 +96,68 @@ try {
   if (status !== expectedStatus) {
     throw new Error(`Unexpected status response: ${JSON.stringify(status)}`);
   }
+  const recording = await verifyInstalledRecordingFlow();
 
   process.stdout.write(
-    `${JSON.stringify({ installed: true, loaded: true, hooks: 3, commands, diagnostics: 0, status })}\n`,
+    `${JSON.stringify({ installed: true, loaded: true, hooks: 3, commands, diagnostics: 0, recording, status })}\n`,
   );
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
+}
+
+async function verifyInstalledRecordingFlow() {
+  const projectsRoot = join(stateDir, "npm", "projects");
+  const projects = readdirSync(projectsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  if (projects.length !== 1) {
+    throw new Error(
+      `Expected one clean-install npm project, got ${projects.length}`,
+    );
+  }
+  const installedPackage = join(
+    projectsRoot,
+    projects[0],
+    "node_modules",
+    "@tower1229",
+    "stella-fitness",
+  );
+  const scenario = await import(
+    pathToFileURL(join(installedPackage, "dist/scenario/harness.js")).href
+  );
+  const personalDataDirectory = join(temporaryRoot, "personal-data");
+  const runtimeDirectory = join(temporaryRoot, "runtime-data");
+  mkdirSync(personalDataDirectory, { recursive: true });
+  mkdirSync(runtimeDirectory, { recursive: true });
+  const harness = scenario.createScenarioHarness({
+    extractionRuntime: new scenario.ControlledExtractionRuntime([]),
+    personalDataDirectory: () => personalDataDirectory,
+    runtimeDirectory: () => runtimeDirectory,
+    preflight: () => ({ readiness: "READY", reasons: [] }),
+  });
+  try {
+    const recorded = await harness.recordBodyWeight({
+      text: "今天体重 68.4 kg",
+      receivedAt: "2026-08-11T03:00:00.000Z",
+      source: { channel: "clean-install", messageId: "recording-flow-1" },
+    });
+    if (
+      recorded.status !== "recorded" ||
+      recorded.observation.value.amount !== 68.4 ||
+      recorded.observation.value.unit !== "kg" ||
+      recorded.view.points.length !== 1 ||
+      recorded.view.errors.length !== 0
+    ) {
+      throw new Error(
+        `Installed package did not persist the expected Observation: ${JSON.stringify(recorded)}`,
+      );
+    }
+    return {
+      kind: recorded.observation.kind,
+      persisted: true,
+      points: recorded.view.points.length,
+    };
+  } finally {
+    await harness.shutdown();
+  }
 }

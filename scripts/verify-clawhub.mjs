@@ -78,6 +78,22 @@ try {
   }
 
   const blockers = [];
+  let publishPermission = "verified-package-owner";
+  try {
+    JSON.parse(
+      run(clawhub, [
+        "package",
+        "moderation-status",
+        packageJson.name,
+        "--json",
+      ]),
+    );
+  } catch {
+    publishPermission = "unverified-without-existing-package";
+    blockers.push(
+      "ClawHub owner-only package access is unverified; the first authorized publish must succeed before this post-publish check can pass",
+    );
+  }
   if (run("git", ["status", "--porcelain"]) !== "") {
     blockers.push("Git worktree is not clean");
   }
@@ -92,6 +108,7 @@ try {
         cliVersion,
         dryRun: true,
         package: `${dryRun.name}@${dryRun.version}`,
+        publishPermission,
         ready: false,
         validation: validation.status,
       })}\n`,
@@ -111,6 +128,7 @@ try {
         family: dryRun.family,
         files: dryRun.files,
         package: `${dryRun.name}@${dryRun.version}`,
+        publishPermission,
         ready: true,
         source: dryRun.source,
         validation: validation.status,
