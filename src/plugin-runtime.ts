@@ -47,12 +47,9 @@ import {
 } from "./program/engine.js";
 import { validateProgramSpec } from "./program/validator.js";
 import {
-  confirmProgramSetup,
   readActiveProgram,
   readActiveProgramIfPresent,
   replaceProgramState,
-  selectProgramForSetup,
-  type PendingProgramSelection,
   type ProgramState,
 } from "./program/state.js";
 import {
@@ -119,8 +116,6 @@ export type ConfirmedWorkoutLogOutput = PluginExtractionBase & {
 
 export type StellaFitnessRuntime = {
   preflight(): ConfigurationPreflightResult;
-  selectProgram(programSpec: unknown): Promise<PendingProgramSelection>;
-  confirmCycleStart(cycleStart: string): Promise<ProgramState>;
   resolvePlannedSession(
     input: Omit<ProgramResolutionInput, "program"> & { programSpec: unknown },
   ): PlannedSession | null;
@@ -246,6 +241,7 @@ export function createStellaFitnessRuntime(options: {
   const mediaSanitizer = options.mediaSanitizer ?? createBufferMediaSanitizer();
   const journey = () => createProgramJourney({
     personalDataDirectory: requiredPersonalDataDirectory(options),
+    runtimeDirectory: requiredRuntimeDirectory(options),
     preflight,
   });
   let stopped = false;
@@ -350,16 +346,23 @@ export function createStellaFitnessRuntime(options: {
     async programFacts(query) {
       if (query.kind !== "unsupported") {
         const status = await journey().status(
-          "date" in query ? { date: query.date } : {},
+          query.kind === "today" || query.kind === "next" ? { date: query.date } : {},
         );
         if (status.state !== "ACTIVE") {
           throw new Error(`Program Facts is unavailable in ${status.state}`);
         }
       }
-      return await queryProgramFacts({
+      const result = await queryProgramFacts({
         personalDataDirectory: requiredPersonalDataDirectory(options),
         query,
       });
+      if (query.kind === "next" && result.kind === "planned-session-facts") {
+        const targetStatus = await journey().status({ date: result.session.date });
+        if (targetStatus.state !== "ACTIVE") {
+          throw new Error(`Program Facts is unavailable in ${targetStatus.state}`);
+        }
+      }
+      return result;
     },
     async printableLog(input) {
       const status = await journey().status({ date: input.date });
@@ -373,25 +376,6 @@ export function createStellaFitnessRuntime(options: {
     },
     weightFacts() {
       return journey().weightFacts();
-    },
-    async selectProgram(programSpec) {
-      assertSetupPreflight(preflight());
-      const personalDataDirectory = options.personalDataDirectory?.();
-      if (personalDataDirectory === undefined) {
-        throw new Error("Personal Data Directory is unavailable after preflight");
-      }
-      return await selectProgramForSetup({
-        personalDataDirectory,
-        programSpec,
-      });
-    },
-    async confirmCycleStart(cycleStart) {
-      assertSetupPreflight(preflight());
-      const personalDataDirectory = options.personalDataDirectory?.();
-      if (personalDataDirectory === undefined) {
-        throw new Error("Personal Data Directory is unavailable after preflight");
-      }
-      return await confirmProgramSetup({ personalDataDirectory, cycleStart });
     },
     resolvePlannedSession(input) {
       return resolvePlannedSession({
@@ -562,16 +546,6 @@ function assertPersonalDataPreflight(
   if (preflight.readiness === "BLOCKED_CONFIGURATION") {
     throw new Error(
       `Stella Fitness cannot accept body-weight input in ${preflight.readiness}: ${preflight.reasons
-        .map(({ code }) => code)
-        .join(", ")}`,
-    );
-  }
-}
-
-function assertSetupPreflight(preflight: ConfigurationPreflightResult): void {
-  if (preflight.readiness === "BLOCKED_CONFIGURATION") {
-    throw new Error(
-      `Stella Fitness cannot start setup in ${preflight.readiness}: ${preflight.reasons
         .map(({ code }) => code)
         .join(", ")}`,
     );

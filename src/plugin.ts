@@ -85,28 +85,24 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: false,
     requireAuth: true,
     async handler(context) {
-      const status = await stellaRuntime.programJourneyStatus();
       const binding = await context.requestConversationBinding({
         summary: "Stella Fitness workout recording",
         detachHint: "Detach the Stella Fitness conversation binding to stop recording here.",
         data: { workflow: "program-journey" },
       });
-      const statusText = formatJourneyStatus(status);
       if (binding.status === "pending") {
+        return binding.reply;
+      }
+      if (binding.status !== "bound") {
         return {
-          ...binding.reply,
-          text: [
-            statusText,
-            binding.reply.text ?? "Approve the Stella Fitness conversation binding.",
-          ].join("\n"),
+          text: `conversation-binding: unavailable (${binding.message})`,
         };
       }
+      const statusText = formatJourneyStatus(await stellaRuntime.programJourneyStatus());
       return {
         text: [
           statusText,
-          binding.status === "bound"
-            ? "conversation-binding: active"
-            : `conversation-binding: unavailable (${binding.message})`,
+          "conversation-binding: active",
         ].join("\n"),
       };
     },

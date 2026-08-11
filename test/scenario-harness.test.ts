@@ -19,6 +19,10 @@ import {
 } from "../src/scenario/harness.js";
 import type { ConfigurationPreflightResult } from "../src/preflight.js";
 import {
+  confirmProgramSetup,
+  selectProgramForSetup,
+} from "../src/program/state.js";
+import {
   alternateRawMediaUploadFixture,
   rawMediaUploadFixture,
 } from "./support/sanitized-media.js";
@@ -593,6 +597,7 @@ describe("scenario-level Plugin harness", () => {
     const harness = createScenarioHarness({
       extractionRuntime: new ControlledExtractionRuntime([]),
       personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => join(personalDataDirectory, "..", "runtime"),
       preflight: () => ({
         readiness: "BLOCKED_CONFIGURATION",
         reasons: [
@@ -604,8 +609,8 @@ describe("scenario-level Plugin harness", () => {
       }),
     });
 
-    await expect(harness.selectProgram({ id: "program" })).rejects.toThrow(
-      "CONVERSATION_ACCESS_REQUIRED",
+    await expect(harness.programJourneyStatus()).rejects.toThrow(
+      "BLOCKED_CONFIGURATION",
     );
     expect(readdirSync(personalDataDirectory)).toEqual([]);
   });
@@ -618,7 +623,10 @@ describe("scenario-level Plugin harness", () => {
       preflight: () => ({ readiness: "READY_FOR_SETUP", reasons: [] }),
     });
 
-    const setup = await harness.selectProgram(await programFixture());
+    const setup = await selectProgramForSetup({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+    });
 
     expect(setup).toMatchObject({
       schemaVersion: "stella-fitness/program-selection/v0.1",
@@ -657,7 +665,7 @@ describe("scenario-level Plugin harness", () => {
       preflight: () => ({ readiness: "READY_FOR_SETUP", reasons: [] }),
     });
 
-    await expect(harness.selectProgram(programSpec)).rejects.toThrow(
+    await expect(selectProgramForSetup({ personalDataDirectory, programSpec })).rejects.toThrow(
       "status must be resolved",
     );
     expect(readdirSync(personalDataDirectory)).toEqual([]);
@@ -674,15 +682,15 @@ describe("scenario-level Plugin harness", () => {
       }),
     };
     const programSpec = await programFixture();
-    const interruptedSetup = await createScenarioHarness(options).selectProgram(
+    const interruptedSetup = await selectProgramForSetup({
+      personalDataDirectory,
       programSpec,
-    );
+    });
 
-    const resumedHarness = createScenarioHarness(options);
-    expect(await resumedHarness.selectProgram(programSpec)).toEqual(
+    expect(await selectProgramForSetup({ personalDataDirectory, programSpec })).toEqual(
       interruptedSetup,
     );
-    const state = await resumedHarness.confirmCycleStart("2026-08-10");
+    const state = await confirmProgramSetup({ personalDataDirectory, cycleStart: "2026-08-10" });
 
     expect(state).toEqual({
       schemaVersion: "stella-fitness/program-state/v0.2",
@@ -711,9 +719,9 @@ describe("scenario-level Plugin harness", () => {
       /body.profile|health|nutrition|performance/i,
     );
     await expect(
-      resumedHarness.confirmCycleStart("2026-08-10"),
+      confirmProgramSetup({ personalDataDirectory, cycleStart: "2026-08-10" }),
     ).resolves.toEqual(state);
-    await expect(resumedHarness.selectProgram(programSpec)).resolves.toEqual(
+    await expect(selectProgramForSetup({ personalDataDirectory, programSpec })).resolves.toEqual(
       interruptedSetup,
     );
   });
@@ -725,9 +733,12 @@ describe("scenario-level Plugin harness", () => {
       personalDataDirectory: () => personalDataDirectory,
       preflight: () => ({ readiness: "READY_FOR_SETUP", reasons: [] }),
     });
-    await harness.selectProgram(await programFixture());
+    await selectProgramForSetup({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+    });
 
-    await expect(harness.confirmCycleStart("2026-08-11")).rejects.toThrow(
+    await expect(confirmProgramSetup({ personalDataDirectory, cycleStart: "2026-08-11" })).rejects.toThrow(
       "Cycle start must be a Monday",
     );
     expect(readdirSync(join(personalDataDirectory, "program")).sort()).toEqual([

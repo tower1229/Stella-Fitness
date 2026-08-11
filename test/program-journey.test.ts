@@ -1,4 +1,13 @@
-import { mkdtempSync, rmSync, unlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -182,6 +191,7 @@ describe("Program Journey", () => {
       runtimeDirectory: () => join(root, "runtime"),
       preflight: () => ({ readiness: "READY_FOR_SETUP", reasons: [] }),
     });
+    await advanceToInitial12RM(harness);
     const input = {
       exerciseId: "goblet-squat" as const,
       valueKg: 32,
@@ -201,5 +211,186 @@ describe("Program Journey", () => {
     await expect(
       harness.recordInitial12RM({ ...input, valueKg: 34 }),
     ).rejects.toThrow("confirmation ID was reused for different facts");
+
+    const concurrentInput = {
+      ...input,
+      exerciseId: "dumbbell-bench-press" as const,
+      confirmationId: "00000000-0000-4000-8000-000000000011",
+      source: { ...input.source, text: "哑铃卧推 12RM 24 kg" },
+      valueKg: 24,
+    };
+    const [left, right] = await Promise.all([
+      harness.recordInitial12RM(concurrentInput),
+      harness.recordInitial12RM(concurrentInput),
+    ]);
+    expect(left).toEqual(right);
+    expect(
+      readdirSync(join(root, "personal", "observations", "special-session"))
+        .filter((file) => file.endsWith(".json")),
+    ).toHaveLength(2);
+
+    const conflictingInput = {
+      ...input,
+      exerciseId: "dumbbell-deadlift" as const,
+      confirmationId: "00000000-0000-4000-8000-000000000015",
+      source: { ...input.source, text: "哑铃硬拉 12RM 40 kg" },
+      valueKg: 40,
+    };
+    const conflicting = await Promise.allSettled([
+      harness.recordInitial12RM(conflictingInput),
+      harness.recordInitial12RM({
+        ...conflictingInput,
+        valueKg: 42,
+        source: { ...conflictingInput.source, text: "哑铃硬拉 12RM 42 kg" },
+      }),
+    ]);
+    expect(conflicting.map(({ status }) => status).sort()).toEqual([
+      "fulfilled",
+      "rejected",
+    ]);
+    expect(
+      readdirSync(join(root, "personal", "observations", "special-session"))
+        .filter((file) => file.endsWith(".json")),
+    ).toHaveLength(3);
+  });
+
+  it("fails closed before writes, enforces step order, accepts limited readiness and recovers a stale runtime lock", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-boundaries-"));
+    temporaryRoots.push(root);
+    const personal = join(root, "personal");
+    const runtime = join(root, "runtime");
+    mkdirSync(personal, { recursive: true });
+    const blocked = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      personalDataDirectory: () => personal,
+      runtimeDirectory: () => runtime,
+      preflight: () => ({
+        readiness: "BLOCKED_CONFIGURATION",
+        reasons: [{ code: "CONVERSATION_ACCESS_REQUIRED", message: "blocked" }],
+      }),
+    });
+    await expect(blocked.acknowledgePrerequisite({
+      prerequisiteId: "adjustable-dumbbells",
+      acknowledgedAt: "2026-08-11T00:00:00.000Z",
+      source: { kind: "user-text", text: "ready" },
+    })).rejects.toThrow("BLOCKED_CONFIGURATION");
+    expect(readdirSync(personal)).toEqual([]);
+
+    const limited = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      personalDataDirectory: () => personal,
+      runtimeDirectory: () => runtime,
+      preflight: () => ({
+        readiness: "READY_WITH_LIMITED_CAPABILITIES",
+        reasons: [{ code: "STRUCTURED_MEDIA_REQUIRED", message: "media unavailable" }],
+      }),
+    });
+    await expect(limited.programJourneyStatus()).resolves.toMatchObject({
+      state: "PREREQUISITES_REQUIRED",
+    });
+    await expect(limited.recordInitial12RM({
+      exerciseId: "goblet-squat",
+      valueKg: 32,
+      confirmationId: "00000000-0000-4000-8000-000000000012",
+      occurredAt: "2026-08-11T04:00:00.000Z",
+      recordedAt: "2026-08-11T04:01:00.000Z",
+      source: { kind: "user-text", text: "too early" },
+    })).rejects.toThrow("unavailable in PREREQUISITES_REQUIRED");
+    mkdirSync(runtime, { recursive: true });
+    writeFileSync(join(runtime, "program-setup.lock"), JSON.stringify({
+      pid: 999_999_999,
+      createdAt: new Date().toISOString(),
+    }));
+    await expect(limited.acknowledgePrerequisite({
+      prerequisiteId: "adjustable-dumbbells",
+      acknowledgedAt: "2026-08-11T00:00:00.000Z",
+      source: { kind: "user-text", text: "ready" },
+    })).resolves.toMatchObject({ state: "PREREQUISITES_REQUIRED" });
+    expect(existsSync(join(runtime, "program-setup.lock"))).toBe(false);
+  });
+
+  it("rejects schema-invalid nested setup and cross-exercise 12RM references", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-schema-"));
+    temporaryRoots.push(root);
+    const harness = journeyHarness(root);
+    await harness.programJourneyStatus();
+    const setupPath = join(root, "personal", "program", "setup.json");
+    const setup = JSON.parse(readFileSync(setupPath, "utf8"));
+    setup.prerequisiteAcknowledgements["adjustable-dumbbells"] = true;
+    writeFileSync(setupPath, `${JSON.stringify(setup)}\n`);
+    await expect(harness.programJourneyStatus()).rejects.toThrow(
+      "Program Setup is schema-invalid",
+    );
+
+    rmSync(root, { recursive: true, force: true });
+    mkdirSync(root, { recursive: true });
+    const swappedHarness = journeyHarness(root);
+    await advanceToInitial12RM(swappedHarness);
+    const first = await swappedHarness.recordInitial12RM(initial12RMInput(
+      "goblet-squat",
+      32,
+      "00000000-0000-4000-8000-000000000013",
+    ));
+    const second = await swappedHarness.recordInitial12RM(initial12RMInput(
+      "dumbbell-bench-press",
+      24,
+      "00000000-0000-4000-8000-000000000014",
+    ));
+    const swappedSetup = JSON.parse(readFileSync(setupPath, "utf8"));
+    swappedSetup.initial12RMObservationIds["goblet-squat"] = second.id;
+    swappedSetup.initial12RMObservationIds["dumbbell-bench-press"] = first.id;
+    writeFileSync(setupPath, `${JSON.stringify(swappedSetup)}\n`);
+    await expect(swappedHarness.programJourneyStatus()).resolves.toMatchObject({
+      state: "INITIAL_12RM_REQUIRED",
+      missingInitial12RMExerciseIds: expect.arrayContaining([
+        "goblet-squat",
+        "dumbbell-bench-press",
+      ]),
+    });
   });
 });
+
+function journeyHarness(root: string) {
+  return createScenarioHarness({
+    extractionRuntime: new ControlledExtractionRuntime([]),
+    personalDataDirectory: () => join(root, "personal"),
+    runtimeDirectory: () => join(root, "runtime"),
+    preflight: () => ({ readiness: "READY_FOR_SETUP", reasons: [] }),
+  });
+}
+
+async function advanceToInitial12RM(
+  harness: ReturnType<typeof journeyHarness>,
+): Promise<void> {
+  for (const [index, prerequisiteId] of [
+    "adjustable-dumbbells",
+    "pull-up-bar",
+    "printed-workout-log",
+  ].entries()) {
+    await harness.acknowledgePrerequisite({
+      prerequisiteId,
+      acknowledgedAt: `2026-08-11T0${index}:00:00.000Z`,
+      source: { kind: "user-text", text: prerequisiteId },
+    });
+  }
+  await harness.recordJourneyBodyWeight({
+    role: "baseline",
+    text: "68.4 kg",
+    receivedAt: "2026-08-11T03:00:00.000Z",
+  });
+}
+
+function initial12RMInput(
+  exerciseId: "goblet-squat" | "dumbbell-bench-press" | "dumbbell-deadlift",
+  valueKg: number,
+  confirmationId: string,
+) {
+  return {
+    exerciseId,
+    valueKg,
+    confirmationId,
+    occurredAt: "2026-08-11T04:00:00.000Z",
+    recordedAt: "2026-08-11T04:01:00.000Z",
+    source: { kind: "user-text" as const, text: `${exerciseId} ${valueKg} kg` },
+  };
+}

@@ -10,6 +10,7 @@ import {
   ControlledExtractionRuntime,
   createScenarioHarness,
 } from "../src/scenario/harness.js";
+import { activateProgramFixture } from "./support/program-state.js";
 import { rawMediaUploadFixture } from "./support/sanitized-media.js";
 
 const temporaryRoots: string[] = [];
@@ -34,8 +35,7 @@ describe("special workout sessions", () => {
       runtimeDirectory: () => join(personalDataDirectory, "..", "runtime"),
       preflight: () => ({ readiness: "READY", reasons: [] }),
     });
-    await harness.selectProgram(await programFixture());
-    await harness.confirmCycleStart("2026-08-10");
+    await activateProgramFixture({ personalDataDirectory, programSpec: await programFixture() });
 
     const pending = await harness.ingestWorkoutLog({
       runId: "week-4-strength-test",
@@ -164,8 +164,7 @@ describe("special workout sessions", () => {
         runtimeDirectory: () => join(personalDataDirectory, "..", "runtime"),
         preflight: () => ({ readiness: "READY", reasons: [] }),
       });
-      await harness.selectProgram(await programFixture());
-      await harness.confirmCycleStart("2026-08-10");
+      await activateProgramFixture({ personalDataDirectory, programSpec: await programFixture() });
 
       const result = await harness.ingestWorkoutLog({
         runId: `recovery-${week}-${weekday}`,
@@ -246,8 +245,7 @@ describe("special workout sessions", () => {
       runtimeDirectory: () => join(personalDataDirectory, "..", "runtime"),
       preflight: () => ({ readiness: "READY", reasons: [] }),
     });
-    await harness.selectProgram(await programFixture());
-    await harness.confirmCycleStart("2026-08-10");
+    await activateProgramFixture({ personalDataDirectory, programSpec: await programFixture() });
 
     const pending = await harness.ingestWorkoutLog({
       runId: "end-of-cycle-retest",
@@ -305,8 +303,7 @@ describe("special workout sessions", () => {
       runtimeDirectory: () => join(personalDataDirectory, "..", "runtime"),
       preflight: () => ({ readiness: "READY", reasons: [] }),
     });
-    await harness.selectProgram(await programFixture());
-    await harness.confirmCycleStart("2026-08-10");
+    await activateProgramFixture({ personalDataDirectory, programSpec: await programFixture() });
     const first = await harness.ingestWorkoutLog({
       runId: "concurrent-week-4",
       upload: rawMediaUploadFixture(),

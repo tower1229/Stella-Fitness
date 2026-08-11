@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
-  open,
+  link,
   readFile,
   readdir,
   rename,
@@ -41,8 +41,8 @@ const INITIAL_12RM_EXERCISES = [
   "dumbbell-deadlift",
 ] as const;
 const SETUP_FILE = join("program", "setup.json");
-const SETUP_LOCK = join("program", "setup.lock");
 const INITIAL_12RM_DIRECTORY = join("observations", "special-session");
+const RUNTIME_LOCK_FILE = "program-setup.lock";
 
 export type RequiredPrerequisiteId = (typeof REQUIRED_PREREQUISITES)[number];
 export type Initial12RMExerciseId = (typeof INITIAL_12RM_EXERCISES)[number];
@@ -130,9 +130,11 @@ type WeightChange = {
 
 export function createProgramJourney(options: {
   readonly personalDataDirectory: string;
+  readonly runtimeDirectory: string;
   readonly preflight: () => ConfigurationPreflightResult;
 }) {
   const personalDataDirectory = options.personalDataDirectory;
+  const runtimeDirectory = options.runtimeDirectory;
   return {
     async status(input: { readonly date?: string } = {}): Promise<ProgramJourneyStatus> {
       assertJourneyPreflight(options.preflight());
@@ -142,13 +144,13 @@ export function createProgramJourney(options: {
         ? undefined
         : await resolveBodyWeightReference(personalDataDirectory, setup.baselineObservationId);
       const initial = await readInitial12RMObservations(personalDataDirectory);
-      const activeInitialIds = new Set(initial.map(({ id }) => id));
+      const initialById = new Map(initial.map((observation) => [observation.id, observation]));
       const missingPrerequisiteIds = REQUIRED_PREREQUISITES.filter(
         (id) => setup.prerequisiteAcknowledgements[id] === undefined,
       );
       const missingInitial12RMExerciseIds = INITIAL_12RM_EXERCISES.filter((id) => {
         const observationId = setup.initial12RMObservationIds[id];
-        return observationId === undefined || !activeInitialIds.has(observationId);
+        return observationId === undefined || initialById.get(observationId)?.exerciseId !== id;
       });
       const common = {
         schemaVersion: "stella-fitness/program-journey-status/v0.1" as const,
@@ -231,10 +233,11 @@ export function createProgramJourney(options: {
       readonly acknowledgedAt: string;
       readonly source: ObservationSource;
     }): Promise<ProgramJourneyStatus> {
+      assertJourneyPreflight(options.preflight());
       const prerequisiteId = requiredPrerequisiteId(input.prerequisiteId);
       assertTimestamp(input.acknowledgedAt, "acknowledgedAt");
       await ensureSetup(personalDataDirectory);
-      await updateSetup(personalDataDirectory, (setup) => {
+      await updateSetup(personalDataDirectory, runtimeDirectory, (setup) => {
         const existing = setup.prerequisiteAcknowledgements[prerequisiteId];
         const acknowledgement: PrerequisiteAcknowledgement = {
           prerequisiteId,
@@ -265,7 +268,29 @@ export function createProgramJourney(options: {
       | { readonly status: "clarification"; readonly question: string }
       | { readonly status: "recorded"; readonly role: "baseline" | "checkpoint"; readonly observation: BodyWeightObservation }
     > {
+      assertJourneyPreflight(options.preflight());
       await ensureSetup(personalDataDirectory);
+      const journeyStatus = input.role === "baseline"
+        ? await this.status()
+        : await this.status({
+            date: await checkpointGateDate(
+              personalDataDirectory,
+              input.checkpointWeek,
+            ),
+          });
+      if (
+        input.role === "baseline" &&
+        journeyStatus.state !== "BASELINE_WEIGHT_REQUIRED"
+      ) {
+        throw new Error(`Baseline body weight is unavailable in ${journeyStatus.state}`);
+      }
+      if (
+        input.role === "checkpoint" &&
+        (journeyStatus.state !== "PHASE_CHECKPOINT_REQUIRED" ||
+          journeyStatus.requiredCheckpointWeek !== input.checkpointWeek)
+      ) {
+        throw new Error(`Checkpoint body weight is unavailable in ${journeyStatus.state}`);
+      }
       if (
         input.role === "baseline" &&
         (await readActiveProgramIfPresent({ personalDataDirectory })) !== undefined
@@ -287,7 +312,7 @@ export function createProgramJourney(options: {
         source: { kind: "user-text", text: input.text, ...input.source },
         recordedAt: new Date(input.receivedAt).toISOString(),
       });
-      await updateSetup(personalDataDirectory, (setup) =>
+      await updateSetup(personalDataDirectory, runtimeDirectory, (setup) =>
         input.role === "baseline"
           ? { ...setup, baselineObservationId: observation.id }
           : {
@@ -309,22 +334,38 @@ export function createProgramJourney(options: {
       readonly recordedAt: string;
       readonly source: ObservationSource;
     }): Promise<CourseStart12RMObservation> {
+      assertJourneyPreflight(options.preflight());
       await ensureSetup(personalDataDirectory);
       if ((await readActiveProgramIfPresent({ personalDataDirectory })) !== undefined) {
         throw new Error("Course-start 12RM cannot change after activation");
       }
-      const observation = await persistInitial12RM(personalDataDirectory, input);
-      await updateSetup(personalDataDirectory, (setup) => ({
-        ...setup,
-        initial12RMObservationIds: {
-          ...setup.initial12RMObservationIds,
-          [input.exerciseId]: observation.id,
-        },
-      }));
-      return observation;
+      const journeyStatus = await this.status();
+      if (journeyStatus.state !== "INITIAL_12RM_REQUIRED") {
+        const existing = await findInitial12RMByConfirmation(
+          personalDataDirectory,
+          input.confirmationId,
+        );
+        if (existing !== undefined) {
+          assertSameInitial12RM(existing, input);
+          return existing;
+        }
+        throw new Error(`Course-start 12RM is unavailable in ${journeyStatus.state}`);
+      }
+      return await withSetupLock(runtimeDirectory, async () => {
+        const observation = await persistInitial12RM(personalDataDirectory, input);
+        await writeUpdatedSetup(personalDataDirectory, (setup) => ({
+          ...setup,
+          initial12RMObservationIds: {
+            ...setup.initial12RMObservationIds,
+            [input.exerciseId]: observation.id,
+          },
+        }));
+        return observation;
+      });
     },
 
     async activate(cycleStart: string): Promise<ProgramState> {
+      assertJourneyPreflight(options.preflight());
       const active = await readActiveProgramIfPresent({ personalDataDirectory });
       if (active !== undefined) {
         if (active.state.cycle.startDate !== cycleStart) {
@@ -346,6 +387,9 @@ export function createProgramJourney(options: {
         if (observation === undefined) {
           throw new Error(`Initial 12RM Observation is missing for ${exerciseId}`);
         }
+        if (observation.exerciseId !== exerciseId) {
+          throw new Error(`Initial 12RM Observation is mapped to the wrong exercise: ${exerciseId}`);
+        }
         bindings[exerciseId] = {
           A: {
             value: observation.result.value,
@@ -365,6 +409,7 @@ export function createProgramJourney(options: {
     },
 
     async weightFacts(): Promise<WeightFactsView> {
+      assertJourneyPreflight(options.preflight());
       const setup = await ensureSetup(personalDataDirectory);
       const baseline = setup.baselineObservationId === undefined
         ? undefined
@@ -446,40 +491,87 @@ async function ensureSetup(personalDataDirectory: string): Promise<ProgramSetup>
 
 async function updateSetup(
   personalDataDirectory: string,
+  runtimeDirectory: string,
   update: (setup: ProgramSetup) => ProgramSetup,
 ): Promise<ProgramSetup> {
-  return await withSetupLock(personalDataDirectory, async () => {
-    const current = await readSetup(personalDataDirectory);
-    const next = update(current);
-    const path = join(personalDataDirectory, SETUP_FILE);
-    const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  return await withSetupLock(runtimeDirectory, async () =>
+    await writeUpdatedSetup(personalDataDirectory, update),
+  );
+}
+
+async function writeUpdatedSetup(
+  personalDataDirectory: string,
+  update: (setup: ProgramSetup) => ProgramSetup,
+): Promise<ProgramSetup> {
+  const current = await readSetup(personalDataDirectory);
+  const next = update(current);
+  const path = join(personalDataDirectory, SETUP_FILE);
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  try {
     await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
     });
     await rename(temporaryPath, path);
-    return next;
-  });
+  } finally {
+    await unlink(temporaryPath).catch(() => undefined);
+  }
+  return next;
 }
 
-async function withSetupLock<T>(personalDataDirectory: string, run: () => Promise<T>): Promise<T> {
-  const lockPath = join(personalDataDirectory, SETUP_LOCK);
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try {
-      const handle = await open(lockPath, "wx", 0o600);
+async function withSetupLock<T>(runtimeDirectory: string, run: () => Promise<T>): Promise<T> {
+  await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
+  const lockPath = join(runtimeDirectory, RUNTIME_LOCK_FILE);
+  const candidatePath = join(runtimeDirectory, `program-setup.${process.pid}.${randomUUID()}.lock`);
+  await writeFile(candidatePath, `${JSON.stringify({
+    pid: process.pid,
+    createdAt: new Date().toISOString(),
+  })}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  try {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
       try {
-        return await run();
-      } finally {
-        await handle.close();
-        await unlink(lockPath).catch(() => undefined);
+        await link(candidatePath, lockPath);
+        try {
+          return await run();
+        } finally {
+          await unlink(lockPath).catch(() => undefined);
+        }
+      } catch (error) {
+        if (!isAlreadyExists(error)) throw error;
+        if (await isStaleLock(lockPath)) {
+          await unlink(lockPath).catch((unlinkError: unknown) => {
+            if (!isMissing(unlinkError)) throw unlinkError;
+          });
+          continue;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
       }
-    } catch (error) {
-      if (!isAlreadyExists(error)) throw error;
-      await new Promise<void>((resolve) => setTimeout(resolve, 10));
     }
+    throw new Error("Program Setup is busy");
+  } finally {
+    await unlink(candidatePath).catch(() => undefined);
   }
-  throw new Error("Program Setup is busy");
+}
+
+async function isStaleLock(lockPath: string): Promise<boolean> {
+  try {
+    const value: unknown = JSON.parse(await readFile(lockPath, "utf8"));
+    if (!isRecord(value) || !Number.isInteger(value.pid) || typeof value.createdAt !== "string") {
+      return true;
+    }
+    const age = Date.now() - new Date(value.createdAt).getTime();
+    if (!Number.isFinite(age) || age > 30_000) return true;
+    try {
+      process.kill(value.pid as number, 0);
+      return false;
+    } catch (error) {
+      return error instanceof Error && "code" in error && error.code === "ESRCH";
+    }
+  } catch (error) {
+    if (isMissing(error)) return false;
+    return true;
+  }
 }
 
 async function persistInitial12RM(
@@ -510,13 +602,7 @@ async function persistInitial12RM(
     ({ provenance }) => provenance.confirmationId === input.confirmationId,
   );
   if (existing !== undefined) {
-    if (
-      existing.exerciseId !== input.exerciseId ||
-      existing.result.value !== input.valueKg ||
-      existing.source.text !== input.source.text
-    ) {
-      throw new Error("Initial 12RM confirmation ID was reused for different facts");
-    }
+    assertSameInitial12RM(existing, input);
     return existing;
   }
   const observation: CourseStart12RMObservation = {
@@ -539,6 +625,32 @@ async function persistInitial12RM(
     mode: 0o600,
   });
   return observation;
+}
+
+async function findInitial12RMByConfirmation(
+  personalDataDirectory: string,
+  confirmationId: string,
+): Promise<CourseStart12RMObservation | undefined> {
+  return (await readInitial12RMObservations(personalDataDirectory)).find(
+    ({ provenance }) => provenance.confirmationId === confirmationId,
+  );
+}
+
+function assertSameInitial12RM(
+  existing: CourseStart12RMObservation,
+  input: {
+    readonly exerciseId: Initial12RMExerciseId;
+    readonly valueKg: number;
+    readonly source: ObservationSource;
+  },
+): void {
+  if (
+    existing.exerciseId !== input.exerciseId ||
+    existing.result.value !== input.valueKg ||
+    existing.source.text !== input.source.text
+  ) {
+    throw new Error("Initial 12RM confirmation ID was reused for different facts");
+  }
 }
 
 async function readInitial12RMObservations(personalDataDirectory: string): Promise<readonly CourseStart12RMObservation[]> {
@@ -573,14 +685,13 @@ function parseInitial12RM(source: string): CourseStart12RMObservation {
     value.result.value <= 0 ||
     value.result.unit !== "kg" ||
     value.result.test !== "12RM" ||
-    typeof value.occurredAt !== "string" ||
-    !isRecord(value.source) ||
-    value.source.kind !== "user-text" ||
-    typeof value.source.text !== "string" ||
+    typeof value.occurredAt !== "string" || !isCanonicalTimestamp(value.occurredAt) ||
+    !isObservationSource(value.source) ||
     !isRecord(value.provenance) ||
     value.provenance.kind !== "course-start-12rm-recording" ||
-    typeof value.provenance.confirmationId !== "string" ||
-    typeof value.provenance.recordedAt !== "string"
+    !isUuid(value.provenance.confirmationId) ||
+    typeof value.provenance.recordedAt !== "string" ||
+    !isCanonicalTimestamp(value.provenance.recordedAt)
   ) {
     throw new Error("Course-start 12RM Observation is schema-invalid");
   }
@@ -598,11 +709,55 @@ function parseSetup(source: string): ProgramSetup {
     value.schemaVersion !== "stella-fitness/program-setup/v0.1" ||
     !isRecord(value.prerequisiteAcknowledgements) ||
     !isRecord(value.initial12RMObservationIds) ||
-    !isRecord(value.checkpointObservationIds)
+    !isRecord(value.checkpointObservationIds) ||
+    !hasOnlyKeys(value, [
+      "schemaVersion",
+      "prerequisiteAcknowledgements",
+      "baselineObservationId",
+      "initial12RMObservationIds",
+      "checkpointObservationIds",
+    ]) ||
+    (value.baselineObservationId !== undefined && !isUuid(value.baselineObservationId)) ||
+    !validPrerequisiteAcknowledgements(value.prerequisiteAcknowledgements) ||
+    !validObservationReferences(value.initial12RMObservationIds, INITIAL_12RM_EXERCISES) ||
+    !validObservationReferences(value.checkpointObservationIds, ["4", "8", "12"])
   ) {
     throw new Error("Program Setup is schema-invalid");
   }
   return value as ProgramSetup;
+}
+
+function validPrerequisiteAcknowledgements(value: Record<string, unknown>): boolean {
+  if (!hasOnlyKeys(value, REQUIRED_PREREQUISITES)) return false;
+  return Object.entries(value).every(([key, acknowledgement]) =>
+    isRecord(acknowledgement) &&
+    hasOnlyKeys(acknowledgement, ["prerequisiteId", "acknowledgedAt", "source"]) &&
+    acknowledgement.prerequisiteId === key &&
+    typeof acknowledgement.acknowledgedAt === "string" &&
+    isCanonicalTimestamp(acknowledgement.acknowledgedAt) &&
+    isObservationSource(acknowledgement.source),
+  );
+}
+
+function validObservationReferences(
+  value: Record<string, unknown>,
+  allowedKeys: readonly string[],
+): boolean {
+  return hasOnlyKeys(value, allowedKeys) && Object.values(value).every(isUuid);
+}
+
+function isObservationSource(value: unknown): value is ObservationSource {
+  return isRecord(value) &&
+    hasOnlyKeys(value, ["kind", "text", "channel", "messageId", "runId"]) &&
+    value.kind === "user-text" &&
+    typeof value.text === "string" &&
+    [value.channel, value.messageId, value.runId].every(
+      (item) => item === undefined || typeof item === "string",
+    );
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
 }
 
 function dueCheckpoints(
@@ -617,6 +772,23 @@ function dueCheckpoints(
   }
   const completedWeeks = Math.floor((current.getTime() - start.getTime()) / 604_800_000);
   return [4, 8, 12].filter((week): week is 4 | 8 | 12 => completedWeeks >= week);
+}
+
+async function checkpointGateDate(
+  personalDataDirectory: string,
+  checkpointWeek: 4 | 8 | 12 | undefined,
+): Promise<string> {
+  if (checkpointWeek === undefined) {
+    throw new Error("Checkpoint week must be 4, 8 or 12");
+  }
+  const active = await readActiveProgramIfPresent({ personalDataDirectory });
+  if (active === undefined) {
+    throw new Error("Checkpoint body weight requires an Active Program State");
+  }
+  const start = new Date(`${active.state.cycle.startDate}T00:00:00.000Z`);
+  return new Date(start.getTime() + checkpointWeek * 604_800_000)
+    .toISOString()
+    .slice(0, 10);
 }
 
 function requiredPrerequisiteId(value: string): RequiredPrerequisiteId {
@@ -638,9 +810,14 @@ function assertTimestamp(value: string, label: string): void {
 }
 
 function assertJourneyPreflight(result: ConfigurationPreflightResult): void {
-  if (result.readiness !== "READY" && result.readiness !== "READY_FOR_SETUP") {
+  if (result.readiness === "BLOCKED_CONFIGURATION") {
     throw new Error(`Program Journey is blocked by ${result.readiness}`);
   }
+}
+
+function isCanonicalTimestamp(value: string): boolean {
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
 }
 
 function toKg(observation: BodyWeightObservation): number {

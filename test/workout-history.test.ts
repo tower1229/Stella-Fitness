@@ -18,6 +18,7 @@ import {
 } from "../src/scenario/harness.js";
 import type { ConfigurationPreflightResult } from "../src/preflight.js";
 import { rawMediaUploadFixture } from "./support/sanitized-media.js";
+import { activateProgramFixture } from "./support/program-state.js";
 import { workoutLogCandidate } from "./support/workout-log-candidate.js";
 
 const temporaryRoots: string[] = [];
@@ -331,8 +332,7 @@ describe("workout history", () => {
         { parsed: workoutLogCandidate(), metadata: { provider: "controlled" } },
       ]),
     );
-    await firstCycle.selectProgram(programFixture());
-    await firstCycle.confirmCycleStart("2026-08-10");
+    await activateProgramFixture({ personalDataDirectory, programSpec: programFixture() });
     await firstCycle.ingestWorkoutLog(request("cycle-one-workout"));
     const statePath = join(personalDataDirectory, "program", "state.json");
     const state = JSON.parse(readFileSync(statePath, "utf8")) as {

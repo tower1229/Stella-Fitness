@@ -96,11 +96,30 @@ describe("Program Facts and Printable Log", () => {
     expect(readFileSync(strengthTest.path).toString("latin1")).toContain(
       "/ActualFieldsBlank true",
     );
+
+    await expect(harness.printableLog({
+      range: "week",
+      date: "2026-08-10",
+    })).resolves.toMatchObject({
+      range: "week",
+      layout: "ordinary-training",
+      pages: 3,
+    });
+    await expect(harness.printableLog({
+      range: "phase",
+      date: "2026-08-10",
+    })).resolves.toMatchObject({
+      range: "phase",
+      layout: "mixed",
+      pages: 12,
+    });
   });
 
   it("gates Week 5 on a Week 4 checkpoint and rebuilds deterministic weight facts", async () => {
     const harness = await activeHarness();
 
+    await expect(harness.programFacts({ kind: "next", date: "2026-09-06" }))
+      .rejects.toThrow("PHASE_CHECKPOINT_REQUIRED");
     await expect(harness.programJourneyStatus({ date: "2026-09-07" })).resolves
       .toMatchObject({
         state: "PHASE_CHECKPOINT_REQUIRED",
@@ -117,6 +136,29 @@ describe("Program Facts and Printable Log", () => {
 
     await expect(harness.programJourneyStatus({ date: "2026-09-07" })).resolves
       .toMatchObject({ state: "ACTIVE" });
+    await expect(harness.programFacts({ kind: "next", date: "2026-09-06" }))
+      .resolves.toMatchObject({
+        kind: "planned-session-facts",
+        session: { date: "2026-09-07", cycle: { week: 5 } },
+      });
+    await expect(harness.programFacts({ kind: "next", date: "2026-10-04" }))
+      .rejects.toThrow("PHASE_CHECKPOINT_REQUIRED");
+    await harness.recordJourneyBodyWeight({
+      role: "checkpoint",
+      checkpointWeek: 8,
+      text: "2026-10-04T12:00:00Z 体重 71 kg",
+      receivedAt: "2026-10-04T12:00:00.000Z",
+    });
+    await expect(harness.programFacts({ kind: "next", date: "2026-11-02" }))
+      .rejects.toThrow("PHASE_CHECKPOINT_REQUIRED");
+    await harness.recordJourneyBodyWeight({
+      role: "checkpoint",
+      checkpointWeek: 12,
+      text: "2026-11-01T12:00:00Z 体重 72 kg",
+      receivedAt: "2026-11-01T12:00:00.000Z",
+    });
+    await expect(harness.programFacts({ kind: "next", date: "2026-11-02" }))
+      .resolves.toEqual({ kind: "no-session", relation: "next" });
     await expect(harness.weightFacts()).resolves.toMatchObject({
       goal: "gain-weight",
       baseline: { amountKg: 68.4 },

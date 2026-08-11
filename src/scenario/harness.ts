@@ -57,12 +57,6 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
     weightFacts() {
       return pluginRuntime.weightFacts();
     },
-    selectProgram(programSpec: unknown) {
-      return pluginRuntime.selectProgram(programSpec);
-    },
-    confirmCycleStart(cycleStart: string) {
-      return pluginRuntime.confirmCycleStart(cycleStart);
-    },
     resolvePlannedSession(
       input: Parameters<typeof pluginRuntime.resolvePlannedSession>[0],
     ) {

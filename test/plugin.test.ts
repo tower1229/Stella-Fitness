@@ -121,10 +121,15 @@ describe("Plugin registration", () => {
     const startCommand = commands.find(
       (candidate) => candidate.name === "stella-start",
     );
-    const requestConversationBinding = vi.fn().mockResolvedValue({
-      status: "bound",
-      binding: { bindingId: "stella-binding-1" },
-    });
+    const requestConversationBinding = vi.fn()
+      .mockResolvedValueOnce({
+        status: "pending",
+        reply: { text: "Approve binding", body: "approval-card" },
+      })
+      .mockResolvedValueOnce({
+        status: "bound",
+        binding: { bindingId: "stella-binding-1" },
+      });
     const handler = startCommand?.handler as (context: {
       args?: string;
       channel: string;
@@ -132,6 +137,16 @@ describe("Plugin registration", () => {
       isAuthorizedSender: boolean;
       requestConversationBinding: typeof requestConversationBinding;
     }) => Promise<{ text: string }>;
+
+    await expect(
+      handler({
+        channel: "test",
+        commandBody: "/stella-start",
+        isAuthorizedSender: true,
+        requestConversationBinding,
+      }),
+    ).resolves.toEqual({ text: "Approve binding", body: "approval-card" });
+    expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
 
     await expect(
       handler({
