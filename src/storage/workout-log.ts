@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { RawArtifactRecord } from "../domain/media.js";
@@ -90,6 +90,21 @@ export async function persistWorkoutLogObservation(options: {
     { encoding: "utf8", flag: "wx", mode: 0o600 },
   );
   return { observation, path };
+}
+
+export async function rollbackWorkoutLogObservation(options: {
+  readonly personalDataDirectory: string;
+  readonly path: string;
+}): Promise<void> {
+  await unlink(join(options.personalDataDirectory, options.path)).catch(
+    (error: unknown) => {
+      if (
+        !(error instanceof Error && "code" in error && error.code === "ENOENT")
+      ) {
+        throw error;
+      }
+    },
+  );
 }
 
 function missingPlannedSpecialSession(): never {

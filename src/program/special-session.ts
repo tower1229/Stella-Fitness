@@ -9,10 +9,16 @@ import type {
   ProgramSpec,
   ResolvedWorkoutSession,
 } from "../domain/program.js";
-import type { SpecialSessionCandidate } from "../extraction/candidate.js";
-import type { OrdinaryWorkoutLogCandidate } from "../extraction/candidate.js";
+import type {
+  OrdinaryWorkoutLogCandidate,
+  SpecialSessionCandidate,
+} from "../extraction/candidate.js";
 import { resolvePlannedSession } from "./engine.js";
-import type { ProgramState } from "./state.js";
+import type {
+  AssistanceBinding,
+  ProgramState,
+  SymbolicLoadBinding,
+} from "./state.js";
 
 const WEEKDAY_OFFSET = {
   monday: 0,
@@ -102,22 +108,10 @@ export function applyStrengthTestBindings(options: {
 }): ProgramState {
   const symbolicLoadBindings = structuredClone(
     options.state.symbolicLoadBindings,
-  ) as Record<string, Record<string, {
-    value: number;
-    unit: "kg";
-    test: "12RM";
-    observationId: string;
-    recordedAt: string;
-  }>>;
+  ) as Record<string, Record<string, SymbolicLoadBinding>>;
   const assistanceBindings = structuredClone(
     options.state.assistanceBindings,
-  ) as Record<string, {
-    exerciseId: "pull-up";
-    result: { value: number; unit: "repetitions" };
-    test: "max_reps_first_set";
-    observationId: string;
-    recordedAt: string;
-  }>;
+  ) as Record<string, AssistanceBinding>;
   const plannedByExercise = new Map(
     options.observation.plannedSession.tests.map((test) => [
       test.exerciseId,
@@ -125,13 +119,10 @@ export function applyStrengthTestBindings(options: {
     ]),
   );
   if (options.observation.sessionType.value === "end_of_cycle_retest") {
-    const nextCycleBindings: Record<string, Record<"A", {
-      value: number;
-      unit: "kg";
-      test: "12RM";
-      observationId: string;
-      recordedAt: string;
-    }>> = {};
+    const nextCycleBindings: Record<
+      string,
+      Record<"A", SymbolicLoadBinding>
+    > = {};
     for (const actual of options.observation.testResults) {
       const planned = plannedByExercise.get(actual.exerciseId.value);
       const result = actual.result.value;

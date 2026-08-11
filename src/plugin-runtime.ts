@@ -44,6 +44,7 @@ import {
 import { validateProgramSpec } from "./program/validator.js";
 import {
   confirmProgramSetup,
+  readActiveProgram,
   readActiveProgramIfPresent,
   replaceProgramState,
   selectProgramForSetup,
@@ -64,7 +65,10 @@ import {
   persistRawWorkoutLogArtifact,
   persistWorkoutLogProcessingRecord,
 } from "./storage/media.js";
-import { persistWorkoutLogObservation } from "./storage/workout-log.js";
+import {
+  persistWorkoutLogObservation,
+  rollbackWorkoutLogObservation,
+} from "./storage/workout-log.js";
 
 type PluginExtractionBase = {
   execution: ExtractionExecutionMetadata;
@@ -146,11 +150,15 @@ type PendingWorkoutLogConfirmation = {
   readonly artifact: RawArtifactRecord;
   readonly runId: string;
   readonly execution: ExtractionExecutionMetadata;
-  readonly plannedSession?: ResolvedWorkoutSession;
   result?: {
     readonly fingerprint: string;
     readonly promise: Promise<ConfirmedWorkoutLogOutput>;
   };
+};
+
+type CandidateSessionContext = {
+  readonly candidate: WorkoutLogCandidate;
+  readonly plannedSession?: ResolvedWorkoutSession;
 };
 
 export function createStellaFitnessRuntime(options: {
@@ -165,6 +173,26 @@ export function createStellaFitnessRuntime(options: {
   const preflight = options.preflight;
   const mediaSanitizer = options.mediaSanitizer ?? createBufferMediaSanitizer();
   let stopped = false;
+  let programStateUpdateTail: Promise<void> = Promise.resolve();
+  const updateSpecialSessionState = (
+    personalDataDirectory: string,
+    observation: Extract<
+      WorkoutLogObservation,
+      { kind: "workout-special-session" }
+    >,
+  ): Promise<ProgramState> => {
+    const update = programStateUpdateTail.then(async () =>
+      await persistSpecialSessionState({
+        personalDataDirectory,
+        observation,
+      }),
+    );
+    programStateUpdateTail = update.then(
+      () => undefined,
+      () => undefined,
+    );
+    return update;
+  };
 
   return {
     preflight,
@@ -297,6 +325,7 @@ export function createStellaFitnessRuntime(options: {
           request,
           controller,
           confirmations,
+          updateSpecialSessionState,
         }),
         settled: false,
         controller,
@@ -339,6 +368,7 @@ export function createStellaFitnessRuntime(options: {
         personalDataDirectory: requiredPersonalDataDirectory(options),
         pending,
         values: input.values,
+        updateSpecialSessionState,
       });
       pending.result = { fingerprint, promise };
       void promise.catch(() => {
@@ -358,6 +388,7 @@ export function createStellaFitnessRuntime(options: {
         }
       }
       await Promise.allSettled([...runs.values()].map(({ promise }) => promise));
+      await programStateUpdateTail;
     },
   };
 }
@@ -437,6 +468,13 @@ async function executeWorkoutLogIngest(options: {
   request: WorkoutLogIngestRequest;
   controller: AbortController;
   confirmations: Map<string, PendingWorkoutLogConfirmation>;
+  updateSpecialSessionState: (
+    personalDataDirectory: string,
+    observation: Extract<
+      WorkoutLogObservation,
+      { kind: "workout-special-session" }
+    >,
+  ) => Promise<ProgramState>;
 }): Promise<PluginExtractionOutput> {
   const startedAt = new Date().toISOString();
   const artifact = await persistRawWorkoutLogArtifact({
@@ -482,29 +520,12 @@ async function executeWorkoutLogIngest(options: {
       throw new ProcessingFailureError("invalid-result", error);
     }
     candidate = requireSpecialSessionConfirmation(candidate);
-    const activeProgram = await readActiveProgramIfPresent({
+    const context = await resolveCandidateSessionContext({
       personalDataDirectory: options.personalDataDirectory,
+      candidate,
     });
-    let plannedSession: ResolvedWorkoutSession | undefined;
-    if (activeProgram !== undefined) {
-      if ("testResults" in candidate) {
-        plannedSession = resolveSpecialSession({
-          candidate,
-          program: activeProgram.program,
-          state: activeProgram.state,
-        });
-      } else {
-        const recovery = resolveRecoverySession({
-          candidate,
-          program: activeProgram.program,
-          state: activeProgram.state,
-        });
-        if (recovery !== undefined) {
-          candidate = recovery.candidate;
-          plannedSession = recovery.plannedSession;
-        }
-      }
-    }
+    candidate = context.candidate;
+    const { plannedSession } = context;
     const recordedAt = new Date().toISOString();
     const confirmationId =
       candidate.uncertainFields.length === 0 ? undefined : randomUUID();
@@ -519,15 +540,14 @@ async function executeWorkoutLogIngest(options: {
             ...(plannedSession === undefined ? {} : { plannedSession }),
           })
         : undefined;
-    const programState =
-      persistedObservation?.observation.kind === "workout-special-session" &&
-        activeProgram !== undefined
-        ? await persistSpecialSessionState({
-            personalDataDirectory: options.personalDataDirectory,
-            previousState: activeProgram.state,
-            observation: persistedObservation.observation,
-          })
-        : undefined;
+    const programState = persistedObservation === undefined
+      ? undefined
+      : await commitSpecialSessionState({
+          personalDataDirectory: options.personalDataDirectory,
+          persisted: persistedObservation,
+          plannedSession,
+          updateSpecialSessionState: options.updateSpecialSessionState,
+        });
     const processing = await persistWorkoutLogProcessingRecord({
       personalDataDirectory: options.personalDataDirectory,
       record: {
@@ -577,7 +597,6 @@ async function executeWorkoutLogIngest(options: {
       artifact,
       runId: options.request.runId,
       execution: result.metadata,
-      ...(plannedSession === undefined ? {} : { plannedSession }),
     });
     return {
       status: "confirmation",
@@ -618,6 +637,13 @@ async function recordConfirmedWorkoutLog(options: {
   readonly personalDataDirectory: string;
   readonly pending: PendingWorkoutLogConfirmation;
   readonly values: Readonly<Record<string, unknown>>;
+  readonly updateSpecialSessionState: (
+    personalDataDirectory: string,
+    observation: Extract<
+      WorkoutLogObservation,
+      { kind: "workout-special-session" }
+    >,
+  ) => Promise<ProgramState>;
 }): Promise<ConfirmedWorkoutLogOutput> {
   const requiredPaths = options.pending.candidate.uncertainFields.map(
     ({ path }) => path,
@@ -635,29 +661,12 @@ async function recordConfirmedWorkoutLog(options: {
   }
   corrected.uncertainFields = [];
   let candidate = parseWorkoutLogCandidate(corrected);
-  const activeProgram = await readActiveProgramIfPresent({
+  const context = await resolveCandidateSessionContext({
     personalDataDirectory: options.personalDataDirectory,
+    candidate,
   });
-  let plannedSession: ResolvedWorkoutSession | undefined;
-  if (activeProgram !== undefined) {
-    if ("testResults" in candidate) {
-      plannedSession = resolveSpecialSession({
-        candidate,
-        program: activeProgram.program,
-        state: activeProgram.state,
-      });
-    } else {
-      const recovery = resolveRecoverySession({
-        candidate,
-        program: activeProgram.program,
-        state: activeProgram.state,
-      });
-      if (recovery !== undefined) {
-        candidate = recovery.candidate;
-        plannedSession = recovery.plannedSession;
-      }
-    }
-  }
+  candidate = context.candidate;
+  const { plannedSession } = context;
   const recordedAt = new Date().toISOString();
   const persisted = await persistWorkoutLogObservation({
     personalDataDirectory: options.personalDataDirectory,
@@ -671,15 +680,12 @@ async function recordConfirmedWorkoutLog(options: {
     ),
     ...(plannedSession === undefined ? {} : { plannedSession }),
   });
-  const programState =
-    persisted.observation.kind === "workout-special-session" &&
-      activeProgram !== undefined
-      ? await persistSpecialSessionState({
-          personalDataDirectory: options.personalDataDirectory,
-          previousState: activeProgram.state,
-          observation: persisted.observation,
-        })
-      : undefined;
+  const programState = await commitSpecialSessionState({
+    personalDataDirectory: options.personalDataDirectory,
+    persisted,
+    plannedSession,
+    updateSpecialSessionState: options.updateSpecialSessionState,
+  });
   const processing = await persistWorkoutLogProcessingRecord({
     personalDataDirectory: options.personalDataDirectory,
     record: {
@@ -706,6 +712,38 @@ async function recordConfirmedWorkoutLog(options: {
     artifact: options.pending.artifact,
     processing,
   };
+}
+
+async function commitSpecialSessionState(options: {
+  readonly personalDataDirectory: string;
+  readonly persisted: Awaited<ReturnType<typeof persistWorkoutLogObservation>>;
+  readonly plannedSession: ResolvedWorkoutSession | undefined;
+  readonly updateSpecialSessionState: (
+    personalDataDirectory: string,
+    observation: Extract<
+      WorkoutLogObservation,
+      { kind: "workout-special-session" }
+    >,
+  ) => Promise<ProgramState>;
+}): Promise<ProgramState | undefined> {
+  if (
+    options.persisted.observation.kind !== "workout-special-session" ||
+    options.plannedSession === undefined
+  ) {
+    return undefined;
+  }
+  try {
+    return await options.updateSpecialSessionState(
+      options.personalDataDirectory,
+      options.persisted.observation,
+    );
+  } catch (error) {
+    await rollbackWorkoutLogObservation({
+      personalDataDirectory: options.personalDataDirectory,
+      path: options.persisted.path,
+    });
+    throw error;
+  }
 }
 
 function candidateExtractionShape(candidate: WorkoutLogCandidate): Record<string, unknown> & {
@@ -757,6 +795,34 @@ function requireSpecialSessionConfirmation(
   } satisfies SpecialSessionCandidate;
 }
 
+async function resolveCandidateSessionContext(options: {
+  readonly personalDataDirectory: string;
+  readonly candidate: WorkoutLogCandidate;
+}): Promise<CandidateSessionContext> {
+  const activeProgram = await readActiveProgramIfPresent({
+    personalDataDirectory: options.personalDataDirectory,
+  });
+  if (activeProgram === undefined) {
+    return { candidate: options.candidate };
+  }
+  if ("testResults" in options.candidate) {
+    return {
+      candidate: options.candidate,
+      plannedSession: resolveSpecialSession({
+        candidate: options.candidate,
+        program: activeProgram.program,
+        state: activeProgram.state,
+      }),
+    };
+  }
+  const recovery = resolveRecoverySession({
+    candidate: options.candidate,
+    program: activeProgram.program,
+    state: activeProgram.state,
+  });
+  return recovery ?? { candidate: options.candidate };
+}
+
 function setCandidateFieldValue(
   candidate: Record<string, unknown>,
   path: string,
@@ -800,17 +866,19 @@ function candidateTestResult(
 
 async function persistSpecialSessionState(options: {
   readonly personalDataDirectory: string;
-  readonly previousState: ProgramState;
   readonly observation: Extract<
     WorkoutLogObservation,
     { kind: "workout-special-session" }
   >;
 }): Promise<ProgramState> {
+  const activeProgram = await readActiveProgram({
+    personalDataDirectory: options.personalDataDirectory,
+  });
   return await replaceProgramState({
     personalDataDirectory: options.personalDataDirectory,
-    previousState: options.previousState,
+    previousState: activeProgram.state,
     nextState: applyStrengthTestBindings({
-      state: options.previousState,
+      state: activeProgram.state,
       observation: options.observation,
     }),
   });

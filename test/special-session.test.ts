@@ -291,6 +291,72 @@ describe("special workout sessions", () => {
       },
     });
   });
+
+  it("serializes concurrent special-session confirmations onto the latest Program State", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const week4 = strengthTestCandidate();
+    const cycleEnd = endOfCycleCandidate();
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([
+        { parsed: week4, metadata: { provider: "controlled" } },
+        { parsed: cycleEnd, metadata: { provider: "controlled" } },
+      ]),
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => join(personalDataDirectory, "..", "runtime"),
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await harness.selectProgram(await programFixture());
+    await harness.confirmCycleStart("2026-08-10");
+    const first = await harness.ingestWorkoutLog({
+      runId: "concurrent-week-4",
+      upload: rawMediaUploadFixture(),
+      timeoutMs: 2_000,
+    });
+    const second = await harness.ingestWorkoutLog({
+      runId: "concurrent-cycle-end",
+      upload: rawMediaUploadFixture(),
+      timeoutMs: 2_000,
+    });
+    if (first.status !== "confirmation" || second.status !== "confirmation") {
+      throw new Error("Expected both special sessions to require confirmation");
+    }
+
+    await expect(
+      Promise.all([
+        harness.confirmWorkoutLog({
+          confirmationId: first.confirmationId,
+          values: confirmationValues(week4),
+        }),
+        harness.confirmWorkoutLog({
+          confirmationId: second.confirmationId,
+          values: confirmationValues(cycleEnd),
+        }),
+      ]),
+    ).resolves.toHaveLength(2);
+
+    const state = JSON.parse(
+      readFileSync(join(personalDataDirectory, "program", "state.json"), "utf8"),
+    );
+    expect(state).toMatchObject({
+      symbolicLoadBindings: {
+        "goblet-squat": { N: { value: 32 } },
+        "dumbbell-bench-press": { N: { value: 24 } },
+        "dumbbell-deadlift": { N: { value: 40 } },
+      },
+      assistanceBindings: {
+        phase2_pullup_assistance_baseline: {
+          result: { value: 9, unit: "repetitions" },
+        },
+      },
+      nextCycle: {
+        symbolicLoadBindings: {
+          "goblet-squat": { A: { value: 36 } },
+          "dumbbell-bench-press": { A: { value: 28 } },
+          "dumbbell-deadlift": { A: { value: 44 } },
+        },
+      },
+    });
+  });
 });
 
 function strengthTestCandidate() {
@@ -353,6 +419,34 @@ function recoveryCandidate(week: 8 | 12, weekday: "thursday" | "friday") {
     ],
     uncertainFields: [],
   };
+}
+
+function endOfCycleCandidate() {
+  const candidate = strengthTestCandidate();
+  return {
+    ...candidate,
+    stage: field(3),
+    week: field(12),
+    sessionType: field("end_of_cycle_retest"),
+    testResults: candidate.testResults.slice(0, 3).map((result, index) => ({
+      ...result,
+      result: field({
+        kind: "kg",
+        value: [36, 28, 44][index],
+        unit: "kg",
+        raw: String([36, 28, 44][index]),
+      }),
+    })),
+  };
+}
+
+function confirmationValues(candidate: ReturnType<typeof strengthTestCandidate>) {
+  return Object.fromEntries(
+    candidate.testResults.map((testResult, index) => [
+      `testResults[${index}].result.value`,
+      testResult.result.value,
+    ]),
+  );
 }
 
 function testResult(
