@@ -103,3 +103,17 @@ export type PlannedSession = {
   readonly exercises: readonly PlannedExercise[];
   readonly tests: readonly PlannedTest[];
 };
+
+export type CycleCompletionRetest = {
+  readonly kind: "cycle-completion-retest";
+  readonly program: PlannedSession["program"];
+  readonly cycle: {
+    readonly startDate: string;
+    readonly completedWeek: 12;
+  };
+  readonly type: "end-of-cycle-retest";
+  readonly tests: readonly PlannedTest[];
+  readonly restartFromWeek: 1;
+};
+
+export type ResolvedWorkoutSession = PlannedSession | CycleCompletionRetest;

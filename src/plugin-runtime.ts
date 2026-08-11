@@ -11,7 +11,10 @@ import type {
   ObservationSource,
   WorkoutLogObservation,
 } from "./domain/observation.js";
-import type { PlannedSession } from "./domain/program.js";
+import type {
+  PlannedSession,
+  ResolvedWorkoutSession,
+} from "./domain/program.js";
 import {
   parseBodyWeightInput,
   type BodyWeightClarification,
@@ -20,6 +23,7 @@ import { rejectOnAbort } from "./extraction/cancellation.js";
 import {
   parseWorkoutLogFieldPath,
   parseWorkoutLogCandidate,
+  type SpecialSessionCandidate,
   type WorkoutLogCandidate,
 } from "./extraction/candidate.js";
 import type {
@@ -40,10 +44,17 @@ import {
 import { validateProgramSpec } from "./program/validator.js";
 import {
   confirmProgramSetup,
+  readActiveProgramIfPresent,
+  replaceProgramState,
   selectProgramForSetup,
   type PendingProgramSelection,
   type ProgramState,
 } from "./program/state.js";
+import {
+  applyStrengthTestBindings,
+  resolveRecoverySession,
+  resolveSpecialSession,
+} from "./program/special-session.js";
 import {
   persistBodyWeightCorrection,
   persistBodyWeightObservation,
@@ -59,6 +70,7 @@ type PluginExtractionBase = {
   execution: ExtractionExecutionMetadata;
   artifact: RawArtifactRecord;
   processing: WorkoutLogProcessingRecord;
+  programState?: ProgramState;
 };
 
 export type PluginExtractionOutput =
@@ -134,6 +146,7 @@ type PendingWorkoutLogConfirmation = {
   readonly artifact: RawArtifactRecord;
   readonly runId: string;
   readonly execution: ExtractionExecutionMetadata;
+  readonly plannedSession?: ResolvedWorkoutSession;
   result?: {
     readonly fingerprint: string;
     readonly promise: Promise<ConfirmedWorkoutLogOutput>;
@@ -468,6 +481,30 @@ async function executeWorkoutLogIngest(options: {
     } catch (error) {
       throw new ProcessingFailureError("invalid-result", error);
     }
+    candidate = requireSpecialSessionConfirmation(candidate);
+    const activeProgram = await readActiveProgramIfPresent({
+      personalDataDirectory: options.personalDataDirectory,
+    });
+    let plannedSession: ResolvedWorkoutSession | undefined;
+    if (activeProgram !== undefined) {
+      if ("testResults" in candidate) {
+        plannedSession = resolveSpecialSession({
+          candidate,
+          program: activeProgram.program,
+          state: activeProgram.state,
+        });
+      } else {
+        const recovery = resolveRecoverySession({
+          candidate,
+          program: activeProgram.program,
+          state: activeProgram.state,
+        });
+        if (recovery !== undefined) {
+          candidate = recovery.candidate;
+          plannedSession = recovery.plannedSession;
+        }
+      }
+    }
     const recordedAt = new Date().toISOString();
     const confirmationId =
       candidate.uncertainFields.length === 0 ? undefined : randomUUID();
@@ -479,6 +516,16 @@ async function executeWorkoutLogIngest(options: {
             artifact,
             runId: options.request.runId,
             recordedAt,
+            ...(plannedSession === undefined ? {} : { plannedSession }),
+          })
+        : undefined;
+    const programState =
+      persistedObservation?.observation.kind === "workout-special-session" &&
+        activeProgram !== undefined
+        ? await persistSpecialSessionState({
+            personalDataDirectory: options.personalDataDirectory,
+            previousState: activeProgram.state,
+            observation: persistedObservation.observation,
           })
         : undefined;
     const processing = await persistWorkoutLogProcessingRecord({
@@ -516,6 +563,7 @@ async function executeWorkoutLogIngest(options: {
       return {
         status: "recorded",
         observation: persistedObservation.observation,
+        ...(programState === undefined ? {} : { programState }),
         execution: result.metadata,
         artifact,
         processing,
@@ -529,6 +577,7 @@ async function executeWorkoutLogIngest(options: {
       artifact,
       runId: options.request.runId,
       execution: result.metadata,
+      ...(plannedSession === undefined ? {} : { plannedSession }),
     });
     return {
       status: "confirmation",
@@ -585,7 +634,30 @@ async function recordConfirmedWorkoutLog(options: {
     setCandidateFieldValue(corrected, path, options.values[path]);
   }
   corrected.uncertainFields = [];
-  const candidate = parseWorkoutLogCandidate(corrected);
+  let candidate = parseWorkoutLogCandidate(corrected);
+  const activeProgram = await readActiveProgramIfPresent({
+    personalDataDirectory: options.personalDataDirectory,
+  });
+  let plannedSession: ResolvedWorkoutSession | undefined;
+  if (activeProgram !== undefined) {
+    if ("testResults" in candidate) {
+      plannedSession = resolveSpecialSession({
+        candidate,
+        program: activeProgram.program,
+        state: activeProgram.state,
+      });
+    } else {
+      const recovery = resolveRecoverySession({
+        candidate,
+        program: activeProgram.program,
+        state: activeProgram.state,
+      });
+      if (recovery !== undefined) {
+        candidate = recovery.candidate;
+        plannedSession = recovery.plannedSession;
+      }
+    }
+  }
   const recordedAt = new Date().toISOString();
   const persisted = await persistWorkoutLogObservation({
     personalDataDirectory: options.personalDataDirectory,
@@ -597,7 +669,17 @@ async function recordConfirmedWorkoutLog(options: {
     resolvedUncertainty: options.pending.candidate.uncertainFields.map(
       (field) => ({ ...field, resolution: "user-confirmed" as const }),
     ),
+    ...(plannedSession === undefined ? {} : { plannedSession }),
   });
+  const programState =
+    persisted.observation.kind === "workout-special-session" &&
+      activeProgram !== undefined
+      ? await persistSpecialSessionState({
+          personalDataDirectory: options.personalDataDirectory,
+          previousState: activeProgram.state,
+          observation: persisted.observation,
+        })
+      : undefined;
   const processing = await persistWorkoutLogProcessingRecord({
     personalDataDirectory: options.personalDataDirectory,
     record: {
@@ -619,6 +701,7 @@ async function recordConfirmedWorkoutLog(options: {
   return {
     status: "recorded",
     observation: persisted.observation,
+    ...(programState === undefined ? {} : { programState }),
     execution: options.pending.execution,
     artifact: options.pending.artifact,
     processing,
@@ -628,14 +711,50 @@ async function recordConfirmedWorkoutLog(options: {
 function candidateExtractionShape(candidate: WorkoutLogCandidate): Record<string, unknown> & {
   uncertainFields: unknown[];
 } {
-  return structuredClone({
-    ...candidate,
-    uncertainFields: [...candidate.uncertainFields],
-    exercises: candidate.exercises.map((exercise) => ({
-      ...exercise,
-      sets: exercise.sets.map(({ value, confidence }) => ({ value, confidence })),
-    })),
+  return structuredClone(
+    "exercises" in candidate
+      ? {
+          ...candidate,
+          uncertainFields: [...candidate.uncertainFields],
+          exercises: candidate.exercises.map((exercise) => ({
+            ...exercise,
+            sets: exercise.sets.map(({ value, confidence }) => ({
+              value,
+              confidence,
+            })),
+          })),
+        }
+      : {
+          ...candidate,
+          uncertainFields: [...candidate.uncertainFields],
+          testResults: candidate.testResults.map((result) => ({ ...result })),
+        },
+  );
+}
+
+function requireSpecialSessionConfirmation(
+  candidate: WorkoutLogCandidate,
+): WorkoutLogCandidate {
+  if (!("testResults" in candidate)) {
+    return candidate;
+  }
+  const existingPaths = new Set(
+    candidate.uncertainFields.map(({ path }) => path),
+  );
+  const required = candidate.testResults.flatMap((result, index) => {
+    const path = `testResults[${index}].result.value`;
+    if (existingPaths.has(path)) return [];
+    const raw = result.result.value?.raw;
+    return [{
+      path,
+      kind: "confirmation-required" as const,
+      ...(raw === undefined ? {} : { candidates: [raw] }),
+    }];
   });
+  return {
+    ...candidate,
+    uncertainFields: [...candidate.uncertainFields, ...required],
+  } satisfies SpecialSessionCandidate;
 }
 
 function setCandidateFieldValue(
@@ -651,6 +770,11 @@ function setCandidateFieldValue(
     setFieldValue(candidate[location.key], value);
     return;
   }
+  if (location.kind === "test-result") {
+    const result = candidateTestResult(candidate, location.testResultIndex);
+    setFieldValue(result[location.key], value);
+    return;
+  }
   const exercise = candidateExercise(candidate, location.exerciseIndex);
   if (location.kind === "exercise") {
     setFieldValue(exercise[location.key], value);
@@ -658,6 +782,38 @@ function setCandidateFieldValue(
   }
   if (!Array.isArray(exercise.sets)) throw new Error("Invalid confirmation path");
   setFieldValue(exercise.sets[location.setIndex], value);
+}
+
+function candidateTestResult(
+  candidate: Record<string, unknown>,
+  index: number,
+): Record<string, unknown> {
+  if (!Array.isArray(candidate.testResults)) {
+    throw new Error("Invalid confirmation path");
+  }
+  const result = candidate.testResults[index];
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    throw new Error("Invalid confirmation path");
+  }
+  return result as Record<string, unknown>;
+}
+
+async function persistSpecialSessionState(options: {
+  readonly personalDataDirectory: string;
+  readonly previousState: ProgramState;
+  readonly observation: Extract<
+    WorkoutLogObservation,
+    { kind: "workout-special-session" }
+  >;
+}): Promise<ProgramState> {
+  return await replaceProgramState({
+    personalDataDirectory: options.personalDataDirectory,
+    previousState: options.previousState,
+    nextState: applyStrengthTestBindings({
+      state: options.previousState,
+      observation: options.observation,
+    }),
+  });
 }
 
 function candidateExercise(

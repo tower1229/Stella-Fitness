@@ -32,18 +32,15 @@ describe("OpenClaw structured extraction adapter", () => {
         model: "operator-model",
         timeoutMs: 1_500,
         jsonMode: true,
-        schemaName: "stella_workout_log_candidate_v1",
+        schemaName: "stella_workout_log_candidate_v2",
         jsonSchema: expect.objectContaining({
-          type: "object",
-          additionalProperties: false,
-          required: [
-            "layout",
-            "stage",
-            "week",
-            "weekday",
-            "sessionType",
-            "exercises",
-            "uncertainFields",
+          oneOf: [
+            expect.objectContaining({
+              required: expect.arrayContaining(["exercises"]),
+            }),
+            expect.objectContaining({
+              required: expect.arrayContaining(["testResults"]),
+            }),
           ],
         }),
         input: [
@@ -66,6 +63,9 @@ describe("OpenClaw structured extraction adapter", () => {
     });
     expect(extractStructuredWithModel.mock.calls[0]?.[0].instructions).toContain(
       "Never copy ProgramSpec targets into blank actual cells",
+    );
+    expect(extractStructuredWithModel.mock.calls[0]?.[0].instructions).toContain(
+      "Never treat the pull-up max result as a replacement for programmed total reps",
     );
   });
 

@@ -159,7 +159,7 @@ describe("Plugin registration", () => {
       ),
     );
     expect(state).toMatchObject({
-      schemaVersion: "stella-fitness/program-state/v0.1",
+      schemaVersion: "stella-fitness/program-state/v0.2",
       program: { id: "zhuoshu-12-week", version: "0.2.0" },
       cycle: { startDate: "2026-08-10" },
     });

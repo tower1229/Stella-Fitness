@@ -685,11 +685,12 @@ describe("scenario-level Plugin harness", () => {
     const state = await resumedHarness.confirmCycleStart("2026-08-10");
 
     expect(state).toEqual({
-      schemaVersion: "stella-fitness/program-state/v0.1",
+      schemaVersion: "stella-fitness/program-state/v0.2",
       id: interruptedSetup.id,
       program: interruptedSetup.program,
       cycle: { startDate: "2026-08-10" },
       symbolicLoadBindings: {},
+      assistanceBindings: {},
       provenance: {
         kind: "program-selection-confirmation",
         selectionId: interruptedSetup.id,
@@ -702,7 +703,8 @@ describe("scenario-level Plugin harness", () => {
         readFileSync(join(personalDataDirectory, "program", "state.json"), "utf8"),
       ),
     ).toEqual(state);
-    expect(readdirSync(join(personalDataDirectory, "program"))).toEqual([
+    expect(readdirSync(join(personalDataDirectory, "program")).sort()).toEqual([
+      "spec.json",
       "state.json",
     ]);
     expect(JSON.stringify(state)).not.toMatch(
@@ -728,8 +730,9 @@ describe("scenario-level Plugin harness", () => {
     await expect(harness.confirmCycleStart("2026-08-11")).rejects.toThrow(
       "Cycle start must be a Monday",
     );
-    expect(readdirSync(join(personalDataDirectory, "program"))).toEqual([
+    expect(readdirSync(join(personalDataDirectory, "program")).sort()).toEqual([
       "selection.json",
+      "spec.json",
     ]);
   });
 });

@@ -41,6 +41,38 @@ export type WorkoutLogFacts = {
   readonly exercises: readonly WorkoutExerciseActual[];
 };
 
+export type StrengthTestResult =
+  | {
+      readonly kind: "kg";
+      readonly value: number;
+      readonly unit: "kg";
+      readonly raw: string;
+    }
+  | {
+      readonly kind: "repetitions";
+      readonly value: number;
+      readonly raw: string;
+    };
+
+export type StrengthTestActual = {
+  readonly exerciseId: ObservationField<string>;
+  readonly test: "12RM" | "max_reps_first_set";
+  readonly result: ObservationField<StrengthTestResult | null>;
+};
+
+export type SpecialSessionFacts = {
+  readonly layout: ObservationField<"zhuoshu-strength-test-block">;
+  readonly stage: ObservationField<1 | 2 | 3>;
+  readonly week: ObservationField<number>;
+  readonly weekday: ObservationField<
+    "monday" | "tuesday" | "wednesday" | "thursday" | "friday"
+  >;
+  readonly sessionType: ObservationField<
+    "strength_test" | "end_of_cycle_retest"
+  >;
+  readonly testResults: readonly StrengthTestActual[];
+};
+
 export type BodyWeightUnit = "kg" | "lb";
 
 export type ObservationSource = {
@@ -87,10 +119,8 @@ export type BodyWeightView = {
   }[];
 };
 
-export type WorkoutLogObservation = WorkoutLogFacts & {
-  readonly schemaVersion: "stella-fitness/observation/workout-log/v0.1";
+type WorkoutObservationEnvelope = {
   readonly id: string;
-  readonly kind: "workout-log";
   readonly occurredAt: string;
   readonly source: {
     readonly kind: "workout-log-image";
@@ -106,8 +136,39 @@ export type WorkoutLogObservation = WorkoutLogFacts & {
   };
   readonly uncertainty: readonly {
     readonly path: string;
-    readonly kind: "unknown" | "low-confidence" | "conflict";
+    readonly kind:
+      | "unknown"
+      | "low-confidence"
+      | "conflict"
+      | "confirmation-required";
     readonly candidates?: readonly string[];
     readonly resolution: "user-confirmed";
   }[];
 };
+
+export type OrdinaryWorkoutLogObservation = WorkoutLogFacts &
+  WorkoutObservationEnvelope & {
+    readonly schemaVersion: "stella-fitness/observation/workout-log/v0.1";
+    readonly kind: "workout-log";
+  };
+
+export type RecoverySessionObservation = WorkoutLogFacts &
+  WorkoutObservationEnvelope & {
+    readonly schemaVersion: "stella-fitness/observation/workout-recovery-session/v0.1";
+    readonly kind: "workout-recovery-session";
+    readonly plannedSession: import("./program.js").PlannedSession & {
+      readonly recovery: true;
+    };
+  };
+
+export type SpecialSessionObservation = SpecialSessionFacts &
+  WorkoutObservationEnvelope & {
+    readonly schemaVersion: "stella-fitness/observation/workout-special-session/v0.1";
+    readonly kind: "workout-special-session";
+    readonly plannedSession: import("./program.js").ResolvedWorkoutSession;
+  };
+
+export type WorkoutLogObservation =
+  | OrdinaryWorkoutLogObservation
+  | RecoverySessionObservation
+  | SpecialSessionObservation;

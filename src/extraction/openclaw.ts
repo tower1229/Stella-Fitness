@@ -37,8 +37,8 @@ export function createOpenClawExtractionRuntime(
           },
         ],
         instructions:
-          "Extract only candidate facts from the fixed Zhuoshu three-stage workout workbook. Identify the layout, stage, week, weekday, session type, exercises, load semantics, set-cell values, action quality, notes, field confidence, and uncertainty. Treat intentionally blank actual cells as null. Never copy ProgramSpec targets into blank actual cells. Do not diagnose, advise, or infer health, safety, nutrition, or training quality.",
-        schemaName: "stella_workout_log_candidate_v1",
+          "Extract only candidate facts from the fixed Zhuoshu three-stage workout workbook. Classify ordinary pages as zhuoshu-three-stage-workbook and strength-test pages as zhuoshu-strength-test-block. Use strength_test for Week 4 Friday and end_of_cycle_retest only for the post-cycle 12RM retest. Identify stage, week, weekday, session type, ordinary exercises or strength-test results, load semantics, set-cell values, action quality, notes, field confidence, and uncertainty. Treat intentionally blank actual cells as null. Never copy ProgramSpec targets into blank actual cells. Never treat the pull-up max result as a replacement for programmed total reps. Do not diagnose, advise, or infer health, safety, nutrition, or training quality.",
+        schemaName: "stella_workout_log_candidate_v2",
         jsonSchema: WORKOUT_LOG_CANDIDATE_SCHEMA,
         jsonMode: true,
         cfg: options.openclawConfig,

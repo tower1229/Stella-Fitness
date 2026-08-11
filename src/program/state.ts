@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { ProgramSpec } from "../domain/program.js";
@@ -7,7 +7,24 @@ import { validateProgramSpec } from "./validator.js";
 
 const PROGRAM_DIRECTORY = "program";
 const SELECTION_FILE = "selection.json";
+const SPEC_FILE = "spec.json";
 const STATE_FILE = "state.json";
+
+export type SymbolicLoadBinding = {
+  readonly value: number;
+  readonly unit: "kg";
+  readonly test: "12RM";
+  readonly observationId: string;
+  readonly recordedAt: string;
+};
+
+export type AssistanceBinding = {
+  readonly exerciseId: "pull-up";
+  readonly result: { readonly value: number; readonly unit: "repetitions" };
+  readonly test: "max_reps_first_set";
+  readonly observationId: string;
+  readonly recordedAt: string;
+};
 
 export type PendingProgramSelection = {
   readonly schemaVersion: "stella-fitness/program-selection/v0.1";
@@ -25,11 +42,21 @@ export type PendingProgramSelection = {
 };
 
 export type ProgramState = {
-  readonly schemaVersion: "stella-fitness/program-state/v0.1";
+  readonly schemaVersion: "stella-fitness/program-state/v0.2";
   readonly id: string;
   readonly program: PendingProgramSelection["program"];
   readonly cycle: { readonly startDate: string };
-  readonly symbolicLoadBindings: Readonly<Record<string, unknown>>;
+  readonly symbolicLoadBindings: Readonly<
+    Record<string, Readonly<Record<string, SymbolicLoadBinding>>>
+  >;
+  readonly assistanceBindings: Readonly<Record<string, AssistanceBinding>>;
+  readonly nextCycle?: {
+    readonly restartFromWeek: 1;
+    readonly symbolicLoadBindings: Readonly<
+      Record<string, Readonly<Record<"A", SymbolicLoadBinding>>>
+    >;
+    readonly sourceObservationId: string;
+  };
   readonly provenance: {
     readonly kind: "program-selection-confirmation";
     readonly selectionId: string;
@@ -46,7 +73,18 @@ export async function selectProgramForSetup(options: {
   const programDirectory = join(options.personalDataDirectory, PROGRAM_DIRECTORY);
   const selectionPath = join(programDirectory, SELECTION_FILE);
   const statePath = join(programDirectory, STATE_FILE);
+  const specPath = join(programDirectory, SPEC_FILE);
   const selectedProgram = programIdentity(program);
+  await mkdir(programDirectory, { recursive: true, mode: 0o700 });
+  await createCanonicalFile(specPath, options.programSpec, {
+    parse: parseJson,
+    assertCompatible(existingInput) {
+      assertSameProgramIdentity(
+        programIdentity(validateProgramSpec(existingInput)),
+        selectedProgram,
+      );
+    },
+  });
   const state = await readStateIfPresent(statePath);
   if (state !== undefined) {
     assertSameProgramIdentity(state.program, selectedProgram);
@@ -75,7 +113,6 @@ export async function selectProgramForSetup(options: {
       selectedAt: new Date().toISOString(),
     },
   };
-  await mkdir(programDirectory, { recursive: true, mode: 0o700 });
   return await createCanonicalFile(selectionPath, selection, {
     parse: parseSelection,
     assertCompatible(existingSelection) {
@@ -101,11 +138,12 @@ export async function confirmProgramSetup(options: {
 
   const selection = await readRequiredSelection(selectionPath);
   const state: ProgramState = {
-    schemaVersion: "stella-fitness/program-state/v0.1",
+    schemaVersion: "stella-fitness/program-state/v0.2",
     id: selection.id,
     program: selection.program,
     cycle: { startDate: options.cycleStart },
     symbolicLoadBindings: {},
+    assistanceBindings: {},
     provenance: {
       kind: "program-selection-confirmation",
       selectionId: selection.id,
@@ -121,6 +159,65 @@ export async function confirmProgramSetup(options: {
   });
   await removeIfPresent(selectionPath);
   return persisted;
+}
+
+export async function readActiveProgram(options: {
+  personalDataDirectory: string;
+}): Promise<{ readonly program: ProgramSpec; readonly state: ProgramState }> {
+  const programDirectory = join(options.personalDataDirectory, PROGRAM_DIRECTORY);
+  const state = await readRequiredState(join(programDirectory, STATE_FILE));
+  const program = parseProgramSpec(
+    await readFile(join(programDirectory, SPEC_FILE), "utf8"),
+  );
+  assertSameProgramIdentity(state.program, programIdentity(program));
+  return { program, state };
+}
+
+export async function readActiveProgramIfPresent(options: {
+  personalDataDirectory: string;
+}): Promise<
+  { readonly program: ProgramSpec; readonly state: ProgramState } | undefined
+> {
+  try {
+    await readFile(
+      join(options.personalDataDirectory, PROGRAM_DIRECTORY, STATE_FILE),
+      "utf8",
+    );
+  } catch (error) {
+    if (isMissing(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+  return await readActiveProgram(options);
+}
+
+export async function replaceProgramState(options: {
+  personalDataDirectory: string;
+  previousState: ProgramState;
+  nextState: ProgramState;
+}): Promise<ProgramState> {
+  const statePath = join(
+    options.personalDataDirectory,
+    PROGRAM_DIRECTORY,
+    STATE_FILE,
+  );
+  const current = await readRequiredState(statePath);
+  if (JSON.stringify(current) !== JSON.stringify(options.previousState)) {
+    throw new Error("Program State changed while applying workout results");
+  }
+  const temporaryPath = `${statePath}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(
+      temporaryPath,
+      `${JSON.stringify(options.nextState, null, 2)}\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
+    );
+    await rename(temporaryPath, statePath);
+    return options.nextState;
+  } finally {
+    await removeIfPresent(temporaryPath);
+  }
 }
 
 function programIdentity(
@@ -197,6 +294,18 @@ async function readStateIfPresent(path: string): Promise<ProgramState | undefine
   }
 }
 
+async function readRequiredState(path: string): Promise<ProgramState> {
+  return parseState(await readFile(path, "utf8"));
+}
+
+function parseProgramSpec(source: string): ProgramSpec {
+  return validateProgramSpec(JSON.parse(source));
+}
+
+function parseJson(source: string): unknown {
+  return JSON.parse(source) as unknown;
+}
+
 function parseSelection(source: string): PendingProgramSelection {
   const value: unknown = JSON.parse(source);
   if (
@@ -221,12 +330,14 @@ function parseState(source: string): ProgramState {
   const value: unknown = JSON.parse(source);
   if (
     !isRecord(value) ||
-    value.schemaVersion !== "stella-fitness/program-state/v0.1" ||
+    value.schemaVersion !== "stella-fitness/program-state/v0.2" ||
     typeof value.id !== "string" ||
     !isProgramIdentity(value.program) ||
     !isRecord(value.cycle) ||
     typeof value.cycle.startDate !== "string" ||
-    !isRecord(value.symbolicLoadBindings) ||
+    !isSymbolicLoadBindings(value.symbolicLoadBindings) ||
+    !isAssistanceBindings(value.assistanceBindings) ||
+    (value.nextCycle !== undefined && !isNextCycle(value.nextCycle)) ||
     !isRecord(value.provenance) ||
     value.provenance.kind !== "program-selection-confirmation" ||
     typeof value.provenance.selectionId !== "string" ||
@@ -236,6 +347,53 @@ function parseState(source: string): ProgramState {
     throw new Error("Program State is schema-invalid");
   }
   return value as ProgramState;
+}
+
+function isSymbolicLoadBindings(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).every((exerciseBindings) =>
+    isRecord(exerciseBindings) &&
+    Object.entries(exerciseBindings).every(([symbol, binding]) =>
+      ["A", "N"].includes(symbol) && isSymbolicLoadBinding(binding),
+    )
+  );
+}
+
+function isSymbolicLoadBinding(value: unknown): value is SymbolicLoadBinding {
+  return isRecord(value) &&
+    typeof value.value === "number" &&
+    Number.isFinite(value.value) &&
+    value.value > 0 &&
+    value.unit === "kg" &&
+    value.test === "12RM" &&
+    typeof value.observationId === "string" &&
+    typeof value.recordedAt === "string";
+}
+
+function isAssistanceBindings(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).every((binding) =>
+    isRecord(binding) &&
+    binding.exerciseId === "pull-up" &&
+    binding.test === "max_reps_first_set" &&
+    typeof binding.observationId === "string" &&
+    typeof binding.recordedAt === "string" &&
+    isRecord(binding.result) &&
+    Number.isInteger(binding.result.value) &&
+    typeof binding.result.value === "number" &&
+    binding.result.value >= 0 &&
+    binding.result.unit === "repetitions"
+  );
+}
+
+function isNextCycle(value: unknown): boolean {
+  return isRecord(value) &&
+    value.restartFromWeek === 1 &&
+    typeof value.sourceObservationId === "string" &&
+    isRecord(value.symbolicLoadBindings) &&
+    Object.values(value.symbolicLoadBindings).every((bindings) =>
+      isRecord(bindings) &&
+      Object.keys(bindings).length === 1 &&
+      isSymbolicLoadBinding(bindings.A),
+    );
 }
 
 function isProgramIdentity(

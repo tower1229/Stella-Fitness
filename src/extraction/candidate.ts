@@ -1,5 +1,8 @@
 import type {
   ObservationField,
+  SpecialSessionFacts,
+  StrengthTestActual,
+  StrengthTestResult,
   WorkoutExerciseActual,
   WorkoutLoad,
   WorkoutLogFacts,
@@ -11,13 +14,27 @@ export type WorkoutSetCandidate = ObservationField<number | null>;
 
 export type WorkoutExerciseCandidate = WorkoutExerciseActual;
 
-export type WorkoutLogCandidate = WorkoutLogFacts & {
-  readonly uncertainFields: readonly {
-    readonly path: string;
-    readonly kind: "unknown" | "low-confidence" | "conflict";
-    readonly candidates?: readonly string[];
-  }[];
+type CandidateUncertainty = {
+  readonly path: string;
+  readonly kind:
+    | "unknown"
+    | "low-confidence"
+    | "conflict"
+    | "confirmation-required";
+  readonly candidates?: readonly string[];
 };
+
+export type OrdinaryWorkoutLogCandidate = WorkoutLogFacts & {
+  readonly uncertainFields: readonly CandidateUncertainty[];
+};
+
+export type SpecialSessionCandidate = SpecialSessionFacts & {
+  readonly uncertainFields: readonly CandidateUncertainty[];
+};
+
+export type WorkoutLogCandidate =
+  | OrdinaryWorkoutLogCandidate
+  | SpecialSessionCandidate;
 
 export type WorkoutLogFieldLocation =
   | {
@@ -38,6 +55,11 @@ export type WorkoutLogFieldLocation =
       readonly kind: "set";
       readonly exerciseIndex: number;
       readonly setIndex: number;
+    }
+  | {
+      readonly kind: "test-result";
+      readonly testResultIndex: number;
+      readonly key: "exerciseId" | "result";
     };
 
 const CONFIDENCE_FIELD_SCHEMA = {
@@ -103,7 +125,7 @@ const LOAD_SCHEMA = {
   ],
 } as const;
 
-export const WORKOUT_LOG_CANDIDATE_SCHEMA = {
+const ORDINARY_WORKOUT_LOG_CANDIDATE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: [
@@ -167,7 +189,12 @@ export const WORKOUT_LOG_CANDIDATE_SCHEMA = {
           path: { type: "string", minLength: 1 },
           kind: {
             type: "string",
-            enum: ["unknown", "low-confidence", "conflict"],
+            enum: [
+              "unknown",
+              "low-confidence",
+              "conflict",
+              "confirmation-required",
+            ],
           },
           candidates: {
             type: "array",
@@ -179,6 +206,86 @@ export const WORKOUT_LOG_CANDIDATE_SCHEMA = {
   },
 } as const;
 
+const STRENGTH_TEST_RESULT_SCHEMA = {
+  anyOf: [
+    { type: "null" },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "value", "unit", "raw"],
+      properties: {
+        kind: { const: "kg" },
+        value: { type: "number", exclusiveMinimum: 0 },
+        unit: { const: "kg" },
+        raw: { type: "string", minLength: 1 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "value", "raw"],
+      properties: {
+        kind: { const: "repetitions" },
+        value: { type: "integer", minimum: 0 },
+        raw: { type: "string", minLength: 1 },
+      },
+    },
+  ],
+} as const;
+
+const SPECIAL_SESSION_CANDIDATE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "layout",
+    "stage",
+    "week",
+    "weekday",
+    "sessionType",
+    "testResults",
+    "uncertainFields",
+  ],
+  properties: {
+    layout: fieldSchema({ const: "zhuoshu-strength-test-block" }),
+    stage: fieldSchema({ type: "integer", minimum: 1, maximum: 3 }),
+    week: fieldSchema({ type: "integer", minimum: 1, maximum: 12 }),
+    weekday: fieldSchema({
+      type: "string",
+      enum: ["monday", "tuesday", "wednesday", "thursday", "friday"],
+    }),
+    sessionType: fieldSchema({
+      type: "string",
+      enum: ["strength_test", "end_of_cycle_retest"],
+    }),
+    testResults: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["exerciseId", "test", "result"],
+        properties: {
+          exerciseId: fieldSchema({ type: "string", minLength: 1 }),
+          test: {
+            type: "string",
+            enum: ["12RM", "max_reps_first_set"],
+          },
+          result: fieldSchema(STRENGTH_TEST_RESULT_SCHEMA),
+        },
+      },
+    },
+    uncertainFields:
+      ORDINARY_WORKOUT_LOG_CANDIDATE_SCHEMA.properties.uncertainFields,
+  },
+} as const;
+
+export const WORKOUT_LOG_CANDIDATE_SCHEMA = {
+  oneOf: [
+    ORDINARY_WORKOUT_LOG_CANDIDATE_SCHEMA,
+    SPECIAL_SESSION_CANDIDATE_SCHEMA,
+  ],
+} as const;
+
 export class InvalidWorkoutLogCandidateError extends Error {
   constructor() {
     super("Structured extraction did not match the workout-log candidate schema");
@@ -187,7 +294,17 @@ export class InvalidWorkoutLogCandidateError extends Error {
 }
 
 export function parseWorkoutLogCandidate(value: unknown): WorkoutLogCandidate {
-  if (!isRecord(value) || !hasOnlyKeys(value, [
+  if (!isRecord(value)) {
+    throw new InvalidWorkoutLogCandidateError();
+  }
+  if (value.layout !== undefined && isCandidateField(
+    value.layout,
+    (input): input is "zhuoshu-strength-test-block" =>
+      input === "zhuoshu-strength-test-block",
+  )) {
+    return parseSpecialSessionCandidate(value);
+  }
+  if (!hasOnlyKeys(value, [
     "layout",
     "stage",
     "week",
@@ -236,14 +353,86 @@ export function parseWorkoutLogCandidate(value: unknown): WorkoutLogCandidate {
   }
 
   return {
-    layout: value.layout as WorkoutLogCandidate["layout"],
+    layout: value.layout as OrdinaryWorkoutLogCandidate["layout"],
     stage,
     week,
-    weekday: value.weekday as WorkoutLogCandidate["weekday"],
-    sessionType: value.sessionType as WorkoutLogCandidate["sessionType"],
+    weekday: value.weekday as OrdinaryWorkoutLogCandidate["weekday"],
+    sessionType: value.sessionType as OrdinaryWorkoutLogCandidate["sessionType"],
     exercises,
-    uncertainFields: uncertainFields as WorkoutLogCandidate["uncertainFields"],
+    uncertainFields: uncertainFields as OrdinaryWorkoutLogCandidate["uncertainFields"],
   };
+}
+
+function parseSpecialSessionCandidate(
+  value: Record<string, unknown>,
+): SpecialSessionCandidate {
+  if (!hasOnlyKeys(value, [
+    "layout",
+    "stage",
+    "week",
+    "weekday",
+    "sessionType",
+    "testResults",
+    "uncertainFields",
+  ])) {
+    return invalid();
+  }
+  const stage = candidateField(value.stage, isStage);
+  const week = candidateField(value.week, isWeek);
+  const testResults = Array.isArray(value.testResults)
+    ? value.testResults.map(parseTestResult)
+    : invalid();
+  const uncertainFields = Array.isArray(value.uncertainFields)
+    ? value.uncertainFields
+    : invalid();
+  const uncertainPaths = uncertainFields
+    .filter(isUncertainField)
+    .map(({ path }) => path);
+  const lowConfidencePaths = specialCandidateFieldPaths({
+    layout: value.layout,
+    stage,
+    week,
+    weekday: value.weekday,
+    sessionType: value.sessionType,
+    testResults,
+  })
+    .filter(({ confidence }) => confidence === "low")
+    .map(({ path }) => path);
+  if (
+    stage.value !== Math.ceil(week.value / 4) ||
+    !isCandidateField(value.weekday, isWeekday) ||
+    !isCandidateField(value.sessionType, isSpecialSessionType) ||
+    testResults.length === 0 ||
+    !uncertainFields.every(isUncertainField) ||
+    uncertainPaths.length !== uncertainFields.length ||
+    new Set(uncertainPaths).size !== uncertainPaths.length ||
+    !uncertainPaths.every((path) => isCorrectableSpecialPath(path, testResults)) ||
+    !lowConfidencePaths.every((path) => uncertainPaths.includes(path))
+  ) {
+    return invalid();
+  }
+  return {
+    layout: value.layout as SpecialSessionCandidate["layout"],
+    stage,
+    week,
+    weekday: value.weekday as SpecialSessionCandidate["weekday"],
+    sessionType: value.sessionType as SpecialSessionCandidate["sessionType"],
+    testResults,
+    uncertainFields: uncertainFields as SpecialSessionCandidate["uncertainFields"],
+  };
+}
+
+function parseTestResult(value: unknown): StrengthTestActual {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["exerciseId", "test", "result"]) ||
+    !isCandidateField(value.exerciseId, isNonEmptyString) ||
+    (value.test !== "12RM" && value.test !== "max_reps_first_set") ||
+    !isCandidateField(value.result, isStrengthTestResultOrNull)
+  ) {
+    return invalid();
+  }
+  return value as StrengthTestActual;
 }
 
 function parseExercise(value: unknown): WorkoutExerciseCandidate {
@@ -325,6 +514,24 @@ function isWorkoutLoadOrNull(value: unknown): value is WorkoutLoad | null {
     isNonEmptyString(value.variant);
 }
 
+function isStrengthTestResultOrNull(
+  value: unknown,
+): value is StrengthTestResult | null {
+  if (value === null) return true;
+  if (!isRecord(value) || !isNonEmptyString(value.raw)) return false;
+  if (value.kind === "kg") {
+    return hasOnlyKeys(value, ["kind", "value", "unit", "raw"]) &&
+      typeof value.value === "number" &&
+      value.value > 0 &&
+      value.unit === "kg";
+  }
+  return value.kind === "repetitions" &&
+    hasOnlyKeys(value, ["kind", "value", "raw"]) &&
+    Number.isInteger(value.value) &&
+    typeof value.value === "number" &&
+    value.value >= 0;
+}
+
 function isStage(value: unknown): value is 1 | 2 | 3 {
   return Number.isInteger(value) && typeof value === "number" && value >= 1 && value <= 3;
 }
@@ -337,6 +544,12 @@ function isWeekday(value: unknown): value is WorkoutLogCandidate["weekday"]["val
   return ["monday", "tuesday", "wednesday", "thursday", "friday"].includes(
     value as string,
   );
+}
+
+function isSpecialSessionType(
+  value: unknown,
+): value is SpecialSessionCandidate["sessionType"]["value"] {
+  return value === "strength_test" || value === "end_of_cycle_retest";
 }
 
 function isSetValue(value: unknown): value is number | null {
@@ -359,7 +572,10 @@ function isUncertainField(value: unknown): value is WorkoutLogCandidate["uncerta
   return isRecord(value) &&
     hasOnlyKeys(value, ["path", "kind", "candidates"]) &&
     isNonEmptyString(value.path) &&
-    (value.kind === "unknown" || value.kind === "low-confidence" || value.kind === "conflict") &&
+    (value.kind === "unknown" ||
+      value.kind === "low-confidence" ||
+      value.kind === "conflict" ||
+      value.kind === "confirmation-required") &&
     (value.candidates === undefined ||
       (Array.isArray(value.candidates) && value.candidates.every(isNonEmptyString)));
 }
@@ -375,7 +591,23 @@ function isCorrectablePath(
   if (location.kind === "exercise") {
     return exercises[location.exerciseIndex] !== undefined;
   }
+  if (location.kind === "test-result") {
+    return false;
+  }
   return exercises[location.exerciseIndex]?.sets[location.setIndex] !== undefined;
+}
+
+function isCorrectableSpecialPath(
+  path: string,
+  testResults: readonly StrengthTestActual[],
+): boolean {
+  const location = parseWorkoutLogFieldPath(path);
+  if (location === undefined) return false;
+  if (location.kind === "top-level") {
+    return true;
+  }
+  return location.kind === "test-result" &&
+    testResults[location.testResultIndex] !== undefined;
 }
 
 export function parseWorkoutLogFieldPath(
@@ -397,12 +629,22 @@ export function parseWorkoutLogFieldPath(
     };
   }
   const set = /^exercises\[(\d+)\]\.sets\[(\d+)\]\.value$/u.exec(path);
-  return set === null
-    ? undefined
-    : {
+  if (set !== null) {
+    return {
         kind: "set",
         exerciseIndex: Number(set[1]),
         setIndex: Number(set[2]),
+      };
+  }
+  const testResult = /^testResults\[(\d+)\]\.(exerciseId|result)\.value$/u.exec(
+    path,
+  );
+  return testResult === null
+    ? undefined
+    : {
+        kind: "test-result",
+        testResultIndex: Number(testResult[1]),
+        key: testResult[2] as "exerciseId" | "result",
       };
 }
 
@@ -439,6 +681,34 @@ function candidateFieldPaths(input: {
         path: `exercises[${exerciseIndex}].sets[${setIndex}].value`,
         confidence: set.confidence,
       });
+    });
+  });
+  return fields;
+}
+
+function specialCandidateFieldPaths(input: {
+  readonly layout: unknown;
+  readonly stage: unknown;
+  readonly week: unknown;
+  readonly weekday: unknown;
+  readonly sessionType: unknown;
+  readonly testResults: readonly StrengthTestActual[];
+}): readonly { readonly path: string; readonly confidence: "high" | "low" }[] {
+  const fields: Array<{ path: string; confidence: "high" | "low" }> = [];
+  for (const key of ["layout", "stage", "week", "weekday", "sessionType"] as const) {
+    const field = input[key];
+    if (isRecord(field) && (field.confidence === "high" || field.confidence === "low")) {
+      fields.push({ path: `${key}.value`, confidence: field.confidence });
+    }
+  }
+  input.testResults.forEach((result, index) => {
+    fields.push({
+      path: `testResults[${index}].exerciseId.value`,
+      confidence: result.exerciseId.confidence,
+    });
+    fields.push({
+      path: `testResults[${index}].result.value`,
+      confidence: result.result.confidence,
     });
   });
   return fields;
