@@ -20,6 +20,8 @@ describe("installable Plugin package contract", () => {
       private: true,
       scripts: {
         "verify:internal": expect.any(String),
+        "test:deterministic": "vitest run",
+        "test:live-model": expect.any(String),
         "verify:clean-install": "node scripts/verify-clean-install.mjs",
         "verify:clawhub": "node scripts/verify-clawhub.mjs",
         "verify:release": expect.stringContaining("verify:clawhub"),
@@ -53,4 +55,5 @@ describe("installable Plugin package contract", () => {
     );
     expect(releaseGate).not.toContain("STELLA_RELEASE_RIGHTS_APPROVED");
   });
+
 });

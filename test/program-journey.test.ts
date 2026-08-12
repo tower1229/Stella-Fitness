@@ -558,6 +558,97 @@ describe("Program Journey", () => {
     });
   });
 
+  it("upgrades legacy Active Program references twice without changing canonical facts", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-v01-upgrade-"));
+    temporaryRoots.push(root);
+    const first = journeyHarness(root);
+    await activateJourney(first);
+    const pending = await first.submitProgramJourneyText({
+      text: "昨天体重 69 kg",
+      receivedAt: "2026-09-07T08:00:00.000Z",
+      source: { channel: "test", messageId: "legacy-pending-checkpoint" },
+    });
+    expect(pending).toMatchObject({
+      status: "confirmation",
+      kind: "checkpoint-body-weight",
+    });
+    await first.shutdown();
+
+    const personal = join(root, "personal");
+    const statePath = join(personal, "program", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    delete state.setup;
+    state.symbolicLoadBindings = {};
+    delete state.phaseCheckpointObservationIds;
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    const factsBefore = canonicalFactSnapshot(personal);
+
+    const upgraded = journeyHarness(root);
+    await expect(upgraded.programJourneyStatus()).resolves.toMatchObject({
+      state: "ACTIVE",
+    });
+    const afterFirstUpgrade = readFileSync(statePath, "utf8");
+    await expect(upgraded.programJourneyStatus()).resolves.toMatchObject({
+      state: "ACTIVE",
+    });
+
+    expect(readFileSync(statePath, "utf8")).toBe(afterFirstUpgrade);
+    expect(JSON.parse(afterFirstUpgrade)).toMatchObject({
+      setup: { baselineObservationId: expect.any(String) },
+      symbolicLoadBindings: {
+        "goblet-squat": { A: { value: 32, observationId: expect.any(String) } },
+        "dumbbell-bench-press": { A: { value: 24, observationId: expect.any(String) } },
+        "dumbbell-deadlift": { A: { value: 40, observationId: expect.any(String) } },
+      },
+      phaseCheckpointObservationIds: {},
+    });
+    expect(canonicalFactSnapshot(personal)).toEqual(factsBefore);
+  });
+
+  it("keeps incomplete legacy Active Programs action-required without inventing facts", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-v01-action-required-"));
+    temporaryRoots.push(root);
+    const first = journeyHarness(root);
+    await activateJourney(first);
+    await first.shutdown();
+
+    const personal = join(root, "personal");
+    const setupPath = join(personal, "program", "setup.json");
+    const statePath = join(personal, "program", "state.json");
+    const setup = JSON.parse(readFileSync(setupPath, "utf8"));
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    delete setup.baselineObservationId;
+    delete state.setup;
+    state.symbolicLoadBindings = {};
+    writeFileSync(setupPath, `${JSON.stringify(setup, null, 2)}\n`);
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    const factsBefore = canonicalFactSnapshot(personal);
+
+    const missingBaseline = journeyHarness(root);
+    await expect(missingBaseline.programJourneyStatus()).resolves.toMatchObject({
+      state: "BASELINE_WEIGHT_REQUIRED",
+      nextStep: { code: "RECORD_BASELINE_WEIGHT" },
+    });
+    expect(canonicalFactSnapshot(personal)).toEqual(factsBefore);
+
+    setup.baselineObservationId = readdirSync(join(personal, "observations", "body-weight"))
+      .find((file) => file.endsWith(".json"))
+      ?.replace(/\.json$/u, "");
+    delete setup.initial12RMObservationIds["goblet-squat"];
+    writeFileSync(setupPath, `${JSON.stringify(setup, null, 2)}\n`);
+    const beforeMissingA = canonicalFactSnapshot(personal);
+
+    await expect(missingBaseline.programJourneyStatus()).resolves.toMatchObject({
+      state: "INITIAL_12RM_REQUIRED",
+      missingInitial12RMExerciseIds: ["goblet-squat"],
+      nextStep: { code: "RECORD_INITIAL_12RM" },
+    });
+    expect(canonicalFactSnapshot(personal)).toEqual(beforeMissingA);
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({
+      symbolicLoadBindings: {},
+    });
+  });
+
   it("fails closed for a schema-invalid checkpoint reference in Program State", async () => {
     const root = mkdtempSync(join(tmpdir(), "stella-journey-invalid-checkpoint-ref-"));
     temporaryRoots.push(root);
@@ -1095,6 +1186,23 @@ function initial12RMInput(
     occurredAt: "2026-08-11T04:00:00.000Z",
     recordedAt: "2026-08-11T04:01:00.000Z",
     source: { kind: "user-text" as const, text: `${exerciseId} ${valueKg} kg` },
+  };
+}
+
+function canonicalFactSnapshot(personalDataDirectory: string) {
+  const snapshotDirectory = (relativeDirectory: string) => {
+    const directory = join(personalDataDirectory, relativeDirectory);
+    if (!existsSync(directory)) return [];
+    return readdirSync(directory)
+      .filter((file) => file.endsWith(".json"))
+      .sort()
+      .map((file) => [file, readFileSync(join(directory, file), "utf8")]);
+  };
+  return {
+    bodyWeight: snapshotDirectory(join("observations", "body-weight")),
+    initial12RM: snapshotDirectory(join("observations", "course-start-12rm")),
+    workoutLog: snapshotDirectory(join("observations", "workout-log")),
+    pendingJourney: snapshotDirectory(join("program", "pending-confirmations")),
   };
 }
 

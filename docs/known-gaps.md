@@ -18,6 +18,8 @@
 
 固定模板 benchmark 规范已存在，但仍缺真实填写、拍摄噪声和人工 ground truth。该项阻止选择默认 extraction model，不阻止使用 deterministic fixtures 开始基础实现。
 
+确定性 CI 与 live-model gate 已分离；`npm run test:live-model` 在这些真实材料缺失时 fail closed，不把本地 fixture 结果计作 #3 完成证据。
+
 ## GAP-004：课程派生制品发行授权
 
 **状态：RELEASE-BLOCKING / AUTHORIZATION PENDING**
@@ -29,6 +31,8 @@
 **状态：RELEASE-BLOCKING / LIVE CHECK PENDING**
 
 canonical identity 为 `tower1229` / `@tower1229/stella-fitness`。首次发布前必须核验登录身份、owner 权限、名称可用性、package validation、dry-run 和 clean install。
+
+release gate 还要求一次真实 Telegram channel smoke，且证据必须绑定待发布 artifact 的 package name、version 与 SHA-256；本地 Bot API test adapter 不能满足该 live gate。
 
 ## GAP-006：训练/营养监督专业审核
 

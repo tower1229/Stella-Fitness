@@ -22,15 +22,19 @@ onboarding 不要求健康档案、营养目标或监督策略配置。
 
 - manifest、config schema 与 compatibility metadata；
 - validate/dry-run；
-- clean install、enable、load、upgrade、disable、uninstall；
+- clean install、enable、load、原地幂等 upgrade、disable/enable、clean process restart、Runtime Directory 删除重建与 uninstall；
 - configuration preflight；
 - ProgramSpec validation；
 - workout photo → confirmation → Observation 流程；
 - Personal/Runtime directory 边界和媒体净化；
-- package 不含 raw DOCX、用户数据、pilot 或未授权内容；内置 XLSX 必须匹配白名单路径与 digest；
+- package 不含 raw DOCX、其他 Office/PDF、用户数据、benchmark、pilot 或未授权内容；内置 XLSX 必须匹配白名单路径、20,964 bytes 与固定 digest；
+- release gate 要求真实 Telegram Adapter smoke 证据匹配待发布 package 的 name、version 与 artifact SHA-256；本地 Bot API adapter 只用于 deterministic clean-install，不冒充 live smoke；
+- `today/week/phase` PDF、A4 render 与 Personal Data Directory 派生打印文件不属于运行时或测试契约；
 - privacy、数据目录和 Provider permission 说明；
 - 课程派生制品授权与 required notice。
 
 ## 禁止声明
 
 不得把产品描述为 AI 私教、训练监督、营养识别、健康风险筛查或医疗能力。
+
+在 #3 获得真实填写训练日志照片、人工 ground truth 与 live provider 结果前，不得宣称固定 layout 数字准确率或裁剪 abstention 已完成。

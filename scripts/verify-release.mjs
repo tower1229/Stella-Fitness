@@ -112,6 +112,14 @@ function verifyRelease() {
     channels,
     blockers,
   });
+  const liveChannelSmoke = validateLiveChannelSmoke({
+    path: options.channelSmoke ??
+      process.env.STELLA_LIVE_CHANNEL_SMOKE_PATH ??
+      join(workspace, "release/live-channel-smoke.json"),
+    artifact,
+    packageJson,
+    blockers,
+  });
 
   if (blockers.length > 0) {
     return blockRelease(blockers);
@@ -124,6 +132,7 @@ function verifyRelease() {
       authorized: true,
       channels,
       coveredDerivatives: derivativePaths.length,
+      liveChannelSmoke,
       package: `${packageJson.name}@${packageJson.version}`,
     })}\n`,
   );
@@ -134,16 +143,115 @@ function parseOptions(args) {
   for (let index = 0; index < args.length; index += 1) {
     const option = args[index];
     const value = args[index + 1];
-    if (option !== "--artifact" && option !== "--authorization") {
+    if (
+      option !== "--artifact" &&
+      option !== "--authorization" &&
+      option !== "--channel-smoke"
+    ) {
       throw new Error(`Unknown release verification option: ${option}`);
     }
     if (value === undefined || value.startsWith("--")) {
       throw new Error(`Missing value for ${option}`);
     }
-    options[option.slice(2)] = resolve(value);
+    options[option === "--channel-smoke" ? "channelSmoke" : option.slice(2)] =
+      resolve(value);
     index += 1;
   }
   return options;
+}
+
+function validateLiveChannelSmoke({
+  path,
+  artifact,
+  packageJson,
+  blockers,
+}) {
+  if (!existsSync(path)) {
+    blockers.push(`Real Telegram channel smoke evidence is required: ${path}`);
+    return undefined;
+  }
+  const smoke = readJson(path);
+  if (
+    smoke.schemaVersion !== 1 ||
+    smoke.channel !== "telegram" ||
+    smoke.adapter !== "openclaw-telegram" ||
+    smoke.live !== true ||
+    typeof smoke.testedAt !== "string" ||
+    !Number.isFinite(Date.parse(smoke.testedAt)) ||
+    !smoke.testedAt.includes("T") ||
+    smoke.package?.name !== packageJson.name ||
+    smoke.package?.version !== packageJson.version ||
+    smoke.package?.artifactSha256 !== sha256(readFileSync(artifact))
+  ) {
+    blockers.push(
+      "Real Telegram channel smoke must identify the live adapter and exact package bytes/version",
+    );
+    return undefined;
+  }
+  if (
+    !isRecord(smoke.scenario) ||
+    smoke.scenario.bindingApproved !== true ||
+    smoke.scenario.printableWorkbookVerified !== true ||
+    smoke.scenario.journeyActivated !== true ||
+    smoke.scenario.checkpointRecorded !== true
+  ) {
+    blockers.push(
+      "Real Telegram channel smoke must report the required live journey results",
+    );
+    return undefined;
+  }
+  if (
+    !isRecord(smoke.evidence) ||
+    typeof smoke.evidence.path !== "string" ||
+    smoke.evidence.path.trim().length === 0 ||
+    typeof smoke.evidence.sha256 !== "string"
+  ) {
+    blockers.push(
+      "Real Telegram channel smoke must include hashed transcript evidence",
+    );
+    return undefined;
+  }
+  const expectedScenario = smoke.scenario;
+  const evidencePath = resolve(dirname(path), smoke.evidence.path);
+  if (!existsSync(evidencePath)) {
+    blockers.push(`Real Telegram transcript evidence does not exist: ${evidencePath}`);
+    return undefined;
+  }
+  const evidenceBytes = readFileSync(evidencePath);
+  if (sha256(evidenceBytes) !== smoke.evidence.sha256) {
+    blockers.push("Real Telegram transcript evidence SHA-256 does not match");
+    return undefined;
+  }
+  const evidence = JSON.parse(evidenceBytes.toString("utf8"));
+  if (
+    !isRecord(evidence) ||
+    evidence.adapter !== "openclaw-telegram" ||
+    evidence.testedAt !== smoke.testedAt ||
+    !isRecord(evidence.package) ||
+    evidence.package.name !== packageJson.name ||
+    evidence.package.version !== packageJson.version ||
+    evidence.package.artifactSha256 !== smoke.package.artifactSha256 ||
+    !isRecord(evidence.scenario) ||
+    JSON.stringify(evidence.scenario) !== JSON.stringify(expectedScenario) ||
+    !Number.isSafeInteger(evidence.botUserId) ||
+    !Number.isSafeInteger(evidence.chatId) ||
+    !Number.isSafeInteger(evidence.firstUpdateId) ||
+    !Number.isSafeInteger(evidence.lastUpdateId) ||
+    evidence.lastUpdateId < evidence.firstUpdateId ||
+    !Array.isArray(evidence.outboundMessageIds) ||
+    evidence.outboundMessageIds.length === 0 ||
+    evidence.outboundMessageIds.some((id) => !Number.isSafeInteger(id))
+  ) {
+    blockers.push(
+      "Real Telegram transcript evidence does not bind the exact smoke receipt",
+    );
+    return undefined;
+  }
+  return smoke.channel;
+}
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function createArtifact() {

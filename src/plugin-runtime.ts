@@ -283,7 +283,7 @@ export function createStellaFitnessRuntime(options: {
     observation,
   ) => {
     const update = programStateUpdateTail.then(async () => {
-      await journey().migrateLegacyCheckpointReferences();
+      await journey().migrateLegacyProgramStateReferences();
       return await withProgramJourneyLock(requiredRuntimeDirectory(options), async () => {
       if (
         observation.plannedSession.kind === "cycle-completion-retest" &&
@@ -374,7 +374,7 @@ export function createStellaFitnessRuntime(options: {
   return {
     preflight,
     async programJourneyStatus(input) {
-      await journey().migrateLegacyCheckpointReferences();
+      await journey().migrateLegacyProgramStateReferences();
       await enqueueSpecialSessionStateRebuild(requiredPersonalDataDirectory(options));
       return await journey().status(input);
     },
@@ -382,15 +382,15 @@ export function createStellaFitnessRuntime(options: {
       return journey().acknowledgePrerequisite(input);
     },
     async recordJourneyBodyWeight(input) {
-      await journey().migrateLegacyCheckpointReferences();
+      await journey().migrateLegacyProgramStateReferences();
       return await journey().recordBodyWeight(input);
     },
     async correctJourneyBodyWeight(input) {
-      await journey().migrateLegacyCheckpointReferences();
+      await journey().migrateLegacyProgramStateReferences();
       return await journey().correctBodyWeight(input);
     },
     async deleteJourneyBodyWeight(input) {
-      await journey().migrateLegacyCheckpointReferences();
+      await journey().migrateLegacyProgramStateReferences();
       return await journey().deleteBodyWeight(input);
     },
     recordInitial12RM(input) {
@@ -403,18 +403,18 @@ export function createStellaFitnessRuntime(options: {
       return journey().deleteInitial12RM(input);
     },
     async submitProgramJourneyText(input) {
-      await journey().migrateLegacyCheckpointReferences();
+      await journey().migrateLegacyProgramStateReferences();
       return await journey().submitText(input);
     },
     async confirmProgramJourneyCandidate(input) {
-      await journey().migrateLegacyCheckpointReferences();
+      await journey().migrateLegacyProgramStateReferences();
       return await journey().confirmCandidate(input);
     },
     activateProgram(cycleStart) {
       return journey().activate(cycleStart);
     },
     async programFacts(query) {
-      await journey().migrateLegacyCheckpointReferences();
+      await journey().migrateLegacyProgramStateReferences();
       await enqueueSpecialSessionStateRebuild(requiredPersonalDataDirectory(options));
       if (query.kind !== "unsupported") {
         const status = await journey().status(
@@ -440,7 +440,7 @@ export function createStellaFitnessRuntime(options: {
       return await getPrintableLogWorkbook();
     },
     async weightFacts() {
-      await journey().migrateLegacyCheckpointReferences();
+      await journey().migrateLegacyProgramStateReferences();
       return await journey().weightFacts();
     },
     resolvePlannedSession(input) {

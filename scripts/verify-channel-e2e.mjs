@@ -1,7 +1,14 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdirSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer as createTcpServer } from "node:net";
 import { join, resolve } from "node:path";
 
@@ -70,6 +77,7 @@ export async function verifyTelegramChannelFlow(options) {
     if (
       workbookCall.body.fileName !== "zhuoshu-workout-log.xlsx" ||
       workbookCall.body.mimeType !== "application/octet-stream" ||
+      workbookCall.body.bytes !== 20_964 ||
       workbookCall.body.sha256 !==
         "a113a16f9844ceb518307369bd45979af3aa703e67da8eb3bbb6b5e991aebcca"
     ) {
@@ -190,6 +198,16 @@ export async function verifyTelegramChannelFlow(options) {
       checkpointGateCursor,
       (text) => text.startsWith("checkpoint body weight recorded: 69 kg"),
     );
+    await restartGateway("Week 4 body-weight checkpoint");
+    const checkpointRecoveryCursor = telegram.messageCount();
+    telegram.pushText("/stella-facts weight");
+    await telegram.waitForTextAfter(
+      checkpointRecoveryCursor,
+      (text) =>
+        text.startsWith("Weight Facts:") &&
+        text.includes("baseline: 68.4 kg") &&
+        text.includes("week-4: 69 kg"),
+    );
     telegram.pushText("/stella-facts today 2026-08-10");
     const today = await telegram.waitForText((text) =>
       text.startsWith("today Planned Session: 2026-08-10"),
@@ -229,6 +247,19 @@ export async function verifyTelegramChannelFlow(options) {
       /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(pendingStrength)?.[1];
     if (strengthConfirmationId === undefined) {
       throw new Error(`Strength confirmation ID was missing: ${pendingStrength}`);
+    }
+    const ordinaryPendingCursor = telegram.messageCount();
+    telegram.pushPhoto("普通训练日志");
+    const pendingOrdinary = await telegram.waitForTextAfter(
+      ordinaryPendingCursor,
+      (text) =>
+        text.includes("Workout log needs confirmation:") &&
+        text.includes("exercises[0].load.value"),
+    );
+    const ordinaryConfirmationId =
+      /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(pendingOrdinary)?.[1];
+    if (ordinaryConfirmationId === undefined) {
+      throw new Error(`Ordinary confirmation ID was missing: ${pendingOrdinary}`);
     }
     await restartGateway("pending strength-test confirmation");
     telegram.pushText(
@@ -275,6 +306,192 @@ export async function verifyTelegramChannelFlow(options) {
     ) {
       throw new Error("Telegram channel flow did not persist confirmed facts");
     }
+    const expectedRecoveredWeightFacts = await requestTelegramText(
+      telegram,
+      "/stella-facts weight",
+      (text) => text.startsWith("Weight Facts:"),
+    );
+    const expectedRecoveredStrengthBinding = await requestTelegramText(
+      telegram,
+      "/stella-facts symbol goblet-squat N",
+      (text) => text === "goblet-squat N: 34 kg",
+    );
+
+    const canonicalBeforeLifecycle = canonicalDataSnapshot(personalDataDirectory);
+    const stableStateId = state.id;
+    progress("cycling Plugin disable/enable");
+    await stopGateway(gateway);
+    gateway = undefined;
+    options.run(options.openclaw, ["plugins", "disable", "stella-fitness"]);
+    options.run(options.openclaw, ["plugins", "enable", "stella-fitness"]);
+    gateway = startGateway(options, gatewayPort);
+    gatewayStarts += 1;
+    await telegram.waitForCall(
+      ({ method, sequence }) => method === "getme" && sequence >= gatewayStarts,
+    );
+    await assertRecoveredJourney({
+      telegram,
+      personalDataDirectory,
+      stableStateId,
+      expectedCanonical: canonicalBeforeLifecycle,
+      expectedWeightFacts: expectedRecoveredWeightFacts,
+      expectedStrengthBinding: expectedRecoveredStrengthBinding,
+      checkpoint: "Plugin disable/enable",
+    });
+
+    progress("deleting rebuildable Runtime Directory");
+    await stopGateway(gateway);
+    gateway = undefined;
+    const pluginRuntimeDirectory = join(options.stateDir, "stella-fitness");
+    rmSync(pluginRuntimeDirectory, { recursive: true, force: true });
+    if (existsSync(pluginRuntimeDirectory)) {
+      throw new Error("Runtime Directory was not deleted");
+    }
+    gateway = startGateway(options, gatewayPort);
+    gatewayStarts += 1;
+    await telegram.waitForCall(
+      ({ method, sequence }) => method === "getme" && sequence >= gatewayStarts,
+    );
+    await assertRecoveredJourney({
+      telegram,
+      personalDataDirectory,
+      stableStateId,
+      expectedCanonical: canonicalBeforeLifecycle,
+      expectedWeightFacts: expectedRecoveredWeightFacts,
+      expectedStrengthBinding: expectedRecoveredStrengthBinding,
+      checkpoint: "Runtime Directory rebuild",
+    });
+
+    const factsBeforeLegacyUpgrade = canonicalFactSnapshot(personalDataDirectory);
+    const setupPathForUpgrade = join(personalDataDirectory, "program", "setup.json");
+    const statePathForUpgrade = join(personalDataDirectory, "program", "state.json");
+    const legacySetup = JSON.parse(readFileSync(setupPathForUpgrade, "utf8"));
+    const legacyState = JSON.parse(readFileSync(statePathForUpgrade, "utf8"));
+    legacySetup.checkpointObservationIds = legacyState.phaseCheckpointObservationIds;
+    delete legacyState.setup;
+    delete legacyState.phaseCheckpointObservationIds;
+    for (const [exerciseId, bindings] of Object.entries(legacyState.symbolicLoadBindings)) {
+      delete bindings.A;
+      if (Object.keys(bindings).length === 0) {
+        delete legacyState.symbolicLoadBindings[exerciseId];
+      }
+    }
+    writeFileSync(setupPathForUpgrade, `${JSON.stringify(legacySetup, null, 2)}\n`);
+    writeFileSync(statePathForUpgrade, `${JSON.stringify(legacyState, null, 2)}\n`);
+    const firstUpgradeCursor = telegram.messageCount();
+    telegram.pushText("/stella-start");
+    await telegram.waitForTextAfter(
+      firstUpgradeCursor,
+      (text) => text.includes("journey: ACTIVE"),
+    );
+    const upgradedState = readFileSync(statePathForUpgrade, "utf8");
+    const upgradedStateValue = JSON.parse(upgradedState);
+    if (
+      upgradedStateValue.setup?.baselineObservationId === undefined ||
+      upgradedStateValue.phaseCheckpointObservationIds?.["4"] === undefined ||
+      ["goblet-squat", "dumbbell-bench-press", "dumbbell-deadlift"].some(
+        (exerciseId) => upgradedStateValue.symbolicLoadBindings?.[exerciseId]?.A === undefined,
+      )
+    ) {
+      throw new Error(`Legacy Program State upgrade is incomplete: ${upgradedState}`);
+    }
+    const secondUpgradeCursor = telegram.messageCount();
+    telegram.pushText("/stella-start");
+    await telegram.waitForTextAfter(
+      secondUpgradeCursor,
+      (text) => text.includes("journey: ACTIVE"),
+    );
+    if (readFileSync(statePathForUpgrade, "utf8") !== upgradedState) {
+      throw new Error("Legacy Program State upgrade was not idempotent");
+    }
+    if (
+      JSON.stringify(canonicalFactSnapshot(personalDataDirectory)) !==
+        JSON.stringify(factsBeforeLegacyUpgrade)
+    ) {
+      throw new Error("Legacy Program State upgrade changed canonical facts or confirmations");
+    }
+
+    const ordinaryConfirmationCursor = telegram.messageCount();
+    telegram.pushText(
+      `/stella-confirm ${ordinaryConfirmationId} {"exercises[0].load.value":{"kind":"kg","value":20,"unit":"kg","raw":"20"}}`,
+    );
+    await telegram.waitForTextAfter(
+      ordinaryConfirmationCursor,
+      (text) => text.startsWith("Workout recorded: stage 1, week 1, monday, full-body"),
+    );
+
+    const stateBeforeActionRequired = readFileSync(statePathForUpgrade, "utf8");
+    const setupBeforeActionRequired = readFileSync(setupPathForUpgrade, "utf8");
+    const actionRequiredFacts = canonicalFactSnapshot(personalDataDirectory);
+    const incompleteSetup = JSON.parse(setupBeforeActionRequired);
+    const incompleteState = JSON.parse(stateBeforeActionRequired);
+    delete incompleteSetup.baselineObservationId;
+    delete incompleteState.setup;
+    writeFileSync(setupPathForUpgrade, `${JSON.stringify(incompleteSetup, null, 2)}\n`);
+    writeFileSync(statePathForUpgrade, `${JSON.stringify(incompleteState, null, 2)}\n`);
+    await requestTelegramText(
+      telegram,
+      "/stella-start",
+      (text) =>
+        text.includes("journey: BASELINE_WEIGHT_REQUIRED") &&
+        text.includes("next: RECORD_BASELINE_WEIGHT"),
+    );
+    if (
+      JSON.stringify(canonicalFactSnapshot(personalDataDirectory)) !==
+        JSON.stringify(actionRequiredFacts)
+    ) {
+      throw new Error("Missing legacy baseline fabricated canonical facts");
+    }
+    writeFileSync(setupPathForUpgrade, setupBeforeActionRequired);
+    const missingASetup = JSON.parse(setupBeforeActionRequired);
+    const missingAState = JSON.parse(stateBeforeActionRequired);
+    delete missingASetup.initial12RMObservationIds["goblet-squat"];
+    delete missingAState.symbolicLoadBindings["goblet-squat"];
+    writeFileSync(setupPathForUpgrade, `${JSON.stringify(missingASetup, null, 2)}\n`);
+    writeFileSync(statePathForUpgrade, `${JSON.stringify(missingAState, null, 2)}\n`);
+    await requestTelegramText(
+      telegram,
+      "/stella-start",
+      (text) =>
+        text.includes("journey: INITIAL_12RM_REQUIRED") &&
+        text.includes("missing-initial-12rm: goblet-squat") &&
+        text.includes("next: RECORD_INITIAL_12RM"),
+    );
+    if (
+      JSON.stringify(canonicalFactSnapshot(personalDataDirectory)) !==
+        JSON.stringify(actionRequiredFacts)
+    ) {
+      throw new Error("Missing legacy A binding fabricated canonical facts");
+    }
+    writeFileSync(setupPathForUpgrade, setupBeforeActionRequired);
+    writeFileSync(statePathForUpgrade, stateBeforeActionRequired);
+
+    const invalidEditCursor = telegram.messageCount();
+    telegram.pushText("/stella-weight 2026-08-11T08:00:00.000Z 体重 70 kg");
+    const currentWeight = await telegram.waitForTextAfter(
+      invalidEditCursor,
+      (text) => text.startsWith("Body weight recorded: 70 kg"),
+    );
+    const currentWeightId = /observation: ([0-9a-f-]{36})/u.exec(currentWeight)?.[1];
+    if (currentWeightId === undefined) {
+      throw new Error(`Current body-weight Observation ID was missing: ${currentWeight}`);
+    }
+    const invalidRelativePath = join(
+      "observations",
+      "body-weight",
+      `${currentWeightId}.json`,
+    );
+    writeFileSync(join(personalDataDirectory, invalidRelativePath), "{}\n");
+    const invalidEditFactsCursor = telegram.messageCount();
+    telegram.pushText("/stella-facts weight");
+    await telegram.waitForTextAfter(
+      invalidEditFactsCursor,
+      (text) =>
+        text.includes(`error: ${invalidRelativePath} - Body-weight Observation is schema-invalid`) &&
+        text.includes("baseline: 68.4 kg") &&
+        text.includes("week-4: 69 kg") &&
+        !text.includes("current: 70 kg"),
+    );
 
     return {
       channel: "telegram",
@@ -298,6 +515,13 @@ export async function verifyTelegramChannelFlow(options) {
       imageIngress: true,
       gatewayRestarts: gatewayStarts - 1,
       confirmationRecovered: true,
+      checkpointRecovered: true,
+      pluginDisableEnableRecovered: true,
+      runtimeDirectoryRebuilt: true,
+      legacyMigrationIdempotent: true,
+      pendingConfirmationUpgraded: true,
+      legacyActionRequired: true,
+      invalidManualEditIsolated: true,
       observationId,
     };
   } finally {
@@ -306,6 +530,100 @@ export async function verifyTelegramChannelFlow(options) {
     }
     await telegram.close();
   }
+}
+
+async function assertRecoveredJourney(input) {
+  const cursor = input.telegram.messageCount();
+  input.telegram.pushText("/stella-start");
+  const response = await input.telegram.waitForMessageAfter(
+    cursor,
+    (message) =>
+      message.text.includes("journey: ACTIVE") ||
+      message.text.includes("Plugin bind approval required"),
+  );
+  if (response.text.includes("Plugin bind approval required")) {
+    const approvalData = response.replyMarkup?.inline_keyboard
+      ?.flat()
+      .find((candidate) => candidate.text === "Always allow")
+      ?.callback_data;
+    if (typeof approvalData !== "string") {
+      throw new Error(`${input.checkpoint} binding approval was unavailable`);
+    }
+    const callCursor = input.telegram.callCount();
+    input.telegram.pushCallback(approvalData, response.platformMessage);
+    await input.telegram.waitForCallAfter(
+      callCursor,
+      ({ method }) => method === "answercallbackquery",
+    );
+    const reboundCursor = input.telegram.messageCount();
+    input.telegram.pushText("/stella-start");
+    await input.telegram.waitForTextAfter(
+      reboundCursor,
+      (text) => text.includes("journey: ACTIVE"),
+    );
+  }
+  const state = JSON.parse(readFileSync(
+    join(input.personalDataDirectory, "program", "state.json"),
+    "utf8",
+  ));
+  if (state.id !== input.stableStateId) {
+    throw new Error(`${input.checkpoint} changed the stable Program State ID`);
+  }
+  const actualCanonical = canonicalDataSnapshot(input.personalDataDirectory);
+  if (JSON.stringify(actualCanonical) !== JSON.stringify(input.expectedCanonical)) {
+    throw new Error(`${input.checkpoint} changed canonical Personal Data`);
+  }
+  const weightFacts = await requestTelegramText(
+    input.telegram,
+    "/stella-facts weight",
+    (text) => text.startsWith("Weight Facts:"),
+  );
+  if (weightFacts !== input.expectedWeightFacts) {
+    throw new Error(`${input.checkpoint} changed the rebuilt Weight Facts View`);
+  }
+  const strengthBinding = await requestTelegramText(
+    input.telegram,
+    "/stella-facts symbol goblet-squat N",
+    (text) => text === "goblet-squat N: 34 kg",
+  );
+  if (strengthBinding !== input.expectedStrengthBinding) {
+    throw new Error(`${input.checkpoint} changed rebuilt strength facts`);
+  }
+}
+
+async function requestTelegramText(telegram, text, predicate) {
+  const cursor = telegram.messageCount();
+  telegram.pushText(text);
+  return await telegram.waitForTextAfter(cursor, predicate);
+}
+
+function canonicalDataSnapshot(root) {
+  const files = [];
+  const visit = (directory, relativeDirectory = "") => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const relativePath = join(relativeDirectory, entry.name);
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(path, relativePath);
+      } else if (entry.isFile()) {
+        files.push({
+          path: relativePath,
+          sha256: createHash("sha256").update(readFileSync(path)).digest("hex"),
+        });
+      }
+    }
+  };
+  visit(root);
+  return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function canonicalFactSnapshot(personalDataDirectory) {
+  return canonicalDataSnapshot(personalDataDirectory).filter(({ path }) =>
+    path.startsWith(join("observations", "")) ||
+    path.startsWith(join("raw-artifacts", "")) ||
+    path.startsWith(join("processing", "")) ||
+    path.startsWith(join("program", "pending-confirmations", ""))
+  );
 }
 
 
@@ -544,11 +862,20 @@ async function createFakeTelegramApi() {
     messageCount() {
       return messages.length;
     },
+    callCount() {
+      return calls.length;
+    },
     waitForMessage(predicate) {
       return waitFor(() => messages.find(predicate));
     },
+    waitForMessageAfter(index, predicate) {
+      return waitFor(() => messages.slice(index).find(predicate));
+    },
     waitForCall(predicate) {
       return waitFor(() => calls.find(predicate));
+    },
+    waitForCallAfter(index, predicate) {
+      return waitFor(() => calls.slice(index).find(predicate));
     },
     snapshot() {
       return {

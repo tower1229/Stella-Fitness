@@ -202,25 +202,67 @@ export function createProgramJourney(options: {
   const personalDataDirectory = options.personalDataDirectory;
   const runtimeDirectory = options.runtimeDirectory;
   return {
-    async migrateLegacyCheckpointReferences(): Promise<void> {
+    async migrateLegacyProgramStateReferences(): Promise<void> {
       assertJourneyPreflight(options.preflight());
       await withProgramJourneyLock(runtimeDirectory, async () => {
         const setup = await ensureSetup(personalDataDirectory);
         const active = await readActiveProgramIfPresent({ personalDataDirectory });
+        if (active === undefined) return;
+        const initial = await readInitial12RMObservations(personalDataDirectory);
+        let nextState = active.state;
+
         if (
-          active === undefined ||
-          Object.keys(active.state.phaseCheckpointObservationIds).length > 0 ||
-          Object.keys(setup.checkpointObservationIds).length === 0
+          nextState.setup === undefined &&
+          setup.baselineObservationId !== undefined &&
+          await resolveBodyWeightReference(
+              personalDataDirectory,
+              setup.baselineObservationId,
+            ) !== undefined
         ) {
-          return;
+          nextState = {
+            ...nextState,
+            setup: { baselineObservationId: setup.baselineObservationId },
+          };
         }
+
+        const symbolicLoadBindings: Record<
+          string,
+          Readonly<Record<string, SymbolicLoadBinding>>
+        > = { ...nextState.symbolicLoadBindings };
+        let bindingsChanged = false;
+        for (const exerciseId of INITIAL_12RM_EXERCISES) {
+          if (symbolicLoadBindings[exerciseId]?.A !== undefined) continue;
+          const observationId = setup.initial12RMObservationIds[exerciseId];
+          const observation = observationId === undefined
+            ? undefined
+            : resolveInitial12RMReference(initial.observations, observationId);
+          if (observation?.exerciseId !== exerciseId) continue;
+          symbolicLoadBindings[exerciseId] = {
+            ...symbolicLoadBindings[exerciseId],
+            A: initial12RMBinding(observation),
+          };
+          bindingsChanged = true;
+        }
+        if (bindingsChanged) {
+          nextState = { ...nextState, symbolicLoadBindings };
+        }
+
+        const phaseCheckpointObservationIds = {
+          ...setup.checkpointObservationIds,
+          ...nextState.phaseCheckpointObservationIds,
+        };
+        if (
+          JSON.stringify(phaseCheckpointObservationIds) !==
+            JSON.stringify(nextState.phaseCheckpointObservationIds)
+        ) {
+          nextState = { ...nextState, phaseCheckpointObservationIds };
+        }
+
+        if (nextState === active.state) return;
         await replaceProgramState({
           personalDataDirectory,
           previousState: active.state,
-          nextState: {
-            ...active.state,
-            phaseCheckpointObservationIds: setup.checkpointObservationIds,
-          },
+          nextState,
         });
       });
     },
@@ -1026,15 +1068,7 @@ export function createProgramJourney(options: {
         if (observation.exerciseId !== exerciseId) {
           throw new Error(`Initial 12RM Observation is mapped to the wrong exercise: ${exerciseId}`);
         }
-        bindings[exerciseId] = {
-          A: {
-            value: observation.result.value,
-            unit: "kg",
-            test: "12RM",
-            observationId: observation.id,
-            recordedAt: observation.provenance.recordedAt,
-          },
-        };
+        bindings[exerciseId] = { A: initial12RMBinding(observation) };
       }
       return await confirmProgramSetup({
         personalDataDirectory,
@@ -1735,6 +1769,18 @@ function resolveInitial12RMReference(
     current = replacement;
   }
   return undefined;
+}
+
+function initial12RMBinding(
+  observation: CourseStart12RMObservation,
+): SymbolicLoadBinding {
+  return {
+    value: observation.result.value,
+    unit: "kg",
+    test: "12RM",
+    observationId: observation.id,
+    recordedAt: observation.provenance.recordedAt,
+  };
 }
 
 async function findInitial12RMByConfirmation(

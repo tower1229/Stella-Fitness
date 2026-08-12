@@ -65,8 +65,9 @@ describe("course-derivative release authorization gate", () => {
       sha256(fixture.derivative),
       sha256(fixture.workbook),
     );
+    const channelSmoke = await createChannelSmoke(fixture);
 
-    const result = runVerifier(fixture.tarball, authorization);
+    const result = runVerifier(fixture.tarball, authorization, channelSmoke);
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
@@ -74,7 +75,77 @@ describe("course-derivative release authorization gate", () => {
       authorized: true,
       channels: ["ClawHub"],
       coveredDerivatives: 2,
+      liveChannelSmoke: "telegram",
     });
+  });
+
+  it("fails closed before release when the exact artifact has no real channel smoke", async () => {
+    const fixture = await createReleaseFixture();
+    const authorization = await createAuthorization(
+      fixture,
+      sha256(fixture.derivative),
+      sha256(fixture.workbook),
+    );
+
+    const result = runVerifier(fixture.tarball, authorization);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Real Telegram channel smoke evidence is required");
+  });
+
+  it("rejects live channel smoke recorded against different package bytes", async () => {
+    const fixture = await createReleaseFixture();
+    const authorization = await createAuthorization(
+      fixture,
+      sha256(fixture.derivative),
+      sha256(fixture.workbook),
+    );
+    const channelSmoke = await createChannelSmoke(fixture, "0".repeat(64));
+
+    const result = runVerifier(fixture.tarball, authorization, channelSmoke);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Real Telegram channel smoke must identify the live adapter and exact package bytes/version",
+    );
+  });
+
+  it("rejects self-asserted live smoke without hashed Telegram transcript evidence", async () => {
+    const fixture = await createReleaseFixture();
+    const authorization = await createAuthorization(
+      fixture,
+      sha256(fixture.derivative),
+      sha256(fixture.workbook),
+    );
+    const channelSmoke = await createChannelSmoke(fixture, undefined, {
+      omitEvidence: true,
+    });
+
+    const result = runVerifier(fixture.tarball, authorization, channelSmoke);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Real Telegram channel smoke must include hashed transcript evidence",
+    );
+  });
+
+  it("rejects replaying transcript evidence from different package bytes", async () => {
+    const fixture = await createReleaseFixture();
+    const authorization = await createAuthorization(
+      fixture,
+      sha256(fixture.derivative),
+      sha256(fixture.workbook),
+    );
+    const channelSmoke = await createChannelSmoke(fixture, undefined, {
+      evidenceArtifactSha256: "0".repeat(64),
+    });
+
+    const result = runVerifier(fixture.tarball, authorization, channelSmoke);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Real Telegram transcript evidence does not bind the exact smoke receipt",
+    );
   });
 });
 
@@ -95,8 +166,10 @@ describe("real distribution artifact inspection", () => {
 
   it.each([
     ["raw Office source", "sources/originals/workout-log.xlsx"],
+    ["generated printable PDF", "dist/generated/week-1.pdf"],
     ["personal data", "personal-data/observations/user.json"],
     ["developer benchmark", "dist/benchmarks/case.json"],
+    ["test fixture", "dist/fixtures/case.json"],
     ["pilot artifact", "dist/pilot/handwritten-case.json"],
   ])("rejects %s even when npm includes it", async (_label, forbiddenPath) => {
     const fixture = await createReleaseFixture({ forbiddenPath });
@@ -289,7 +362,70 @@ async function createAuthorization(
   return authorizationPath;
 }
 
-function runVerifier(tarball: string, authorization?: string) {
+async function createChannelSmoke(
+  fixture: ReleaseFixture,
+  artifactSha256?: string,
+  options: {
+    omitEvidence?: boolean;
+    evidenceArtifactSha256?: string;
+  } = {},
+): Promise<string> {
+  const path = join(fixture.root, "live-channel-smoke.json");
+  const testedAt = "2026-08-12T00:00:00.000Z";
+  const packageArtifactSha256 =
+    artifactSha256 ?? sha256(await readFile(fixture.tarball));
+  const scenario = {
+    bindingApproved: true,
+    printableWorkbookVerified: true,
+    journeyActivated: true,
+    checkpointRecorded: true,
+  };
+  const evidence = `${JSON.stringify({
+    adapter: "openclaw-telegram",
+    testedAt,
+    package: {
+      name: "@tower1229/stella-fitness",
+      version: "0.1.0",
+      artifactSha256: options.evidenceArtifactSha256 ?? packageArtifactSha256,
+    },
+    botUserId: 616161,
+    chatId: 515151,
+    firstUpdateId: 1000,
+    lastUpdateId: 1042,
+    outboundMessageIds: [101, 102, 103],
+    scenario,
+  }, null, 2)}\n`;
+  const evidencePath = join(fixture.root, "telegram-live-transcript.json");
+  await writeFile(evidencePath, evidence);
+  await writeFile(path, `${JSON.stringify({
+    schemaVersion: 1,
+    channel: "telegram",
+    adapter: "openclaw-telegram",
+    live: true,
+    testedAt,
+    package: {
+      name: "@tower1229/stella-fitness",
+      version: "0.1.0",
+      artifactSha256: packageArtifactSha256,
+    },
+    scenario,
+    ...(options.omitEvidence
+      ? {}
+      : {
+          evidence: {
+            path: "telegram-live-transcript.json",
+            sha256: sha256(evidence),
+          },
+        }),
+  }, null, 2)}\n`);
+  return path;
+}
+
+function runVerifier(
+  tarball: string,
+  authorization?: string,
+  channelSmoke?: string,
+) {
   return spawnSync(
     process.execPath,
     [
@@ -299,6 +435,7 @@ function runVerifier(tarball: string, authorization?: string) {
       ...(authorization === undefined
         ? []
         : ["--authorization", authorization]),
+      ...(channelSmoke === undefined ? [] : ["--channel-smoke", channelSmoke]),
     ],
     { encoding: "utf8" },
   );

@@ -23,6 +23,9 @@
 | today/next 确定性事实问答 | Program Facts Interface | channel + scenario facts cases |
 | 完整 12 周可打印日志 | Printable Log Interface | fixed-digest XLSX + channel attachment |
 | Week 4/8/12 体重 checkpoint | Program Journey | phase checkpoint cases |
+| v0.1 原地幂等升级 | Program State migration | clean-install channel + repeated-upgrade scenario |
+| disable/enable 与 Runtime 删除重建 | Plugin lifecycle | clean-install real Gateway/Telegram adapter |
+| schema-invalid 手工编辑隔离 | canonical rebuild | channel error + unaffected baseline/checkpoint facts |
 | 体重数学方向、无建议 | Weight Facts View, ADR-024 | fixed kg/percent/direction fixtures |
 | 绑定会话拒绝超范围问题 | OpenClaw inbound adapter | bound-conversation refusal case |
 | Program Engine 确定性 | ProgramSpec | full 12-week fixtures |
@@ -42,5 +45,7 @@
 | 软件与内容权利分离 | ADR-018 | package inspection |
 | 原始 DOCX 与任意非白名单 Office 文件不入包 | ADR-010/011 | exact-path/digest allowlist + artifact exclusion test |
 | Built-in Program 在安装包且授权 fail closed | package/release gate | artifact inspection |
+| 真实 channel smoke 绑定发行制品 | release gate | exact package name/version/artifact SHA-256 evidence |
+| deterministic 与 live-model 分层 | package scripts | deterministic suite + blocked #3 live gate |
 
 冻结需求变更时必须同步本矩阵、Golden Cases 和适用 ADR。

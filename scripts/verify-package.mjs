@@ -49,6 +49,8 @@ try {
     "knowledge",
     "test",
     "tests",
+    "fixture",
+    "fixtures",
     "benchmark",
     "benchmarks",
     "pilot",
@@ -64,6 +66,7 @@ try {
     ".jpeg",
     ".jpg",
     ".png",
+    ".pdf",
     ".webp",
   ];
   const forbiddenPaths = files.filter((path) =>

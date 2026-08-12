@@ -102,6 +102,8 @@ Privacy Review 已批准。训练/营养监督和 Safety Review 因对应能力�
 
 - 覆盖实际课程派生制品和发行渠道的可核验授权；
 - ClawHub/npm 制品检查与实时发布权限验证；
+- 与待发布 package name、version、artifact SHA-256 绑定的一次真实 Telegram Adapter smoke；
+- #3 所需的真实填写训练日志照片、人工 ground truth 与 live provider benchmark；当前 deterministic fixture 不代表该 gate 已完成；
 - 原始 DOCX 不进入发行包；仅允许固定 digest 的内置训练日志 XLSX 随包分发。
 
 ## 仓库结构

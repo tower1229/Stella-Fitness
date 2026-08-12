@@ -24,7 +24,7 @@ Phase 0 已批准进入实现，Plugin foundation 与 scenario harness 已建立
 ## 规则
 
 - 每个切片必须有用户可观察的 scenario-level acceptance；
-- 模型仅用于候选字段抽取，CI 使用 deterministic fake/recorded outputs；
+- 模型仅用于候选字段抽取；`npm run test:deterministic` 使用 fake/recorded outputs，`npm run test:live-model` 是独立 fail-closed gate，在 #3 的真实填写照片与人工 ground truth 可用前明确保持 blocked；
 - 无效配置、ProgramSpec 和关键字段歧义 fail closed；
 - 不实现训练表现、营养、健康风险、诊断、Policy Gate 或周期监督；
 - 公开发行前保留课程授权和制品 gate。
