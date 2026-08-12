@@ -143,14 +143,51 @@ export async function verifyTelegramChannelFlow(options) {
       await restartGateway(`${exercise} 12RM`);
     }
     telegram.pushText("/stella-activate 2026-08-10");
-    await telegram.waitForText((text) =>
-      text.startsWith("Program State activated:"),
+    const activation = await telegram.waitForText((text) =>
+      text.startsWith("Program State activated:") &&
+      text.includes("today Planned Session: 2026-08-10") &&
+      text.includes("rest:"),
     );
     await restartGateway("Program State activation");
+    const state = JSON.parse(readFileSync(
+      join(personalDataDirectory, "program", "state.json"),
+      "utf8",
+    ));
+    const expectedInitialBindings = [
+      ["goblet-squat", 32],
+      ["dumbbell-bench-press", 24],
+      ["dumbbell-deadlift", 40],
+    ];
+    if (
+      expectedInitialBindings.some(([exerciseId, value]) =>
+        state.symbolicLoadBindings?.[exerciseId]?.A?.value !== value ||
+        typeof state.symbolicLoadBindings?.[exerciseId]?.A?.observationId !== "string"
+      )
+    ) {
+      throw new Error(`Program State has incomplete initial A bindings: ${JSON.stringify(state)}`);
+    }
     telegram.pushText("/stella-facts today 2026-08-10");
-    await telegram.waitForText((text) =>
+    const today = await telegram.waitForText((text) =>
       text.startsWith("today Planned Session: 2026-08-10"),
     );
+    telegram.pushText("/stella-facts next 2026-08-10");
+    await telegram.waitForText((text) =>
+      text.startsWith("next Planned Session: 2026-08-12"),
+    );
+    telegram.pushText("我应该怎么调整训练和饮食？");
+    await telegram.waitForText((text) =>
+      text.includes("only reports source-program, Program State and recorded facts") &&
+      text.includes("does not diagnose, advise or adjust the plan"),
+    );
+    await restartGateway("Program Facts questions");
+    const recoveryMessageCursor = telegram.messageCount();
+    telegram.pushText("/stella-facts today 2026-08-10");
+    const recoveredToday = await telegram.waitForTextAfter(recoveryMessageCursor, (text) =>
+      text.startsWith("today Planned Session: 2026-08-10"),
+    );
+    if (today !== recoveredToday || !activation.includes(today)) {
+      throw new Error("Program Facts changed after Gateway restart");
+    }
     telegram.pushText("/stella-print today 2026-08-10");
     await telegram.waitForCall(({ method }) => method === "senddocument");
 
@@ -224,7 +261,11 @@ export async function verifyTelegramChannelFlow(options) {
       baselineConfirmationRecovered: true,
       initial12RM: true,
       activated: true,
+      initialBindings: true,
       facts: true,
+      nextFacts: true,
+      scopeRefusal: true,
+      factsRecovered: true,
       printablePdf: true,
       imageIngress: true,
       gatewayRestarts: gatewayStarts - 1,
@@ -466,6 +507,14 @@ async function createFakeTelegramApi() {
     async waitForText(predicate) {
       return (await waitFor(() => messages.find((message) => predicate(message.text))))
         .text;
+    },
+    async waitForTextAfter(index, predicate) {
+      return (await waitFor(() =>
+        messages.slice(index).find((message) => predicate(message.text))
+      )).text;
+    },
+    messageCount() {
+      return messages.length;
     },
     waitForMessage(predicate) {
       return waitFor(() => messages.find(predicate));

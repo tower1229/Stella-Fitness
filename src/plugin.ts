@@ -22,13 +22,22 @@ import {
   createStellaFitnessRuntime,
   type StellaFitnessRuntime,
 } from "./plugin-runtime.js";
-import type { RequiredPrerequisiteId } from "./program/journey.js";
+import {
+  INITIAL_12RM_EXERCISES,
+  type Initial12RMExerciseId,
+  type RequiredPrerequisiteId,
+} from "./program/journey.js";
 import { createStatusResponse } from "./status.js";
 
 const STATUS_INPUT = "stella status";
 const PLUGIN_ID = "stella-fitness";
 const BODY_WEIGHT_RECORDING_INPUT =
   /^\s*(?:(?:\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))?|今天|昨天|前天|today|yesterday)\s*)?(?:我\s*)?(?:记录\s*)?(?:体重|body\s*weight|weight)\s*(?:是|为|:|：)?\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?(?:\s*(?:或|还是|or)\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?)?\s*[。.!]?\s*$/iu;
+const INITIAL_12RM_ALIASES = {
+  "goblet-squat": /(?:高脚杯深蹲|goblet[\s-]*squat)/iu,
+  "dumbbell-bench-press": /(?:哑铃卧推|dumbbell[\s-]*bench[\s-]*press)/iu,
+  "dumbbell-deadlift": /(?:哑铃硬拉|dumbbell[\s-]*deadlift)/iu,
+} satisfies Record<Initial12RMExerciseId, RegExp>;
 
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "stella-fitness",
@@ -262,14 +271,7 @@ export function registerStellaFitnessPlugin(
       const bindingReply = await requireProgramJourneyBinding(context);
       if (bindingReply !== undefined) return bindingReply;
       const cycleStart = context.args?.trim() ?? "";
-      const state = await stellaRuntime.activateProgram(cycleStart);
-      return {
-        text: [
-          `Program State activated: ${state.id}`,
-          `program: ${state.program.id}@${state.program.version}`,
-          `cycle-start: ${state.cycle.startDate}`,
-        ].join("\n"),
-      };
+      return { text: await activateProgramReply(stellaRuntime, cycleStart) };
     },
   });
 
@@ -283,7 +285,7 @@ export function registerStellaFitnessPlugin(
       if (bindingReply !== undefined) return bindingReply;
       const input = parseFactsCommand(context.args);
       if (input === undefined) {
-        return { text: "Usage: /stella-facts <today|next> [YYYY-MM-DD]" };
+        return { text: factsUsage() };
       }
       return { text: formatProgramFacts(await stellaRuntime.programFacts(input)) };
     },
@@ -392,16 +394,19 @@ export function registerStellaFitnessPlugin(
           });
           return { handled: true, reply: { text: formatJourneyStatus(status) } };
         }
-        const factKind = /(?:今天练什么|today(?:'s)?\s+(?:workout|session))/iu.test(boundText)
-          ? "today"
-          : /(?:下次练什么|next\s+(?:workout|session))/iu.test(boundText)
-            ? "next"
-            : undefined;
-        if (factKind !== undefined) {
-          const date = event.timestamp === undefined
-            ? new Date().toISOString().slice(0, 10)
-            : new Date(event.timestamp).toISOString().slice(0, 10);
-          const result = await stellaRuntime.programFacts({ kind: factKind, date });
+        const date = event.timestamp === undefined
+          ? new Date().toISOString().slice(0, 10)
+          : new Date(event.timestamp).toISOString().slice(0, 10);
+        const factQuery = parseNaturalProgramFactsQuery(boundText, date);
+        if (isOutOfScopeProgramQuestion(boundText)) {
+          const result = await stellaRuntime.programFacts({
+            kind: "unsupported",
+            question: boundText,
+          });
+          return { handled: true, reply: { text: formatProgramFacts(result) } };
+        }
+        if (factQuery !== undefined) {
+          const result = await stellaRuntime.programFacts(factQuery);
           return { handled: true, reply: { text: formatProgramFacts(result) } };
         }
         if (isBodyWeightInput(boundText)) {
@@ -477,15 +482,15 @@ export function registerStellaFitnessPlugin(
             reply: { text: await formatProgramJourneyTextResult(stellaRuntime, result) },
           };
         }
-      }
-      if (!isWorkoutLogImageInput(event)) {
-        if (context?.pluginBinding?.pluginId === PLUGIN_ID) {
+        if (isQuestion(boundText)) {
           const result = await stellaRuntime.programFacts({
             kind: "unsupported",
-            question: event.content,
+            question: boundText,
           });
           return { handled: true, reply: { text: formatProgramFacts(result) } };
         }
+      }
+      if (!isWorkoutLogImageInput(event)) {
         return;
       }
       const upload = await workoutLogUpload(event);
@@ -805,16 +810,9 @@ async function handleBoundStellaCommand(
     };
   }
   if (command.name === "activate") {
-    const state = await runtime.activateProgram(command.args);
     return {
       handled: true,
-      reply: {
-        text: [
-          `Program State activated: ${state.id}`,
-          `program: ${state.program.id}@${state.program.version}`,
-          `cycle-start: ${state.cycle.startDate}`,
-        ].join("\n"),
-      },
+      reply: { text: await activateProgramReply(runtime, command.args) },
     };
   }
   if (command.name === "facts") {
@@ -823,7 +821,7 @@ async function handleBoundStellaCommand(
       handled: true,
       reply: {
         text: input === undefined
-          ? "Usage: /stella-facts <today|next> [YYYY-MM-DD]"
+          ? factsUsage()
           : formatProgramFacts(await runtime.programFacts(input)),
       },
     };
@@ -1241,23 +1239,21 @@ async function requireProgramJourneyBinding(
 }
 
 function parseInitial12RMCommand(args: string | undefined): {
-  readonly exerciseId:
-    | "goblet-squat"
-    | "dumbbell-bench-press"
-    | "dumbbell-deadlift";
+  readonly exerciseId: Initial12RMExerciseId;
   readonly valueKg: number;
 } | undefined {
-  const match = /^\s*(goblet-squat|dumbbell-bench-press|dumbbell-deadlift)\s+(\d+(?:\.\d+)?)\s*(?:kg|公斤)?\s+confirm\s*$/iu.exec(
+  const exerciseIds = INITIAL_12RM_EXERCISES.join("|");
+  const match = new RegExp(
+    `^\\s*(${exerciseIds})\\s+(\\d+(?:\\.\\d+)?)\\s*(?:kg|公斤)?\\s+confirm\\s*$`,
+    "iu",
+  ).exec(
     args ?? "",
   );
   if (match?.[1] === undefined || match[2] === undefined) return undefined;
   const valueKg = Number(match[2]);
   if (!Number.isFinite(valueKg) || valueKg <= 0) return undefined;
   return {
-    exerciseId: match[1].toLowerCase() as
-      | "goblet-squat"
-      | "dumbbell-bench-press"
-      | "dumbbell-deadlift",
+    exerciseId: match[1].toLowerCase() as Initial12RMExerciseId,
     valueKg,
   };
 }
@@ -1317,8 +1313,16 @@ function stableConfirmationId(context: {
 }
 
 function parseFactsCommand(args: string | undefined):
-  | { readonly kind: "today" | "next"; readonly date: string }
+  | Parameters<StellaFitnessRuntime["programFacts"]>[0]
   | undefined {
+  const symbolMatch = /^\s*symbol\s+(\S+)\s+([AN])\s*$/iu.exec(args ?? "");
+  if (symbolMatch?.[1] !== undefined && symbolMatch[2] !== undefined) {
+    return {
+      kind: "symbol",
+      exerciseId: symbolMatch[1],
+      symbol: symbolMatch[2].toUpperCase() as "A" | "N",
+    };
+  }
   const match = /^\s*(today|next)(?:\s+(\d{4}-\d{2}-\d{2}))?\s*$/iu.exec(
     args ?? "",
   );
@@ -1327,6 +1331,45 @@ function parseFactsCommand(args: string | undefined):
     kind: match[1].toLowerCase() as "today" | "next",
     date: match[2] ?? new Date().toISOString().slice(0, 10),
   };
+}
+
+function parseNaturalProgramFactsQuery(
+  text: string,
+  date: string,
+): Parameters<StellaFitnessRuntime["programFacts"]>[0] | undefined {
+  const symbol = /(?:当前|current)?\s*([AN])\s*(?:是多少|是|重量|load|weight|\?|？)/iu.exec(text)?.[1]
+    ?.toUpperCase() as "A" | "N" | undefined;
+  const exerciseId = INITIAL_12RM_EXERCISES.find((id) =>
+    INITIAL_12RM_ALIASES[id].test(text)
+  );
+  if (exerciseId !== undefined && symbol !== undefined) {
+    return { kind: "symbol", exerciseId, symbol };
+  }
+  if (/(?:下次(?:应该)?练什么|下次(?:训练|课程|计划)|next\s+(?:workout|session))/iu.test(text)) {
+    return { kind: "next", date };
+  }
+  if (
+    /(?:今天(?:应该)?练什么|today(?:'s)?\s+(?:workout|session)|当前(?:阶段|第几周|周次|训练日|动作|组次|次数|持续时间|休息|处方)|训练日(?:是什么|是哪天|安排|\?|？)|(?:动作|组次|次数|持续时间|休息|处方)(?:是什么|有哪些|分别是什么|\?|？)|prescription|rest)/iu.test(text)
+  ) {
+    return { kind: "today", date };
+  }
+  return undefined;
+}
+
+function isOutOfScopeProgramQuestion(text: string): boolean {
+  return /(?:诊断|饮食|营养|健康|风险|受伤|伤(?:腰|膝|肩|背)|疼痛|建议|调整|评价|表现(?:怎么样|如何|好不好)|练得怎么样|好不好|是否有效|疲劳|diagnos|nutrition|health|risk|injur|pain|recommend|advise|adjust|evaluat|performance)/iu.test(
+    text,
+  );
+}
+
+function isQuestion(text: string): boolean {
+  return /(?:[?？]|吗(?:[。.!！]?\s*)$|呢(?:[。.!！]?\s*)$|多少|怎么|如何|能不能|可不可以|是否|会不会|是不是|what|when|where|which|who|why|how|can\s+i|should\s+i)/iu.test(
+    text,
+  );
+}
+
+function factsUsage(): string {
+  return "Usage: /stella-facts <today|next> [YYYY-MM-DD] | symbol <exercise-id> <A|N>";
 }
 
 function parsePrintableCommand(args: string | undefined):
@@ -1350,16 +1393,52 @@ function formatProgramFacts(
   if (result.kind === "symbol-fact") {
     return `${result.exerciseId} ${result.symbol}: ${result.value} ${result.unit}`;
   }
+  if (result.kind === "symbol-binding-pending") {
+    return `${result.exerciseId} ${result.symbol}: binding pending. next: ${result.nextStep}`;
+  }
   return [
     `${result.relation} Planned Session: ${result.session.date}`,
-    `stage: ${result.session.cycle.phase}, week: ${result.session.cycle.week}, day: ${result.session.day}`,
+    `stage: ${result.session.cycle.phase}, week: ${result.session.cycle.week}, day: ${result.session.day}, type: ${result.session.type}, recovery: ${result.session.recovery}`,
     ...result.session.exercises.map((exercise) =>
-      `- ${exercise.displayName ?? exercise.exerciseId}: ${JSON.stringify(exercise.prescription)}${
+      `- ${exercise.displayName ?? exercise.exerciseId}: prescription: ${JSON.stringify(exercise.prescription)}, rest: ${formatRest(exercise)}${
         exercise.resolvedLoad === undefined
-          ? ""
+          ? exercise.unresolvedLoad === undefined
+            ? ""
+            : `, ${exercise.unresolvedLoad.symbol}=binding pending, next: ${exercise.unresolvedLoad.nextStep}`
           : `, ${exercise.resolvedLoad.symbol}=${exercise.resolvedLoad.value} ${exercise.resolvedLoad.unit}`
       }`,
     ),
+    ...result.session.tests.map((test) =>
+      `- ${test.exerciseId}: test: ${test.test}, result-binding: ${test.resultBinding}`
+    ),
+  ].join("\n");
+}
+
+function formatRest(exercise: {
+  readonly rest?: "self_selected";
+  readonly restSeconds?: readonly number[];
+}): string {
+  if (exercise.rest === "self_selected") return "self-selected";
+  if (exercise.restSeconds !== undefined) {
+    return `${exercise.restSeconds.join("-")} seconds`;
+  }
+  return "not specified by source program";
+}
+
+async function activateProgramReply(
+  runtime: StellaFitnessRuntime,
+  cycleStart: string,
+): Promise<string> {
+  const state = await runtime.activateProgram(cycleStart);
+  const firstSession = await runtime.programFacts({
+    kind: "today",
+    date: state.cycle.startDate,
+  });
+  return [
+    `Program State activated: ${state.id}`,
+    `program: ${state.program.id}@${state.program.version}`,
+    `cycle-start: ${state.cycle.startDate}`,
+    formatProgramFacts(firstSession),
   ].join("\n");
 }
 

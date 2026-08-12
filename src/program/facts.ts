@@ -20,6 +20,7 @@ export type ProgramFactsResult =
             readonly unit: "kg";
             readonly observationId: string;
           };
+          readonly unresolvedLoad?: UnresolvedLoad;
         })[];
       };
     }
@@ -30,6 +31,12 @@ export type ProgramFactsResult =
       readonly value: number;
       readonly unit: "kg";
       readonly observationId: string;
+    }
+  | {
+      readonly kind: "symbol-binding-pending";
+      readonly exerciseId: string;
+      readonly symbol: "A" | "N";
+      readonly nextStep: string;
     }
   | { readonly kind: "no-session"; readonly relation: "today" | "next" }
   | { readonly kind: "unsupported"; readonly scope: string };
@@ -42,6 +49,11 @@ type ResolvedLoad = {
   readonly value: number;
   readonly unit: "kg";
   readonly observationId: string;
+};
+
+type UnresolvedLoad = {
+  readonly symbol: "A" | "N";
+  readonly nextStep: string;
 };
 
 export async function queryProgramFacts(options: {
@@ -59,9 +71,11 @@ export async function queryProgramFacts(options: {
       options.query.symbol
     ];
     if (binding === undefined) {
-      throw new Error(
-        `Program Facts cannot resolve ${options.query.exerciseId} ${options.query.symbol}`,
-      );
+      return {
+        kind: "symbol-binding-pending",
+        exerciseId: options.query.exerciseId,
+        ...unresolvedLoad(options.query.exerciseId, options.query.symbol),
+      };
     }
     return {
       kind: "symbol-fact",
@@ -119,13 +133,16 @@ function nextSession(
 function resolvedLoad(
   exercise: PlannedExercise,
   bindings: Awaited<ReturnType<typeof readActiveProgram>>["state"]["symbolicLoadBindings"],
-): { readonly resolvedLoad?: ResolvedLoad } {
+): {
+  readonly resolvedLoad?: ResolvedLoad;
+  readonly unresolvedLoad?: UnresolvedLoad;
+} {
   if (exercise.load?.mode !== "symbolic") return {};
   const symbol = exercise.load.symbol;
   if (symbol !== "A" && symbol !== "N") return {};
   const binding = bindings[exercise.exerciseId]?.[symbol];
   return binding === undefined
-    ? {}
+    ? { unresolvedLoad: unresolvedLoad(exercise.exerciseId, symbol) }
     : {
         resolvedLoad: {
           symbol,
@@ -134,6 +151,17 @@ function resolvedLoad(
           observationId: binding.observationId,
         },
       };
+}
+
+function unresolvedLoad(
+  exerciseId: string,
+  symbol: "A" | "N",
+): UnresolvedLoad {
+  return {
+    symbol,
+    nextStep:
+      `Record the source-program strength-test result that binds ${exerciseId} ${symbol}.`,
+  };
 }
 
 function parseDate(value: string): Date {

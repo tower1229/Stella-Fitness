@@ -63,6 +63,86 @@ describe("Program Facts and Printable Log", () => {
       scope:
         "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
     });
+    await expect(
+      harness.programFacts({
+        kind: "symbol",
+        exerciseId: "goblet-squat",
+        symbol: "A",
+      }),
+    ).resolves.toMatchObject({
+      kind: "symbol-fact",
+      exerciseId: "goblet-squat",
+      symbol: "A",
+      value: 32,
+      unit: "kg",
+    });
+    await expect(
+      harness.programFacts({
+        kind: "symbol",
+        exerciseId: "goblet-squat",
+        symbol: "N",
+      }),
+    ).resolves.toEqual({
+      kind: "symbol-binding-pending",
+      exerciseId: "goblet-squat",
+      symbol: "N",
+      nextStep: "Record the source-program strength-test result that binds goblet-squat N.",
+    });
+  });
+
+  it("reports rest, strength-test, recovery and missing symbolic bindings without guessing", async () => {
+    const harness = await activeHarness();
+
+    await expect(harness.programFacts({ kind: "today", date: "2026-08-11" }))
+      .resolves.toEqual({ kind: "no-session", relation: "today" });
+    await expect(harness.programFacts({ kind: "today", date: "2026-09-04" }))
+      .resolves.toMatchObject({
+        kind: "planned-session-facts",
+        session: {
+          type: "strength-test",
+          recovery: false,
+          tests: expect.arrayContaining([
+            expect.objectContaining({ exerciseId: "goblet-squat", resultBinding: "N" }),
+          ]),
+        },
+      });
+
+    await harness.recordJourneyBodyWeight({
+      role: "checkpoint",
+      checkpointWeek: 4,
+      text: "2026-09-06T12:00:00Z 体重 70 kg",
+      receivedAt: "2026-09-06T12:00:00.000Z",
+    });
+    await expect(harness.programFacts({ kind: "today", date: "2026-09-07" }))
+      .resolves.toMatchObject({
+        kind: "planned-session-facts",
+        session: {
+          exercises: expect.arrayContaining([
+            expect.objectContaining({
+              exerciseId: "dumbbell-bench-press",
+              unresolvedLoad: {
+                symbol: "N",
+                nextStep: "Record the source-program strength-test result that binds dumbbell-bench-press N.",
+              },
+            }),
+          ]),
+        },
+      });
+
+    await expect(harness.programFacts({ kind: "today", date: "2026-10-01" }))
+      .resolves.toMatchObject({
+        kind: "planned-session-facts",
+        session: {
+          type: "torso-recovery",
+          recovery: true,
+          exercises: expect.arrayContaining([
+            expect.objectContaining({
+              exerciseId: "pull-up",
+              rest: "self_selected",
+            }),
+          ]),
+        },
+      });
   });
 
   it("generates a persistent A4 PDF with a normal-session table and blank Actual cells", async () => {

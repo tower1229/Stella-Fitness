@@ -376,6 +376,83 @@ describe("Plugin registration", () => {
     await expect(
       hooks.get("inbound_claim")?.(
         {
+          content: "今天练什么，腰疼需要调整吗？",
+          channel: "test",
+          isGroup: false,
+        },
+        { pluginBinding: { pluginId: "stella-fitness" } },
+      ),
+    ).resolves.toEqual({
+      handled: true,
+      reply: {
+        text:
+          "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+      },
+    });
+    await expect(
+      hooks.get("inbound_claim")?.(
+        {
+          content: "你好，今天天气不错。",
+          channel: "test",
+          isGroup: false,
+        },
+        { pluginBinding: { pluginId: "stella-fitness" } },
+      ),
+    ).resolves.toBeUndefined();
+    for (const content of [
+      "碳水吃多少？",
+      "能不能加一组？",
+      "这个会不会有危险？",
+      "这个问题 Stella 能回答吗？",
+    ]) {
+      await expect(
+        hooks.get("inbound_claim")?.(
+          { content, channel: "test", isGroup: false },
+          { pluginBinding: { pluginId: "stella-fitness" } },
+        ),
+      ).resolves.toEqual({
+        handled: true,
+        reply: {
+          text:
+            "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+        },
+      });
+    }
+    await expect(
+      hooks.get("inbound_claim")?.(
+        {
+          content: "我的训练表现怎么样？",
+          channel: "test",
+          isGroup: false,
+        },
+        { pluginBinding: { pluginId: "stella-fitness" } },
+      ),
+    ).resolves.toEqual({
+      handled: true,
+      reply: {
+        text:
+          "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+      },
+    });
+    await expect(
+      hooks.get("inbound_claim")?.(
+        {
+          content: "这个动作会伤腰吗，需要多休息吗？",
+          channel: "test",
+          isGroup: false,
+        },
+        { pluginBinding: { pluginId: "stella-fitness" } },
+      ),
+    ).resolves.toEqual({
+      handled: true,
+      reply: {
+        text:
+          "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+      },
+    });
+    await expect(
+      hooks.get("inbound_claim")?.(
+        {
           content: "/stella-prerequisite adjustable-dumbbells",
           channel: "test",
           isGroup: false,
@@ -528,6 +605,122 @@ describe("Plugin registration", () => {
       "observations",
       "special-session",
     ))).toHaveLength(4);
+  });
+
+  it("activates with the first session and keeps all bound Program Facts deterministic after restart", async () => {
+    const directories = configuredPersonalDirectory();
+    const bound = { pluginBinding: { pluginId: "stella-fitness" } };
+    const createInbound = () => {
+      const hooks = new Map<string, (...args: unknown[]) => unknown>();
+      registerStellaFitnessPlugin(
+        compatibleApi({
+          commands: [],
+          hooks,
+          cliRegistrations: [],
+          pluginConfig: directories,
+          openclawConfig: permittedOpenClawConfig(),
+        }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+      );
+      return hooks.get("inbound_claim")!;
+    };
+    let inbound = createInbound();
+    for (const [index, content] of [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+      "体重 68.4 kg",
+      "高脚杯深蹲 12RM 32 kg",
+      "哑铃卧推 12RM 24 kg",
+      "哑铃硬拉 12RM 40 kg",
+    ].entries()) {
+      await inbound({
+        content,
+        channel: "test-channel",
+        messageId: `activation-message-${index}`,
+        timestamp: `2026-08-10T0${index}:00:00.000Z`,
+        isGroup: false,
+      }, bound);
+    }
+
+    const activation = await inbound({
+      content: "/stella-activate 2026-08-10",
+      channel: "test-channel",
+      messageId: "activate",
+      timestamp: "2026-08-10T08:00:00.000Z",
+      isGroup: false,
+    }, bound);
+    expect(activation).toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /Program State activated:.+today Planned Session: 2026-08-10.+rest:/su,
+        ),
+      },
+    });
+
+    await expect(inbound({
+      content: "/stella-facts symbol goblet-squat A",
+      channel: "test-channel",
+      timestamp: "2026-08-10T08:01:00.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: { text: "goblet-squat A: 32 kg" },
+    });
+    await expect(inbound({
+      content: "当前阶段、第几周、训练日、动作、组次、次数、持续时间和休息分别是什么？",
+      channel: "test-channel",
+      timestamp: "2026-08-10T08:02:00.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /today Planned Session: 2026-08-10.+stage: phase-1, week: 1, day: monday.+rest:/su,
+        ),
+      },
+    });
+    await expect(inbound({
+      content: "今天应该练什么？",
+      channel: "test-channel",
+      timestamp: "2026-08-10T08:02:30.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("today Planned Session: 2026-08-10") },
+    });
+    await expect(inbound({
+      content: "高脚杯深蹲当前 N 是多少？",
+      channel: "test-channel",
+      timestamp: "2026-08-10T08:03:00.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("goblet-squat N: binding pending") },
+    });
+    await expect(inbound({
+      content: "我应该怎么调整训练和饮食？",
+      channel: "test-channel",
+      timestamp: "2026-08-10T08:04:00.000Z",
+      isGroup: false,
+    }, bound)).resolves.toEqual({
+      handled: true,
+      reply: {
+        text: "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+      },
+    });
+
+    inbound = createInbound();
+    await expect(inbound({
+      content: "下次练什么",
+      channel: "test-channel",
+      timestamp: "2026-08-10T09:00:00.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("next Planned Session: 2026-08-12") },
+    });
   });
 
   it("does not resolve a persisted Journey confirmation outside its bound conversation", async () => {

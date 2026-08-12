@@ -40,7 +40,7 @@ const REQUIRED_PREREQUISITES = [
   "printed-workout-log",
   "recording-protocol",
 ] as const;
-const INITIAL_12RM_EXERCISES = [
+export const INITIAL_12RM_EXERCISES = [
   "goblet-squat",
   "dumbbell-bench-press",
   "dumbbell-deadlift",
