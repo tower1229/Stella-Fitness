@@ -98,6 +98,49 @@ export async function persistBodyWeightCorrection(options: {
   return correction;
 }
 
+export async function persistBodyWeightDeletion(options: {
+  personalDataDirectory: string;
+  observationId: string;
+  source: ObservationSource;
+  recordedAt: string;
+}): Promise<BodyWeightObservation> {
+  const directory = join(options.personalDataDirectory, OBSERVATION_DIRECTORY);
+  const existing = await observationWithSameSource(directory, options.source);
+  if (existing !== undefined) {
+    if (
+      existing.provenance.kind !== "body-weight-deletion" ||
+      existing.provenance.replacesObservationId !== options.observationId ||
+      existing.source.text !== options.source.text
+    ) {
+      throw new Error("Body-weight source identity was reused for different facts");
+    }
+    return existing;
+  }
+  const active = await resolveBodyWeightReference(
+    options.personalDataDirectory,
+    options.observationId,
+  );
+  if (active === undefined || active.id !== options.observationId) {
+    throw new Error(`Body-weight Observation ${options.observationId} is not an active fact`);
+  }
+  const deletion: BodyWeightObservation = {
+    ...active,
+    id: randomUUID(),
+    source: options.source,
+    provenance: {
+      kind: "body-weight-deletion",
+      recordedAt: options.recordedAt,
+      replacesObservationId: active.id,
+    },
+  };
+  await writeFile(
+    join(directory, `${deletion.id}.json`),
+    `${JSON.stringify(deletion, null, 2)}\n`,
+    { encoding: "utf8", flag: "wx", mode: 0o600 },
+  );
+  return deletion;
+}
+
 export async function rebuildBodyWeightView(
   personalDataDirectory: string,
 ): Promise<BodyWeightView> {
@@ -145,7 +188,8 @@ export async function rebuildBodyWeightView(
   const observations = validEntries.map(({ observation }) => observation);
   const replacedIds = new Set(
     observations.flatMap(({ provenance }) =>
-      provenance.kind === "body-weight-correction"
+      provenance.kind === "body-weight-correction" ||
+        provenance.kind === "body-weight-deletion"
         ? [provenance.replacesObservationId]
         : [],
     ),
@@ -153,7 +197,9 @@ export async function rebuildBodyWeightView(
   return {
     schemaVersion: "stella-fitness/view/body-weight/v0.1",
     points: observations
-      .filter(({ id }) => !replacedIds.has(id))
+      .filter(({ id, provenance }) =>
+        !replacedIds.has(id) && provenance.kind !== "body-weight-deletion",
+      )
       .sort(
         (left, right) =>
           left.occurredAt.localeCompare(right.occurredAt) ||
@@ -191,7 +237,7 @@ export async function resolveBodyWeightReference(
   }
   const byReplacedId = new Map<string, BodyWeightObservation>();
   for (const observation of observations) {
-    if (observation.provenance.kind !== "body-weight-correction") continue;
+    if (observation.provenance.kind === "body-weight-recording") continue;
     const replacedId = observation.provenance.replacesObservationId;
     if (byReplacedId.has(replacedId)) {
       throw new Error(
@@ -207,9 +253,25 @@ export async function resolveBodyWeightReference(
     visited.add(current.id);
     const replacement = byReplacedId.get(current.id);
     if (replacement === undefined) return current;
+    if (replacement.provenance.kind === "body-weight-deletion") return undefined;
     current = replacement;
   }
   return undefined;
+}
+
+export async function readBodyWeightObservation(
+  personalDataDirectory: string,
+  observationId: string,
+): Promise<BodyWeightObservation> {
+  const observation = parseBodyWeightObservation(await readFile(join(
+    personalDataDirectory,
+    OBSERVATION_DIRECTORY,
+    `${observationId}.json`,
+  ), "utf8"));
+  if (observation.id !== observationId) {
+    throw new Error("Body-weight Observation filename does not match its ID");
+  }
+  return observation;
 }
 
 function parseBodyWeightObservation(source: string): BodyWeightObservation {
@@ -244,8 +306,9 @@ function parseBodyWeightObservation(source: string): BodyWeightObservation {
     typeof value.provenance.recordedAt !== "string" ||
     !isCanonicalTimestamp(value.provenance.recordedAt) ||
     (value.provenance.kind !== "body-weight-recording" &&
-      value.provenance.kind !== "body-weight-correction") ||
-    (value.provenance.kind === "body-weight-correction" &&
+      value.provenance.kind !== "body-weight-correction" &&
+      value.provenance.kind !== "body-weight-deletion") ||
+    (value.provenance.kind !== "body-weight-recording" &&
       (typeof value.provenance.replacesObservationId !== "string" ||
         !isUuid(value.provenance.replacesObservationId) ||
         value.provenance.replacesObservationId === value.id))

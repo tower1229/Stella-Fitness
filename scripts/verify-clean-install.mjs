@@ -15,7 +15,10 @@ const commandEnvironment = {
   OPENCLAW_HOME: join(temporaryRoot, "home"),
   OPENCLAW_STATE_DIR: stateDir,
   OPENCLAW_CONFIG_PATH: join(stateDir, "openclaw.json"),
-  npm_config_cache: join(temporaryRoot, "npm-cache"),
+  npm_config_cache:
+    process.env.NPM_CONFIG_CACHE ??
+    process.env.npm_config_cache ??
+    join(temporaryRoot, "npm-cache"),
 };
 const progress = (message) =>
   process.stderr.write(`[clean-install] ${message}\n`);

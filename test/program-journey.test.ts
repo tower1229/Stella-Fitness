@@ -283,6 +283,266 @@ describe("Program Journey", () => {
     ).toHaveLength(3);
   });
 
+  it("keeps baseline and 12RM replacement history while deletion reopens the required gate", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-replacements-"));
+    temporaryRoots.push(root);
+    const harness = journeyHarness(root);
+    await advanceToInitial12RM(harness);
+    const setupPath = join(root, "personal", "program", "setup.json");
+    const baselineId = JSON.parse(readFileSync(setupPath, "utf8")).baselineObservationId;
+
+    const correctedBaseline = await harness.correctJourneyBodyWeight({
+      replacesObservationId: baselineId,
+      text: "纠正体重为 150 lb",
+      receivedAt: "2026-08-11T03:30:00.000Z",
+      source: { channel: "test", messageId: "baseline-correction" },
+    });
+    expect(correctedBaseline).toMatchObject({
+      status: "recorded",
+      observation: {
+        value: { amount: 150, unit: "lb" },
+        provenance: {
+          kind: "body-weight-correction",
+          replacesObservationId: baselineId,
+        },
+      },
+    });
+    await expect(harness.programJourneyStatus()).resolves.toMatchObject({
+      state: "INITIAL_12RM_REQUIRED",
+    });
+
+    await harness.deleteJourneyBodyWeight({
+      observationId: correctedBaseline.status === "recorded"
+        ? correctedBaseline.observation.id
+        : "unreachable",
+      deletedAt: "2026-08-11T03:40:00.000Z",
+      source: {
+        kind: "user-text",
+        text: "删除这条基线体重",
+        channel: "test",
+        messageId: "baseline-deletion",
+      },
+    });
+    await expect(harness.programJourneyStatus()).resolves.toMatchObject({
+      state: "BASELINE_WEIGHT_REQUIRED",
+    });
+    expect(
+      readdirSync(join(root, "personal", "observations", "body-weight")),
+    ).toHaveLength(3);
+
+    await harness.recordJourneyBodyWeight({
+      role: "baseline",
+      text: "68.8 kg",
+      receivedAt: "2026-08-11T03:50:00.000Z",
+      source: { channel: "test", messageId: "replacement-baseline" },
+    });
+    const original12RM = await harness.recordInitial12RM(initial12RMInput(
+      "goblet-squat",
+      32,
+      "00000000-0000-4000-8000-000000000020",
+    ));
+    const corrected12RM = await harness.correctInitial12RM({
+      replacesObservationId: original12RM.id,
+      valueKg: 34,
+      confirmationId: "00000000-0000-4000-8000-000000000021",
+      occurredAt: "2026-08-11T04:00:00.000Z",
+      recordedAt: "2026-08-11T04:10:00.000Z",
+      source: { kind: "user-text", text: "纠正高脚杯深蹲 12RM 为 34 kg" },
+    });
+    expect(corrected12RM).toMatchObject({
+      exerciseId: "goblet-squat",
+      result: { value: 34 },
+      provenance: {
+        kind: "course-start-12rm-correction",
+        replacesObservationId: original12RM.id,
+      },
+    });
+    await expect(harness.programJourneyStatus()).resolves.toMatchObject({
+      missingInitial12RMExerciseIds: [
+        "dumbbell-bench-press",
+        "dumbbell-deadlift",
+      ],
+    });
+
+    await harness.deleteInitial12RM({
+      observationId: corrected12RM.id,
+      confirmationId: "00000000-0000-4000-8000-000000000022",
+      deletedAt: "2026-08-11T04:20:00.000Z",
+      source: { kind: "user-text", text: "删除这条高脚杯深蹲 12RM" },
+    });
+    await expect(harness.programJourneyStatus()).resolves.toMatchObject({
+      state: "INITIAL_12RM_REQUIRED",
+      missingInitial12RMExerciseIds: [
+        "goblet-squat",
+        "dumbbell-bench-press",
+        "dumbbell-deadlift",
+      ],
+    });
+    expect(
+      readdirSync(join(root, "personal", "observations", "special-session")),
+    ).toHaveLength(3);
+  });
+
+  it("persists ambiguous text candidates and confirmation outcomes across restart", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-confirmations-"));
+    temporaryRoots.push(root);
+    const first = journeyHarness(root);
+    for (const [index, prerequisiteId] of [
+      "adjustable-dumbbells",
+      "pull-up-bar",
+      "printed-workout-log",
+      "recording-protocol",
+    ].entries()) {
+      await first.acknowledgePrerequisite({
+        prerequisiteId,
+        acknowledgedAt: `2026-08-11T0${index}:00:00.000Z`,
+        source: { kind: "user-text", text: prerequisiteId },
+      });
+    }
+
+    const pendingBaseline = await first.submitProgramJourneyText({
+      text: "体重 150",
+      receivedAt: "2026-08-11T03:00:00.000Z",
+      source: { channel: "test", messageId: "ambiguous-baseline" },
+    });
+    expect(pendingBaseline).toMatchObject({
+      status: "confirmation",
+      kind: "baseline-body-weight",
+      fields: [{ path: "unit" }],
+      confirmationId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+    });
+    await expect(first.submitProgramJourneyText({
+      text: "体重",
+      receivedAt: "2026-08-11T03:01:00.000Z",
+      source: { channel: "test", messageId: "missing-baseline-fields" },
+    })).resolves.toMatchObject({
+      status: "confirmation",
+      fields: [{ path: "amount" }, { path: "unit" }],
+    });
+    expect(existsSync(join(
+      root,
+      "personal",
+      "program",
+      "pending-confirmations",
+      `${pendingBaseline.status === "confirmation" ? pendingBaseline.confirmationId : "unreachable"}.json`,
+    ))).toBe(true);
+    await expect(first.programJourneyStatus()).resolves.toMatchObject({
+      state: "BASELINE_WEIGHT_REQUIRED",
+    });
+    await first.shutdown();
+
+    const restarted = journeyHarness(root);
+    if (pendingBaseline.status !== "confirmation") {
+      throw new Error("Expected a pending baseline confirmation");
+    }
+    const baseline = await restarted.confirmProgramJourneyCandidate({
+      confirmationId: pendingBaseline.confirmationId,
+      values: { unit: "lb" },
+      confirmedAt: "2026-08-11T03:05:00.000Z",
+      source: { kind: "user-text", text: "/stella-confirm baseline", channel: "test", messageId: "confirm-baseline" },
+    });
+    expect(baseline).toMatchObject({ status: "recorded", kind: "baseline-body-weight" });
+    const persistedBaselineConfirmation = JSON.parse(readFileSync(join(
+      root,
+      "personal",
+      "program",
+      "pending-confirmations",
+      `${pendingBaseline.confirmationId}.json`,
+    ), "utf8"));
+    expect(persistedBaselineConfirmation.resolution).toMatchObject({
+      values: { unit: "lb" },
+      source: {
+        channel: "test",
+        messageId: "confirm-baseline",
+      },
+    });
+    await expect(restarted.programJourneyStatus()).resolves.toMatchObject({
+      state: "INITIAL_12RM_REQUIRED",
+    });
+
+    const pending12RM = await restarted.submitProgramJourneyText({
+      text: "高脚杯深蹲 12RM 32 或 34 kg",
+      receivedAt: "2026-08-11T04:00:00.000Z",
+      source: { channel: "test", messageId: "ambiguous-12rm" },
+    });
+    expect(pending12RM).toMatchObject({
+      status: "confirmation",
+      kind: "course-start-12rm",
+      fields: [{ path: "valueKg" }],
+    });
+    if (pending12RM.status !== "confirmation") {
+      throw new Error("Expected a pending 12RM confirmation");
+    }
+    const confirmed12RM = await restarted.confirmProgramJourneyCandidate({
+      confirmationId: pending12RM.confirmationId,
+      values: { valueKg: 34 },
+      confirmedAt: "2026-08-11T04:05:00.000Z",
+      source: { kind: "user-text", text: "/stella-confirm 34", channel: "test", messageId: "confirm-12rm" },
+    });
+    expect(confirmed12RM).toMatchObject({
+      status: "recorded",
+      kind: "course-start-12rm",
+      observation: { exerciseId: "goblet-squat", result: { value: 34 } },
+    });
+    const concurrent = await Promise.allSettled([
+      restarted.confirmProgramJourneyCandidate({
+        confirmationId: pending12RM.confirmationId,
+        values: { valueKg: 34 },
+        confirmedAt: "2026-08-11T04:05:00.000Z",
+        source: { kind: "user-text", text: "/stella-confirm 34", channel: "test", messageId: "confirm-12rm" },
+      }),
+      restarted.confirmProgramJourneyCandidate({
+        confirmationId: pending12RM.confirmationId,
+        values: { valueKg: 35 },
+        confirmedAt: "2026-08-11T04:05:01.000Z",
+        source: { kind: "user-text", text: "/stella-confirm 35", channel: "test", messageId: "confirm-12rm-conflict" },
+      }),
+    ]);
+    expect(concurrent.map(({ status }) => status).sort()).toEqual([
+      "fulfilled",
+      "rejected",
+    ]);
+    await expect(restarted.confirmProgramJourneyCandidate({
+      confirmationId: pending12RM.confirmationId,
+      values: { valueKg: 35 },
+      confirmedAt: "2026-08-11T04:06:00.000Z",
+      source: { kind: "user-text", text: "/stella-confirm 35", channel: "test", messageId: "confirm-12rm-conflict-2" },
+    })).rejects.toThrow("confirmation ID was reused with different values");
+    await restarted.shutdown();
+
+    const afterSecondRestart = journeyHarness(root);
+    await expect(afterSecondRestart.confirmProgramJourneyCandidate({
+      confirmationId: pending12RM.confirmationId,
+      values: { valueKg: 34 },
+      confirmedAt: "2026-08-11T04:07:00.000Z",
+      source: { kind: "user-text", text: "/stella-confirm 34", channel: "test", messageId: "confirm-12rm-retry" },
+    })).resolves.toEqual(confirmed12RM);
+
+    const ambiguousTime = await afterSecondRestart.submitProgramJourneyText({
+      text: "昨天哑铃卧推 12RM 24 kg",
+      receivedAt: "2026-08-11T05:00:00.000Z",
+      source: { channel: "test", messageId: "ambiguous-12rm-time" },
+    });
+    expect(ambiguousTime).toMatchObject({
+      status: "confirmation",
+      fields: [{ path: "occurredAt" }],
+    });
+    if (ambiguousTime.status !== "confirmation") {
+      throw new Error("Expected an ambiguous-time confirmation");
+    }
+    await afterSecondRestart.recordInitial12RM(initial12RMInput(
+      "dumbbell-bench-press",
+      24,
+      "00000000-0000-4000-8000-000000000023",
+    ));
+    await expect(afterSecondRestart.confirmProgramJourneyCandidate({
+      confirmationId: ambiguousTime.confirmationId,
+      values: { occurredAt: "2026-08-10T05:00:00.000Z" },
+      confirmedAt: "2026-08-11T05:05:00.000Z",
+      source: { kind: "user-text", text: "/stella-confirm stale", channel: "test", messageId: "confirm-stale" },
+    })).rejects.toThrow("already recorded for dumbbell-bench-press");
+  });
+
   it("fails closed when one prerequisite message identity is reused for another fact", async () => {
     const root = mkdtempSync(join(tmpdir(), "stella-prerequisite-identity-"));
     temporaryRoots.push(root);

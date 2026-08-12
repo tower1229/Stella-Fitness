@@ -172,6 +172,12 @@ export type StellaFitnessRuntime = {
     readonly receivedAt: string;
     readonly source?: Omit<ObservationSource, "kind" | "text">;
   }): ReturnType<ReturnType<typeof createProgramJourney>["recordBodyWeight"]>;
+  correctJourneyBodyWeight(input: Parameters<
+    ReturnType<typeof createProgramJourney>["correctBodyWeight"]
+  >[0]): ReturnType<ReturnType<typeof createProgramJourney>["correctBodyWeight"]>;
+  deleteJourneyBodyWeight(input: Parameters<
+    ReturnType<typeof createProgramJourney>["deleteBodyWeight"]
+  >[0]): ReturnType<ReturnType<typeof createProgramJourney>["deleteBodyWeight"]>;
   recordInitial12RM(input: {
     readonly exerciseId: Initial12RMExerciseId;
     readonly valueKg: number;
@@ -180,6 +186,18 @@ export type StellaFitnessRuntime = {
     readonly recordedAt: string;
     readonly source: ObservationSource;
   }): ReturnType<ReturnType<typeof createProgramJourney>["recordInitial12RM"]>;
+  correctInitial12RM(input: Parameters<
+    ReturnType<typeof createProgramJourney>["correctInitial12RM"]
+  >[0]): ReturnType<ReturnType<typeof createProgramJourney>["correctInitial12RM"]>;
+  deleteInitial12RM(input: Parameters<
+    ReturnType<typeof createProgramJourney>["deleteInitial12RM"]
+  >[0]): ReturnType<ReturnType<typeof createProgramJourney>["deleteInitial12RM"]>;
+  submitProgramJourneyText(input: Parameters<
+    ReturnType<typeof createProgramJourney>["submitText"]
+  >[0]): ReturnType<ReturnType<typeof createProgramJourney>["submitText"]>;
+  confirmProgramJourneyCandidate(input: Parameters<
+    ReturnType<typeof createProgramJourney>["confirmCandidate"]
+  >[0]): ReturnType<ReturnType<typeof createProgramJourney>["confirmCandidate"]>;
   activateProgram(cycleStart: string): Promise<ProgramState>;
   programFacts(query: ProgramFactsQuery): ReturnType<typeof queryProgramFacts>;
   printableLog(input: {
@@ -337,8 +355,26 @@ export function createStellaFitnessRuntime(options: {
     recordJourneyBodyWeight(input) {
       return journey().recordBodyWeight(input);
     },
+    correctJourneyBodyWeight(input) {
+      return journey().correctBodyWeight(input);
+    },
+    deleteJourneyBodyWeight(input) {
+      return journey().deleteBodyWeight(input);
+    },
     recordInitial12RM(input) {
       return journey().recordInitial12RM(input);
+    },
+    correctInitial12RM(input) {
+      return journey().correctInitial12RM(input);
+    },
+    deleteInitial12RM(input) {
+      return journey().deleteInitial12RM(input);
+    },
+    submitProgramJourneyText(input) {
+      return journey().submitText(input);
+    },
+    confirmProgramJourneyCandidate(input) {
+      return journey().confirmCandidate(input);
     },
     activateProgram(cycleStart) {
       return journey().activate(cycleStart);

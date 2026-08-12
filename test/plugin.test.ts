@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -447,6 +448,147 @@ describe("Plugin registration", () => {
     )).resolves.toMatchObject({ handled: true });
   });
 
+  it("reaches READY_TO_ACTIVATE through baseline and three text 12RM facts in a bound OpenClaw conversation", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: directories,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const inbound = hooks.get("inbound_claim")!;
+    const bound = { pluginBinding: { pluginId: "stella-fitness" } };
+    const messages = [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+      "体重 150 lb",
+      "高脚杯深蹲 12RM 32 kg",
+      "哑铃卧推 12RM 24 kg",
+      "哑铃硬拉 12RM 40 kg",
+    ];
+
+    let result: unknown;
+    for (const [index, content] of messages.entries()) {
+      result = await inbound({
+        content,
+        channel: "test-channel",
+        messageId: `journey-message-${index}`,
+        timestamp: `2026-08-12T0${index}:00:00.000Z`,
+        isGroup: false,
+      }, bound);
+      expect(result).toMatchObject({ handled: true });
+    }
+    expect(result).toMatchObject({
+      reply: {
+        text: expect.stringContaining("journey: READY_TO_ACTIVATE"),
+      },
+    });
+    const specialSessions = readdirSync(join(
+      directories.personalDataDirectory,
+      "observations",
+      "special-session",
+    )).map((file) => JSON.parse(readFileSync(join(
+      directories.personalDataDirectory,
+      "observations",
+      "special-session",
+      file,
+    ), "utf8")));
+    expect(specialSessions.map(({ exerciseId, result: recorded }) => [
+      exerciseId,
+      recorded.value,
+    ]).sort(([left], [right]) => String(left).localeCompare(String(right)))).toEqual([
+      ["dumbbell-bench-press", 24],
+      ["dumbbell-deadlift", 40],
+      ["goblet-squat", 32],
+    ]);
+
+    const deadlift = specialSessions.find(
+      ({ exerciseId }) => exerciseId === "dumbbell-deadlift",
+    );
+    const deleted = await inbound({
+      content: `/stella-12rm delete ${deadlift.id} confirm`,
+      channel: "test-channel",
+      messageId: "journey-delete-12rm",
+      timestamp: "2026-08-12T08:00:00.000Z",
+      isGroup: false,
+    }, bound);
+    expect(deleted).toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("journey: INITIAL_12RM_REQUIRED") },
+    });
+    expect(readdirSync(join(
+      directories.personalDataDirectory,
+      "observations",
+      "special-session",
+    ))).toHaveLength(4);
+  });
+
+  it("does not resolve a persisted Journey confirmation outside its bound conversation", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: directories,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const inbound = hooks.get("inbound_claim")!;
+    const bound = { pluginBinding: { pluginId: "stella-fitness" } };
+    for (const [index, content] of [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+    ].entries()) {
+      await inbound({
+        content,
+        channel: "test-channel",
+        messageId: `confirmation-prerequisite-${index}`,
+        timestamp: `2026-08-12T0${index}:00:00.000Z`,
+        isGroup: false,
+      }, bound);
+    }
+    const pending = await inbound({
+      content: "体重 150",
+      channel: "test-channel",
+      messageId: "pending-baseline",
+      timestamp: "2026-08-12T04:00:00.000Z",
+      isGroup: false,
+    }, bound) as { reply: { text: string } };
+    const confirmationId = /Program Journey needs confirmation: ([0-9a-f-]{36})/u.exec(
+      pending.reply.text,
+    )?.[1];
+    const confirmationEvent = {
+      content: `/stella-confirm ${confirmationId} {"unit":"lb"}`,
+      channel: "test-channel",
+      messageId: "confirm-baseline-boundary",
+      timestamp: "2026-08-12T04:05:00.000Z",
+      isGroup: false,
+    };
+
+    await expect(inbound(confirmationEvent, {})).resolves.toBeUndefined();
+    expect(existsSync(join(
+      directories.personalDataDirectory,
+      "observations",
+      "body-weight",
+    ))).toBe(false);
+    await expect(inbound(confirmationEvent, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("journey: INITIAL_12RM_REQUIRED") },
+    });
+  });
+
   it("connects configured Plugin runtime to OpenClaw structured extraction", async () => {
     const extractStructuredWithModel = vi.fn().mockResolvedValue({
       text: '{"stage":1}',
@@ -642,7 +784,7 @@ describe("Plugin registration", () => {
           channel: "test-channel",
           messageId: "workout-confirmation-2",
         },
-        {},
+        { pluginBinding: { pluginId: "stella-fitness" } },
       ),
     ).resolves.toMatchObject({
       handled: true,
@@ -697,7 +839,7 @@ describe("Plugin registration", () => {
         runId: "workout-correction-original",
         metadata: { mediaPath, mediaType: "image/png" },
       },
-      {},
+        { pluginBinding: { pluginId: "stella-fitness" } },
     ) as { reply: { text: string } };
     const originalId = /observation: ([0-9a-f-]{36})/u.exec(
       original.reply.text,

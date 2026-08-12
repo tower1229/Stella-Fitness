@@ -40,10 +40,40 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
     ) {
       return pluginRuntime.recordJourneyBodyWeight(input);
     },
+    correctJourneyBodyWeight(
+      input: Parameters<typeof pluginRuntime.correctJourneyBodyWeight>[0],
+    ) {
+      return pluginRuntime.correctJourneyBodyWeight(input);
+    },
+    deleteJourneyBodyWeight(
+      input: Parameters<typeof pluginRuntime.deleteJourneyBodyWeight>[0],
+    ) {
+      return pluginRuntime.deleteJourneyBodyWeight(input);
+    },
     recordInitial12RM(
       input: Parameters<typeof pluginRuntime.recordInitial12RM>[0],
     ) {
       return pluginRuntime.recordInitial12RM(input);
+    },
+    correctInitial12RM(
+      input: Parameters<typeof pluginRuntime.correctInitial12RM>[0],
+    ) {
+      return pluginRuntime.correctInitial12RM(input);
+    },
+    deleteInitial12RM(
+      input: Parameters<typeof pluginRuntime.deleteInitial12RM>[0],
+    ) {
+      return pluginRuntime.deleteInitial12RM(input);
+    },
+    submitProgramJourneyText(
+      input: Parameters<typeof pluginRuntime.submitProgramJourneyText>[0],
+    ) {
+      return pluginRuntime.submitProgramJourneyText(input);
+    },
+    confirmProgramJourneyCandidate(
+      input: Parameters<typeof pluginRuntime.confirmProgramJourneyCandidate>[0],
+    ) {
+      return pluginRuntime.confirmProgramJourneyCandidate(input);
     },
     activateProgram(cycleStart: string) {
       return pluginRuntime.activateProgram(cycleStart);

@@ -102,6 +102,11 @@ export type BodyWeightObservation = {
         readonly kind: "body-weight-correction";
         readonly recordedAt: string;
         readonly replacesObservationId: string;
+      }
+    | {
+        readonly kind: "body-weight-deletion";
+        readonly recordedAt: string;
+        readonly replacesObservationId: string;
       };
 };
 

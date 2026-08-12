@@ -114,7 +114,19 @@ export async function verifyTelegramChannelFlow(options) {
     ) {
       throw new Error("Duplicate prerequisite message changed persisted facts");
     }
-    telegram.pushText("/stella-weight 2026-08-10T03:00:00Z 68.4 kg");
+    telegram.pushText("体重 68.4");
+    const pendingBaseline = await telegram.waitForText((text) =>
+      text.includes("Program Journey needs confirmation:"),
+    );
+    const baselineConfirmationId =
+      /Program Journey needs confirmation: ([0-9a-f-]{36})/u.exec(
+        pendingBaseline,
+      )?.[1];
+    if (baselineConfirmationId === undefined) {
+      throw new Error(`Baseline confirmation ID was missing: ${pendingBaseline}`);
+    }
+    await restartGateway("pending baseline confirmation");
+    telegram.pushText(`/stella-confirm ${baselineConfirmationId} {"unit":"kg"}`);
     await telegram.waitForText((text) =>
       text.startsWith("baseline body weight recorded: 68.4 kg"),
     );
@@ -209,6 +221,7 @@ export async function verifyTelegramChannelFlow(options) {
       prerequisites: true,
       prerequisiteReplayIdempotent: true,
       baseline: true,
+      baselineConfirmationRecovered: true,
       initial12RM: true,
       activated: true,
       facts: true,

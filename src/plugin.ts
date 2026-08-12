@@ -151,13 +151,35 @@ export function registerStellaFitnessPlugin(
       if (text === undefined || text.length === 0) {
         return { text: "Usage: /stella-weight <weight with kg or lb>" };
       }
-      const result = await recordJourneyAwareBodyWeight(stellaRuntime, {
+      const deletionId = parseDeletionCommand(text);
+      if (deletionId !== undefined) {
+        const observation = await stellaRuntime.deleteJourneyBodyWeight({
+          observationId: deletionId,
+          deletedAt: new Date().toISOString(),
+          source: {
+            kind: "user-text",
+            text: context.commandBody,
+            channel: context.channel,
+            ...(context.sessionKey === undefined ? {} : { runId: context.sessionKey }),
+          },
+        });
+        return { text: `baseline body weight deleted: ${observation.provenance.kind}\n${formatJourneyStatus(await stellaRuntime.programJourneyStatus())}` };
+      }
+      const correction = parseCorrectionCommand(text);
+      const result = correction === undefined
+        ? await recordJourneyAwareBodyWeight(stellaRuntime, {
         text,
         receivedAt: new Date().toISOString(),
         source: {
           channel: context.channel,
         },
-      });
+      })
+        : await stellaRuntime.correctJourneyBodyWeight({
+            replacesObservationId: correction.observationId,
+            text: correction.valueText,
+            receivedAt: new Date().toISOString(),
+            source: { channel: context.channel },
+          });
       return { text: formatJourneyBodyWeight(result) };
     },
   });
@@ -170,13 +192,44 @@ export function registerStellaFitnessPlugin(
     async handler(context) {
       const bindingReply = await requireProgramJourneyBinding(context);
       if (bindingReply !== undefined) return bindingReply;
+      const correction = parse12RMCorrectionCommand(context.args);
+      const deletionId = parseDeletionCommand(context.args ?? "");
+      const now = new Date().toISOString();
+      if (deletionId !== undefined) {
+        const observation = await stellaRuntime.deleteInitial12RM({
+          observationId: deletionId,
+          confirmationId: stableConfirmationId(context),
+          deletedAt: now,
+          source: {
+            kind: "user-text",
+            text: context.commandBody,
+            channel: context.channel,
+            ...(context.sessionKey === undefined ? {} : { runId: context.sessionKey }),
+          },
+        });
+        return { text: `Initial 12RM deleted: ${observation.exerciseId}\n${formatJourneyStatus(await stellaRuntime.programJourneyStatus())}` };
+      }
+      if (correction !== undefined) {
+        const observation = await stellaRuntime.correctInitial12RM({
+          ...correction,
+          confirmationId: stableConfirmationId(context),
+          occurredAt: now,
+          recordedAt: now,
+          source: {
+            kind: "user-text",
+            text: context.commandBody,
+            channel: context.channel,
+            ...(context.sessionKey === undefined ? {} : { runId: context.sessionKey }),
+          },
+        });
+        return { text: `Initial 12RM corrected: ${observation.exerciseId} ${observation.result.value} kg\n${formatJourneyStatus(await stellaRuntime.programJourneyStatus())}` };
+      }
       const input = parseInitial12RMCommand(context.args);
       if (input === undefined) {
         return {
           text: "Usage: /stella-12rm <goblet-squat|dumbbell-bench-press|dumbbell-deadlift> <kg> confirm",
         };
       }
-      const now = new Date().toISOString();
       const observation = await stellaRuntime.recordInitial12RM({
         ...input,
         confirmationId: stableConfirmationId(context),
@@ -263,9 +316,26 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
+      const bindingReply = await requireProgramJourneyBinding(context);
+      if (bindingReply !== undefined) return bindingReply;
       const confirmation = parseWorkoutConfirmationCommand(context.args);
-      const result = await stellaRuntime.confirmWorkoutLog(confirmation);
-      return { text: formatWorkoutLogRecording(result) };
+      try {
+        const result = await stellaRuntime.confirmProgramJourneyCandidate({
+          ...confirmation,
+          confirmedAt: new Date().toISOString(),
+          source: {
+            kind: "user-text",
+            text: context.commandBody,
+            channel: context.channel,
+            ...(context.sessionKey === undefined ? {} : { runId: context.sessionKey }),
+          },
+        });
+        return { text: await formatProgramJourneyTextResult(stellaRuntime, result) };
+      } catch (error) {
+        if (!isUnavailableJourneyConfirmation(error)) throw error;
+        const result = await stellaRuntime.confirmWorkoutLog(confirmation);
+        return { text: formatWorkoutLogRecording(result) };
+      }
     },
   });
 
@@ -274,12 +344,27 @@ export function registerStellaFitnessPlugin(
     async (event, context) => {
       const confirmationInput = workoutLogConfirmationInput(event);
       if (confirmationInput !== undefined) {
+        if (context?.pluginBinding?.pluginId !== PLUGIN_ID) return;
         const confirmation = parseWorkoutConfirmationCommand(confirmationInput);
-        const result = await stellaRuntime.confirmWorkoutLog(confirmation);
-        return {
-          handled: true,
-          reply: { text: formatWorkoutLogRecording(result) },
-        };
+        const { receivedAt, source } = inboundSource(event);
+        try {
+          const result = await stellaRuntime.confirmProgramJourneyCandidate({
+            ...confirmation,
+            confirmedAt: receivedAt,
+            source: { kind: "user-text", text: event.content, ...source },
+          });
+          return {
+            handled: true,
+            reply: { text: await formatProgramJourneyTextResult(stellaRuntime, result) },
+          };
+        } catch (error) {
+          if (!isUnavailableJourneyConfirmation(error)) throw error;
+          const result = await stellaRuntime.confirmWorkoutLog(confirmation);
+          return {
+            handled: true,
+            reply: { text: formatWorkoutLogRecording(result) },
+          };
+        }
       }
       const boundCommand = parseBoundStellaCommand(event);
       if (boundCommand !== undefined) {
@@ -344,6 +429,24 @@ export function registerStellaFitnessPlugin(
               },
             };
           }
+          const journeyStatus = await stellaRuntime.programJourneyStatus({
+            date: receivedAt.slice(0, 10),
+          });
+          if (journeyStatus.state === "BASELINE_WEIGHT_REQUIRED") {
+            const result = await stellaRuntime.submitProgramJourneyText({
+              text: boundText,
+              receivedAt,
+              source: {
+                channel: event.channel,
+                ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
+                ...(event.runId === undefined ? {} : { runId: event.runId }),
+              },
+            });
+            return {
+              handled: true,
+              reply: { text: await formatProgramJourneyTextResult(stellaRuntime, result) },
+            };
+          }
           const result = await recordJourneyAwareBodyWeight(stellaRuntime, {
             text: boundText,
             receivedAt,
@@ -360,6 +463,18 @@ export function registerStellaFitnessPlugin(
                 ? result.question
                 : formatJourneyBodyWeight(result),
             },
+          };
+        }
+        if (isInitial12RMText(boundText)) {
+          const { receivedAt, source } = inboundSource(event);
+          const result = await stellaRuntime.submitProgramJourneyText({
+            text: boundText,
+            receivedAt,
+            source,
+          });
+          return {
+            handled: true,
+            reply: { text: await formatProgramJourneyTextResult(stellaRuntime, result) },
           };
         }
       }
@@ -583,6 +698,28 @@ async function handleBoundStellaCommand(
     return { handled: true, reply: { text: formatJourneyStatus(status) } };
   }
   if (command.name === "weight") {
+    const deletionId = parseDeletionCommand(command.args);
+    if (deletionId !== undefined) {
+      const observation = await runtime.deleteJourneyBodyWeight({
+        observationId: deletionId,
+        deletedAt: receivedAt,
+        source: { kind: "user-text", text: event.content, ...source },
+      });
+      return {
+        handled: true,
+        reply: { text: `baseline body weight deleted: ${observation.id}\n${formatJourneyStatus(await runtime.programJourneyStatus())}` },
+      };
+    }
+    const correction = parseCorrectionCommand(command.args);
+    if (correction !== undefined) {
+      const result = await runtime.correctJourneyBodyWeight({
+        replacesObservationId: correction.observationId,
+        text: correction.valueText,
+        receivedAt,
+        source,
+      });
+      return { handled: true, reply: { text: formatJourneyBodyWeight(result) } };
+    }
     const result = await recordJourneyAwareBodyWeight(runtime, {
       text: command.args,
       receivedAt,
@@ -598,6 +735,43 @@ async function handleBoundStellaCommand(
     };
   }
   if (command.name === "12rm") {
+    const deletionId = parseDeletionCommand(command.args);
+    if (deletionId !== undefined) {
+      const observation = await runtime.deleteInitial12RM({
+        observationId: deletionId,
+        confirmationId: stableConfirmationId({
+          channel: event.channel,
+          ...(event.senderId === undefined ? {} : { senderId: event.senderId }),
+          ...(event.sessionKey === undefined ? {} : { sessionKey: event.sessionKey }),
+          commandBody: event.content,
+        }),
+        deletedAt: receivedAt,
+        source: { kind: "user-text", text: event.content, ...source },
+      });
+      return {
+        handled: true,
+        reply: { text: `Initial 12RM deleted: ${observation.exerciseId}\n${formatJourneyStatus(await runtime.programJourneyStatus())}` },
+      };
+    }
+    const correction = parse12RMCorrectionCommand(command.args);
+    if (correction !== undefined) {
+      const observation = await runtime.correctInitial12RM({
+        ...correction,
+        confirmationId: stableConfirmationId({
+          channel: event.channel,
+          ...(event.senderId === undefined ? {} : { senderId: event.senderId }),
+          ...(event.sessionKey === undefined ? {} : { sessionKey: event.sessionKey }),
+          commandBody: event.content,
+        }),
+        occurredAt: receivedAt,
+        recordedAt: receivedAt,
+        source: { kind: "user-text", text: event.content, ...source },
+      });
+      return {
+        handled: true,
+        reply: { text: `Initial 12RM corrected: ${observation.exerciseId} ${observation.result.value} kg\n${formatJourneyStatus(await runtime.programJourneyStatus())}` },
+      };
+    }
     const input = parseInitial12RMCommand(command.args);
     if (input === undefined) {
       return {
@@ -807,6 +981,37 @@ function isBodyWeightInput(input: string): boolean {
     BODY_WEIGHT_RECORDING_INPUT.test(input) ||
     bodyWeightCorrectionId(input) !== undefined
   );
+}
+
+function isInitial12RMText(input: string): boolean {
+  return /12\s*RM/iu.test(input) &&
+    /高脚杯深蹲|goblet[ -]squat|哑铃卧推|dumbbell[ -]bench[ -]press|哑铃硬拉|dumbbell[ -]deadlift/iu.test(input);
+}
+
+function isUnavailableJourneyConfirmation(error: unknown): boolean {
+  return error instanceof Error &&
+    error.message === "Program Journey confirmation is unavailable";
+}
+
+async function formatProgramJourneyTextResult(
+  runtime: StellaFitnessRuntime,
+  result: Awaited<ReturnType<StellaFitnessRuntime["submitProgramJourneyText"]>>,
+): Promise<string> {
+  if (result.status === "confirmation") {
+    return [
+      `Program Journey needs confirmation: ${result.confirmationId}`,
+      ...result.fields.map(({ path, question }) => `- ${path}: ${question}`),
+      `Run /stella-confirm ${result.confirmationId} with one JSON value for each listed path.`,
+    ].join("\n");
+  }
+  const fact = result.kind === "baseline-body-weight"
+    ? `baseline body weight recorded: ${result.observation.value.amount} ${result.observation.value.unit}`
+    : `Initial 12RM recorded: ${result.observation.exerciseId} ${result.observation.result.value} kg`;
+  return [
+    fact,
+    `observation: ${result.observation.id}`,
+    formatJourneyStatus(await runtime.programJourneyStatus()),
+  ].join("\n");
 }
 
 function bodyWeightCorrectionId(input: string): string | undefined {
@@ -1055,6 +1260,37 @@ function parseInitial12RMCommand(args: string | undefined): {
       | "dumbbell-deadlift",
     valueKg,
   };
+}
+
+function parseDeletionCommand(args: string): string | undefined {
+  return /^\s*delete\s+([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\s+confirm\s*$/iu.exec(
+    args,
+  )?.[1];
+}
+
+function parseCorrectionCommand(args: string): {
+  readonly observationId: string;
+  readonly valueText: string;
+} | undefined {
+  const match = /^\s*correct\s+([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\s+(.+)\s*$/isu.exec(
+    args,
+  );
+  return match?.[1] === undefined || match[2] === undefined
+    ? undefined
+    : { observationId: match[1], valueText: match[2] };
+}
+
+function parse12RMCorrectionCommand(args: string | undefined): {
+  readonly replacesObservationId: string;
+  readonly valueKg: number;
+} | undefined {
+  const match = /^\s*correct\s+([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\s+(\d+(?:\.\d+)?)\s*(?:kg|公斤)?\s+confirm\s*$/iu.exec(
+    args ?? "",
+  );
+  const valueKg = Number(match?.[2]);
+  return match?.[1] === undefined || !Number.isFinite(valueKg) || valueKg <= 0
+    ? undefined
+    : { replacesObservationId: match[1], valueKg };
 }
 
 function stableConfirmationId(context: {
