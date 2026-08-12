@@ -712,6 +712,29 @@ describe("Plugin registration", () => {
       reply: { text: "goblet-squat A: 32 kg" },
     });
     await expect(inbound({
+      content: "/stella-weight 69 kg",
+      channel: "test-channel",
+      messageId: "week-4-checkpoint",
+      timestamp: "2026-09-07T08:00:00.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("checkpoint body weight recorded: 69 kg") },
+    });
+    await expect(inbound({
+      content: "/stella-facts weight",
+      channel: "test-channel",
+      timestamp: "2026-09-07T08:01:00.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /Weight Facts:.+baseline: 68\.4 kg.+current: 69 kg.+week-4: 69 kg.+toward-goal.+week-8: insufficient-data/su,
+        ),
+      },
+    });
+    await expect(inbound({
       content: "当前阶段、第几周、训练日、动作、组次、次数、持续时间和休息分别是什么？",
       channel: "test-channel",
       timestamp: "2026-08-10T08:02:00.000Z",

@@ -17,6 +17,7 @@ import {
   ControlledExtractionRuntime,
   createScenarioHarness,
 } from "../src/scenario/harness.js";
+import { rawMediaUploadFixture } from "./support/sanitized-media.js";
 
 const temporaryRoots: string[] = [];
 
@@ -381,6 +382,316 @@ describe("Program Journey", () => {
     expect(
       readdirSync(join(root, "personal", "observations", "special-session")),
     ).toHaveLength(3);
+  });
+
+  it("rebuilds checkpoint and current Weight Facts after correction and deletion", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-checkpoint-facts-"));
+    temporaryRoots.push(root);
+    const harness = journeyHarness(root);
+    await activateJourney(harness);
+
+    const week4 = await harness.recordJourneyBodyWeight({
+      role: "checkpoint",
+      checkpointWeek: 4,
+      text: "体重 69 kg",
+      receivedAt: "2026-09-07T08:00:00.000Z",
+      source: { channel: "test", messageId: "week-4-weight" },
+    });
+    if (week4.status !== "recorded") {
+      throw new Error("Expected Week 4 checkpoint");
+    }
+    await expect(harness.recordJourneyBodyWeight({
+      role: "checkpoint",
+      checkpointWeek: 4,
+      text: "体重 69 kg",
+      receivedAt: "2026-09-07T08:00:00.000Z",
+      source: { channel: "test", messageId: "week-4-weight" },
+    })).resolves.toEqual(week4);
+    const current = await harness.recordBodyWeight({
+      text: "体重 70 kg",
+      receivedAt: "2026-09-08T08:00:00.000Z",
+      source: { channel: "test", messageId: "current-weight" },
+    });
+
+    await expect(harness.weightFacts()).resolves.toMatchObject({
+      baseline: { amountKg: 68.4 },
+      current: { amountKg: 70 },
+      checkpoints: {
+        "4": {
+          amountKg: 69,
+          fromBaseline: {
+            changeKg: 0.6,
+            changePercent: 0.877193,
+            direction: "toward-goal",
+          },
+          fromPrevious: {
+            changeKg: 0.6,
+            direction: "toward-goal",
+          },
+        },
+      },
+    });
+
+    const corrected = await harness.correctJourneyBodyWeight({
+      replacesObservationId: week4.observation.id,
+      text: "纠正为 68.4 kg",
+      receivedAt: "2026-12-01T09:00:00.000Z",
+      source: { channel: "test", messageId: "week-4-weight-correction" },
+    });
+    expect(corrected).toMatchObject({
+      status: "recorded",
+      role: "checkpoint",
+      checkpointWeek: 4,
+    });
+    await expect(harness.weightFacts()).resolves.toMatchObject({
+      checkpoints: {
+        "4": {
+          amountKg: 68.4,
+          fromBaseline: {
+            changeKg: 0,
+            changePercent: 0,
+            direction: "unchanged",
+          },
+        },
+      },
+    });
+    if (corrected.status !== "recorded") {
+      throw new Error("Expected checkpoint correction");
+    }
+    await harness.deleteJourneyBodyWeight({
+      observationId: corrected.observation.id,
+      deletedAt: "2026-12-01T10:00:00.000Z",
+      source: {
+        kind: "user-text",
+        text: "删除第 4 周 checkpoint",
+        channel: "test",
+        messageId: "week-4-weight-deletion",
+      },
+    });
+    await expect(harness.programJourneyStatus({ date: "2026-09-07" })).resolves
+      .toMatchObject({ state: "PHASE_CHECKPOINT_REQUIRED", requiredCheckpointWeek: 4 });
+    await expect(harness.weightFacts()).resolves.toMatchObject({
+      current: { amountKg: 70 },
+      checkpoints: {},
+    });
+    if (current.status !== "recorded") throw new Error("Expected current weight");
+    writeFileSync(join(
+      root,
+      "personal",
+      "observations",
+      "body-weight",
+      `${current.observation.id}.json`,
+    ), "{}\n");
+    await expect(harness.weightFacts()).resolves.toMatchObject({
+      errors: [expect.objectContaining({
+        file: expect.stringContaining(`${current.observation.id}.json`),
+        message: "Body-weight Observation is schema-invalid",
+      })],
+    });
+  });
+
+  it("does not compare a later checkpoint across a missing previous phase", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-missing-checkpoint-"));
+    temporaryRoots.push(root);
+    const harness = journeyHarness(root);
+    await activateJourney(harness);
+    const statePath = join(root, "personal", "program", "state.json");
+
+    const week4 = await harness.recordJourneyBodyWeight({
+      role: "checkpoint",
+      checkpointWeek: 4,
+      text: "69 kg",
+      receivedAt: "2026-09-07T08:00:00.000Z",
+      source: { messageId: "week-4" },
+    });
+    if (week4.status !== "recorded") throw new Error("Expected Week 4 checkpoint");
+    const week8 = await harness.recordJourneyBodyWeight({
+      role: "checkpoint",
+      checkpointWeek: 8,
+      text: "70 kg",
+      receivedAt: "2026-10-05T08:00:00.000Z",
+      source: { messageId: "week-8" },
+    });
+    if (week8.status !== "recorded") throw new Error("Expected Week 8 checkpoint");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    delete state.phaseCheckpointObservationIds["4"];
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+
+    await expect(harness.weightFacts()).resolves.toMatchObject({
+      checkpoints: {
+        "8": {
+          fromPrevious: { direction: "insufficient-data" },
+        },
+      },
+    });
+  });
+
+  it("migrates legacy checkpoint references into Program State on restart", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-checkpoint-migration-"));
+    temporaryRoots.push(root);
+    const first = journeyHarness(root);
+    await activateJourney(first);
+    const week4 = await first.recordJourneyBodyWeight({
+      role: "checkpoint",
+      checkpointWeek: 4,
+      text: "69 kg",
+      receivedAt: "2026-09-07T08:00:00.000Z",
+      source: { messageId: "legacy-week-4" },
+    });
+    if (week4.status !== "recorded") throw new Error("Expected Week 4 checkpoint");
+
+    const setupPath = join(root, "personal", "program", "setup.json");
+    const statePath = join(root, "personal", "program", "state.json");
+    const setup = JSON.parse(readFileSync(setupPath, "utf8"));
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    setup.checkpointObservationIds = { "4": week4.observation.id };
+    delete state.phaseCheckpointObservationIds;
+    writeFileSync(setupPath, `${JSON.stringify(setup, null, 2)}\n`);
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    await first.shutdown();
+
+    const restarted = journeyHarness(root);
+    await expect(restarted.programJourneyStatus({ date: "2026-09-07" })).resolves
+      .toMatchObject({ state: "ACTIVE" });
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({
+      phaseCheckpointObservationIds: { "4": week4.observation.id },
+    });
+  });
+
+  it("fails closed for a schema-invalid checkpoint reference in Program State", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-invalid-checkpoint-ref-"));
+    temporaryRoots.push(root);
+    const harness = journeyHarness(root);
+    await activateJourney(harness);
+    const statePath = join(root, "personal", "program", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    state.phaseCheckpointObservationIds = { "4": "bad" };
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+
+    await expect(harness.programJourneyStatus({ date: "2026-09-07" })).rejects.toThrow(
+      "Program State is schema-invalid",
+    );
+  });
+
+  it("persists an ambiguous checkpoint confirmation across restart", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-checkpoint-confirmation-"));
+    temporaryRoots.push(root);
+    const first = journeyHarness(root);
+    await activateJourney(first);
+
+    const pending = await first.submitProgramJourneyText({
+      text: "昨天体重 69 kg",
+      receivedAt: "2026-09-07T08:00:00.000Z",
+      source: { channel: "test", messageId: "ambiguous-week-4" },
+    });
+    expect(pending).toMatchObject({
+      status: "confirmation",
+      kind: "checkpoint-body-weight",
+      checkpointWeek: 4,
+      fields: [{ path: "occurredAt" }],
+    });
+    if (pending.status !== "confirmation") {
+      throw new Error("Expected checkpoint confirmation");
+    }
+    await first.shutdown();
+
+    const restarted = journeyHarness(root);
+    await expect(restarted.confirmProgramJourneyCandidate({
+      confirmationId: pending.confirmationId,
+      values: { occurredAt: "2026-09-07T08:00:00.000Z" },
+      confirmedAt: "2026-09-07T08:05:00.000Z",
+      source: {
+        kind: "user-text",
+        text: "/stella-confirm occurredAt=2026-09-07T08:00:00.000Z",
+        channel: "test",
+        messageId: "confirm-week-4",
+      },
+    })).resolves.toMatchObject({
+      status: "recorded",
+      kind: "checkpoint-body-weight",
+      checkpointWeek: 4,
+      observation: { value: { amount: 69, unit: "kg" } },
+    });
+    await expect(restarted.programJourneyStatus({ date: "2026-09-07" })).resolves
+      .toMatchObject({ state: "ACTIVE" });
+  });
+
+  it("rejects a body-weight fact from before the corresponding checkpoint window", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-old-checkpoint-"));
+    temporaryRoots.push(root);
+    const harness = journeyHarness(root);
+    await activateJourney(harness);
+    await expect(harness.recordJourneyBodyWeight({
+      role: "checkpoint",
+      checkpointWeek: 4,
+      text: "2026-08-10T08:00:00Z 体重 69 kg",
+      receivedAt: "2026-09-07T08:00:00.000Z",
+      source: { messageId: "old-week-4-weight" },
+    })).rejects.toThrow("does not belong to the Week 4 checkpoint");
+  });
+
+  it("blocks cycle-completion retest confirmation until the Week 12 checkpoint exists", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-cycle-completion-gate-"));
+    temporaryRoots.push(root);
+    const onboarding = journeyHarness(root);
+    await activateJourney(onboarding);
+    await onboarding.shutdown();
+    const candidate = endOfCycleRetestCandidate();
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([
+        { parsed: candidate, metadata: { provider: "controlled" } },
+      ]),
+      personalDataDirectory: () => join(root, "personal"),
+      runtimeDirectory: () => join(root, "runtime-retest"),
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    const pending = await harness.ingestWorkoutLog({
+      runId: "cycle-completion-before-checkpoint",
+      upload: rawMediaUploadFixture(),
+      timeoutMs: 2_000,
+    });
+    if (pending.status !== "confirmation") {
+      throw new Error("Expected cycle-completion confirmation");
+    }
+    const values = Object.fromEntries(candidate.testResults.map((result, index) => [
+      `testResults[${index}].result.value`,
+      result.result.value,
+    ]));
+
+    await expect(harness.confirmWorkoutLog({
+      confirmationId: pending.confirmationId,
+      values,
+    })).rejects.toThrow("PHASE_CHECKPOINT_REQUIRED");
+    expect(
+      readdirSync(join(root, "personal", "observations", "workout-log")),
+    ).toEqual([]);
+
+    for (const [week, value] of [[4, 69], [8, 70], [12, 71]] as const) {
+      await harness.recordJourneyBodyWeight({
+        role: "checkpoint",
+        checkpointWeek: week,
+        text: `${value} kg`,
+        receivedAt: new Date(
+          Date.parse("2026-08-10T08:00:00.000Z") + week * 604_800_000,
+        ).toISOString(),
+        source: { messageId: `checkpoint-${week}` },
+      });
+    }
+    await expect(harness.confirmWorkoutLog({
+      confirmationId: pending.confirmationId,
+      values,
+    })).resolves.toMatchObject({
+      status: "recorded",
+      programState: {
+        nextCycle: {
+          symbolicLoadBindings: {
+            "goblet-squat": { A: { value: 36 } },
+            "dumbbell-bench-press": { A: { value: 28 } },
+            "dumbbell-deadlift": { A: { value: 44 } },
+          },
+        },
+      },
+    });
   });
 
   it("persists ambiguous text candidates and confirmation outcomes across restart", async () => {
@@ -754,6 +1065,24 @@ async function advanceToInitial12RM(
   });
 }
 
+async function activateJourney(
+  harness: ReturnType<typeof journeyHarness>,
+): Promise<void> {
+  await advanceToInitial12RM(harness);
+  for (const [index, [exerciseId, valueKg]] of [
+    ["goblet-squat", 32],
+    ["dumbbell-bench-press", 24],
+    ["dumbbell-deadlift", 40],
+  ].entries()) {
+    await harness.recordInitial12RM(initial12RMInput(
+      exerciseId as "goblet-squat" | "dumbbell-bench-press" | "dumbbell-deadlift",
+      valueKg as number,
+      `00000000-0000-4000-8000-00000000010${index}`,
+    ));
+  }
+  await harness.activateProgram("2026-08-10");
+}
+
 function initial12RMInput(
   exerciseId: "goblet-squat" | "dumbbell-bench-press" | "dumbbell-deadlift",
   valueKg: number,
@@ -766,5 +1095,27 @@ function initial12RMInput(
     occurredAt: "2026-08-11T04:00:00.000Z",
     recordedAt: "2026-08-11T04:01:00.000Z",
     source: { kind: "user-text" as const, text: `${exerciseId} ${valueKg} kg` },
+  };
+}
+
+function endOfCycleRetestCandidate() {
+  const field = <T>(value: T) => ({ value, confidence: "high" as const });
+  const result = (exerciseId: string, value: number) => ({
+    exerciseId: field(exerciseId),
+    test: "12RM" as const,
+    result: field({ kind: "kg" as const, value, unit: "kg" as const, raw: String(value) }),
+  });
+  return {
+    layout: field("zhuoshu-strength-test-block"),
+    stage: field(3),
+    week: field(12),
+    weekday: field("friday"),
+    sessionType: field("end_of_cycle_retest"),
+    testResults: [
+      result("goblet-squat", 36),
+      result("dumbbell-bench-press", 28),
+      result("dumbbell-deadlift", 44),
+    ],
+    uncertainFields: [],
   };
 }

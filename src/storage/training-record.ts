@@ -83,6 +83,16 @@ export async function rebuildTrainingRecordView(
       observation.programContext,
     );
     if (
+      observation.kind === "workout-special-session" &&
+      seenLogicalWorkouts.has(logicalIdentity)
+    ) {
+      errors.push({
+        file: join(WORKOUT_LOG_OBSERVATION_DIRECTORY, `${observation.id}.json`),
+        message: "Workout-log Observation conflicts with another active special session",
+      });
+      continue;
+    }
+    if (
       seenArtifacts.has(observation.source.sha256) ||
       seenLogicalWorkouts.has(logicalIdentity)
     ) {

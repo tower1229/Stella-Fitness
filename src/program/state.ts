@@ -50,6 +50,9 @@ export type ProgramState = {
     Record<string, Readonly<Record<string, SymbolicLoadBinding>>>
   >;
   readonly assistanceBindings: Readonly<Record<string, AssistanceBinding>>;
+  readonly phaseCheckpointObservationIds: Readonly<
+    Partial<Record<"4" | "8" | "12", string>>
+  >;
   readonly setup?: {
     readonly baselineObservationId: string;
   };
@@ -149,6 +152,7 @@ export async function confirmProgramSetup(options: {
     cycle: { startDate: options.cycleStart },
     symbolicLoadBindings: options.symbolicLoadBindings ?? {},
     assistanceBindings: {},
+    phaseCheckpointObservationIds: {},
     ...(options.baselineObservationId === undefined
       ? {}
       : { setup: { baselineObservationId: options.baselineObservationId } }),
@@ -345,6 +349,8 @@ function parseState(source: string): ProgramState {
     typeof value.cycle.startDate !== "string" ||
     !isSymbolicLoadBindings(value.symbolicLoadBindings) ||
     !isAssistanceBindings(value.assistanceBindings) ||
+    (value.phaseCheckpointObservationIds !== undefined &&
+      !isPhaseCheckpointObservationIds(value.phaseCheckpointObservationIds)) ||
     (value.setup !== undefined &&
       (!isRecord(value.setup) ||
         typeof value.setup.baselineObservationId !== "string")) ||
@@ -357,7 +363,21 @@ function parseState(source: string): ProgramState {
   ) {
     throw new Error("Program State is schema-invalid");
   }
-  return value as ProgramState;
+  return {
+    ...value,
+    phaseCheckpointObservationIds: value.phaseCheckpointObservationIds ?? {},
+  } as ProgramState;
+}
+
+function isPhaseCheckpointObservationIds(value: unknown): boolean {
+  return isRecord(value) &&
+    Object.keys(value).every((week) => ["4", "8", "12"].includes(week)) &&
+    Object.values(value).every((observationId) =>
+      typeof observationId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+        observationId,
+      )
+    );
 }
 
 function isSymbolicLoadBindings(value: unknown): boolean {

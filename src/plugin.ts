@@ -287,7 +287,11 @@ export function registerStellaFitnessPlugin(
       if (input === undefined) {
         return { text: factsUsage() };
       }
-      return { text: formatProgramFacts(await stellaRuntime.programFacts(input)) };
+      return {
+        text: input.kind === "weight"
+          ? formatWeightFacts(await stellaRuntime.weightFacts())
+          : formatProgramFacts(await stellaRuntime.programFacts(input)),
+      };
     },
   });
 
@@ -400,6 +404,12 @@ export function registerStellaFitnessPlugin(
             question: boundText,
           });
           return { handled: true, reply: { text: formatProgramFacts(result) } };
+        }
+        if (isWeightFactsQuery(boundText)) {
+          return {
+            handled: true,
+            reply: { text: formatWeightFacts(await stellaRuntime.weightFacts()) },
+          };
         }
         if (factQuery !== undefined) {
           const result = await stellaRuntime.programFacts(factQuery);
@@ -818,7 +828,9 @@ async function handleBoundStellaCommand(
       reply: {
         text: input === undefined
           ? factsUsage()
-          : formatProgramFacts(await runtime.programFacts(input)),
+          : input.kind === "weight"
+            ? formatWeightFacts(await runtime.weightFacts())
+            : formatProgramFacts(await runtime.programFacts(input)),
       },
     };
   }
@@ -993,7 +1005,9 @@ async function formatProgramJourneyTextResult(
   }
   const fact = result.kind === "baseline-body-weight"
     ? `baseline body weight recorded: ${result.observation.value.amount} ${result.observation.value.unit}`
-    : `Initial 12RM recorded: ${result.observation.exerciseId} ${result.observation.result.value} kg`;
+    : result.kind === "checkpoint-body-weight"
+      ? `Week ${result.checkpointWeek} body weight recorded: ${result.observation.value.amount} ${result.observation.value.unit}`
+      : `Initial 12RM recorded: ${result.observation.exerciseId} ${result.observation.result.value} kg`;
   return [
     fact,
     `observation: ${result.observation.id}`,
@@ -1303,7 +1317,9 @@ function stableConfirmationId(context: {
 
 function parseFactsCommand(args: string | undefined):
   | Parameters<StellaFitnessRuntime["programFacts"]>[0]
+  | { readonly kind: "weight" }
   | undefined {
+  if (/^\s*weight\s*$/iu.test(args ?? "")) return { kind: "weight" };
   const symbolMatch = /^\s*symbol\s+(\S+)\s+([AN])\s*$/iu.exec(args ?? "");
   if (symbolMatch?.[1] !== undefined && symbolMatch[2] !== undefined) {
     return {
@@ -1351,6 +1367,10 @@ function isOutOfScopeProgramQuestion(text: string): boolean {
   );
 }
 
+function isWeightFactsQuery(text: string): boolean {
+  return /(?:体重(?:事实|变化|checkpoint|检查点)|weight\s+(?:facts|change|checkpoint))/iu.test(text);
+}
+
 function isQuestion(text: string): boolean {
   return /(?:[?？]|吗(?:[。.!！]?\s*)$|呢(?:[。.!！]?\s*)$|多少|怎么|如何|能不能|可不可以|是否|会不会|是不是|what|when|where|which|who|why|how|can\s+i|should\s+i)/iu.test(
     text,
@@ -1358,7 +1378,44 @@ function isQuestion(text: string): boolean {
 }
 
 function factsUsage(): string {
-  return "Usage: /stella-facts <today|next> [YYYY-MM-DD] | symbol <exercise-id> <A|N>";
+  return "Usage: /stella-facts <today|next> [YYYY-MM-DD] | weight | symbol <exercise-id> <A|N>";
+}
+
+function formatWeightFacts(
+  view: Awaited<ReturnType<StellaFitnessRuntime["weightFacts"]>>,
+): string {
+  const lines = ["Weight Facts:"];
+  lines.push(...view.errors.map(({ file, message }) => `error: ${file} - ${message}`));
+  lines.push(view.baseline === undefined
+    ? "baseline: insufficient-data"
+    : `baseline: ${view.baseline.amountKg} kg (${view.baseline.observationId})`);
+  lines.push(view.current === undefined
+    ? "current: insufficient-data"
+    : `current: ${view.current.amountKg} kg at ${view.current.occurredAt} (${view.current.observationId})`);
+  for (const week of ["4", "8", "12"] as const) {
+    const checkpoint = view.checkpoints[week];
+    if (checkpoint === undefined) {
+      lines.push(`week-${week}: insufficient-data`);
+      continue;
+    }
+    lines.push([
+      `week-${week}: ${checkpoint.amountKg} kg (${checkpoint.observationId})`,
+      `from-baseline=${formatWeightChange(checkpoint.fromBaseline)}`,
+      `from-previous=${formatWeightChange(checkpoint.fromPrevious)}`,
+    ].join(", "));
+  }
+  return lines.join("\n");
+}
+
+function formatWeightChange(change: {
+  readonly changeKg?: number;
+  readonly changePercent?: number;
+  readonly direction: string;
+}): string {
+  if (change.changeKg === undefined || change.changePercent === undefined) {
+    return change.direction;
+  }
+  return `${change.changeKg} kg/${change.changePercent}%/${change.direction}`;
 }
 
 function formatProgramFacts(

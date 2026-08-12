@@ -1,6 +1,6 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
-const candidate = {
+const ordinaryCandidate = {
   layout: field("zhuoshu-three-stage-workbook"),
   stage: field(1),
   week: field(1),
@@ -24,15 +24,34 @@ const candidate = {
   ],
 };
 
+const strengthCandidate = {
+  layout: field("zhuoshu-strength-test-block"),
+  stage: field(1),
+  week: field(4),
+  weekday: field("friday"),
+  sessionType: field("strength_test"),
+  testResults: [
+    strengthResult("goblet-squat", "12RM", { kind: "kg", value: 34, unit: "kg", raw: "34" }),
+    strengthResult("dumbbell-bench-press", "12RM", { kind: "kg", value: 26, unit: "kg", raw: "26" }),
+    strengthResult("dumbbell-deadlift", "12RM", { kind: "kg", value: 42, unit: "kg", raw: "42" }),
+    strengthResult("pull-up", "max_reps_first_set", { kind: "repetitions", value: 9, raw: "9" }),
+  ],
+  uncertainFields: [],
+};
+
 export default definePluginEntry({
   id: "stella-fitness-e2e-provider",
   name: "Stella Fitness E2E Provider",
   description: "Deterministic local provider for channel E2E verification",
   register(api) {
+    let extractionCount = 0;
     api.registerMediaUnderstandingProvider({
       id: "stella-e2e",
       capabilities: ["image"],
       async extractStructured(request) {
+        const candidate = extractionCount++ === 0
+          ? strengthCandidate
+          : ordinaryCandidate;
         return {
           parsed: structuredClone(candidate),
           text: JSON.stringify(candidate),
@@ -47,4 +66,8 @@ export default definePluginEntry({
 
 function field(value, confidence = "high") {
   return { value, confidence };
+}
+
+function strengthResult(exerciseId, test, result) {
+  return { exerciseId: field(exerciseId), test, result: field(result) };
 }

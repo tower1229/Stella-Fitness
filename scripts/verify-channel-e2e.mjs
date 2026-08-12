@@ -158,10 +158,10 @@ export async function verifyTelegramChannelFlow(options) {
       );
       await restartGateway(`${exercise} 12RM`);
     }
-    telegram.pushText("/stella-activate 2026-08-10");
-    const activation = await telegram.waitForText((text) =>
+    telegram.pushText("/stella-activate 2026-07-13");
+    await telegram.waitForText((text) =>
       text.startsWith("Program State activated:") &&
-      text.includes("today Planned Session: 2026-08-10") &&
+      text.includes("today Planned Session: 2026-07-13") &&
       text.includes("rest:"),
     );
     await restartGateway("Program State activation");
@@ -182,18 +182,34 @@ export async function verifyTelegramChannelFlow(options) {
     ) {
       throw new Error(`Program State has incomplete initial A bindings: ${JSON.stringify(state)}`);
     }
+    const checkpointGateCursor = telegram.messageCount();
+    telegram.pushText(
+      "/stella-weight 2026-08-10T08:00:00.000Z 体重 69 kg",
+    );
+    await telegram.waitForTextAfter(
+      checkpointGateCursor,
+      (text) => text.startsWith("checkpoint body weight recorded: 69 kg"),
+    );
     telegram.pushText("/stella-facts today 2026-08-10");
     const today = await telegram.waitForText((text) =>
       text.startsWith("today Planned Session: 2026-08-10"),
     );
     telegram.pushText("/stella-facts next 2026-08-10");
     await telegram.waitForText((text) =>
-      text.startsWith("next Planned Session: 2026-08-12"),
+      text.startsWith("next Planned Session: 2026-08-11"),
     );
     telegram.pushText("我应该怎么调整训练和饮食？");
     await telegram.waitForText((text) =>
       text.includes("only reports source-program, Program State and recorded facts") &&
       text.includes("does not diagnose, advise or adjust the plan"),
+    );
+    telegram.pushText("/stella-facts weight");
+    await telegram.waitForText((text) =>
+      text.startsWith("Weight Facts:") &&
+      text.includes("baseline: 68.4 kg") &&
+      text.includes("current: 68.4 kg") &&
+      text.includes("week-4: 69 kg") &&
+      text.includes("toward-goal"),
     );
     await restartGateway("Program Facts questions");
     const recoveryMessageCursor = telegram.messageCount();
@@ -201,34 +217,28 @@ export async function verifyTelegramChannelFlow(options) {
     const recoveredToday = await telegram.waitForTextAfter(recoveryMessageCursor, (text) =>
       text.startsWith("today Planned Session: 2026-08-10"),
     );
-    if (today !== recoveredToday || !activation.includes(today)) {
+    if (today !== recoveredToday) {
       throw new Error("Program Facts changed after Gateway restart");
     }
     telegram.pushPhoto("训练日志");
-    const pending = await telegram.waitForText((text) =>
-      text.includes("Workout log needs confirmation:"),
+    const pendingStrength = await telegram.waitForText((text) =>
+      text.includes("Workout log needs confirmation:") &&
+      text.includes("testResults[3].result.value"),
     );
-    const confirmationId =
-      /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(pending)?.[1];
-    if (confirmationId === undefined) {
-      throw new Error(`Workout confirmation ID was missing: ${pending}`);
+    const strengthConfirmationId =
+      /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(pendingStrength)?.[1];
+    if (strengthConfirmationId === undefined) {
+      throw new Error(`Strength confirmation ID was missing: ${pendingStrength}`);
     }
-
-    await restartGateway("pending workout-log confirmation");
-
+    await restartGateway("pending strength-test confirmation");
     telegram.pushText(
-      `/stella-confirm ${confirmationId} {"exercises[0].load.value":{"kind":"kg","value":20,"unit":"kg","raw":"20"}}`,
+      `/stella-confirm ${strengthConfirmationId} {"testResults[0].result.value":{"kind":"kg","value":34,"unit":"kg","raw":"34"},"testResults[1].result.value":{"kind":"kg","value":26,"unit":"kg","raw":"26"},"testResults[2].result.value":{"kind":"kg","value":42,"unit":"kg","raw":"42"},"testResults[3].result.value":{"kind":"repetitions","value":9,"raw":"9"}}`,
     );
-    let recorded;
-    try {
-      recorded = await telegram.waitForText((text) =>
-        text.startsWith("Workout recorded: stage 1, week 1, monday, full-body"),
-      );
-    } catch (error) {
-      throw new Error(
-        `${String(error)}\nTelegram: ${JSON.stringify(telegram.snapshot())}\nGateway tail: ${gateway.logs().slice(-12_000)}`,
-      );
-    }
+    const recorded = await telegram.waitForText((text) =>
+      text.startsWith("Workout recorded: stage 1, week 4, friday, strength_test"),
+    );
+    telegram.pushText("/stella-facts symbol goblet-squat N");
+    await telegram.waitForText((text) => text === "goblet-squat N: 34 kg");
     const observationId = /observation: ([0-9a-f-]{36})/u.exec(recorded)?.[1];
     if (observationId === undefined) {
       throw new Error(`Workout Observation ID was missing: ${recorded}`);
@@ -258,8 +268,10 @@ export async function verifyTelegramChannelFlow(options) {
       );
     if (
       observation.provenance?.confirmedFields?.[0] !==
-        "exercises[0].load.value" ||
-      confirmationRecords.length !== 1
+        "testResults[0].result.value" ||
+      !confirmationRecords.some((record) =>
+        record.result?.observationId === observationId
+      )
     ) {
       throw new Error("Telegram channel flow did not persist confirmed facts");
     }
@@ -278,6 +290,9 @@ export async function verifyTelegramChannelFlow(options) {
       facts: true,
       nextFacts: true,
       scopeRefusal: true,
+      checkpointGate: true,
+      weightFacts: true,
+      strengthBindings: true,
       factsRecovered: true,
       printableWorkbook: true,
       imageIngress: true,

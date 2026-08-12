@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -245,7 +253,7 @@ describe("special workout sessions", () => {
       runtimeDirectory: () => join(personalDataDirectory, "..", "runtime"),
       preflight: () => ({ readiness: "READY", reasons: [] }),
     });
-    await activateProgramFixture({ personalDataDirectory, programSpec: await programFixture() });
+    await activateJourneyThroughWeek12(harness);
 
     const pending = await harness.ingestWorkoutLog({
       runId: "end-of-cycle-retest",
@@ -277,7 +285,11 @@ describe("special workout sessions", () => {
         },
       },
       programState: {
-        symbolicLoadBindings: {},
+        symbolicLoadBindings: {
+          "goblet-squat": { A: { value: 30, unit: "kg" } },
+          "dumbbell-bench-press": { A: { value: 20, unit: "kg" } },
+          "dumbbell-deadlift": { A: { value: 38, unit: "kg" } },
+        },
         nextCycle: {
           restartFromWeek: 1,
           symbolicLoadBindings: {
@@ -303,7 +315,7 @@ describe("special workout sessions", () => {
       runtimeDirectory: () => join(personalDataDirectory, "..", "runtime"),
       preflight: () => ({ readiness: "READY", reasons: [] }),
     });
-    await activateProgramFixture({ personalDataDirectory, programSpec: await programFixture() });
+    await activateJourneyThroughWeek12(harness);
     const first = await harness.ingestWorkoutLog({
       runId: "concurrent-week-4",
       upload: rawMediaUploadFixture(),
@@ -311,7 +323,10 @@ describe("special workout sessions", () => {
     });
     const second = await harness.ingestWorkoutLog({
       runId: "concurrent-cycle-end",
-      upload: rawMediaUploadFixture(),
+      upload: (() => {
+        const upload = rawMediaUploadFixture();
+        return { ...upload, bytes: Buffer.concat([upload.bytes, Buffer.from([0])]) };
+      })(),
       timeoutMs: 2_000,
     });
     if (first.status !== "confirmation" || second.status !== "confirmation") {
@@ -353,6 +368,144 @@ describe("special workout sessions", () => {
         },
       },
     });
+  });
+
+  it("rebuilds N bindings from active special-session Observations after correction deletion", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const originalCandidate = strengthTestCandidate();
+    const correctedCandidate = strengthTestCandidate();
+    for (const [index, value] of [34, 26, 42].entries()) {
+      correctedCandidate.testResults[index]!.result = field({
+        kind: "kg",
+        value,
+        unit: "kg",
+        raw: String(value),
+      });
+    }
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([
+        { parsed: originalCandidate, metadata: { provider: "controlled" } },
+        { parsed: correctedCandidate, metadata: { provider: "controlled" } },
+      ]),
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => join(personalDataDirectory, "..", "runtime"),
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await activateProgramFixture({ personalDataDirectory, programSpec: await programFixture() });
+    const originalPending = await harness.ingestWorkoutLog({
+      runId: "week-4-original",
+      upload: rawMediaUploadFixture(),
+      timeoutMs: 2_000,
+    });
+    if (originalPending.status !== "confirmation") throw new Error("Expected confirmation");
+    const original = await harness.confirmWorkoutLog({
+      confirmationId: originalPending.confirmationId,
+      values: confirmationValues(originalCandidate),
+    });
+    const correctedPending = await harness.correctWorkoutLog({
+      runId: "week-4-correction",
+      replacesObservationId: original.observation.id,
+      upload: { ...rawMediaUploadFixture(), fileName: "corrected-strength-test.png" },
+      timeoutMs: 2_000,
+    });
+    if (correctedPending.status !== "confirmation") throw new Error("Expected correction confirmation");
+    const corrected = await harness.confirmWorkoutLog({
+      confirmationId: correctedPending.confirmationId,
+      values: confirmationValues(correctedCandidate),
+    });
+    expect(corrected.programState).toMatchObject({
+      symbolicLoadBindings: {
+        "goblet-squat": { N: { value: 34 } },
+        "dumbbell-bench-press": { N: { value: 26 } },
+        "dumbbell-deadlift": { N: { value: 42 } },
+      },
+    });
+
+    unlinkSync(join(
+      personalDataDirectory,
+      "observations",
+      "workout-log",
+      `${corrected.observation.id}.json`,
+    ));
+    await harness.programJourneyStatus();
+    expect(JSON.parse(readFileSync(join(personalDataDirectory, "program", "state.json"), "utf8")))
+      .toMatchObject({
+        symbolicLoadBindings: {
+          "goblet-squat": { N: { value: 32 } },
+          "dumbbell-bench-press": { N: { value: 24 } },
+          "dumbbell-deadlift": { N: { value: 40 } },
+        },
+      });
+
+    unlinkSync(join(
+      personalDataDirectory,
+      "observations",
+      "workout-log",
+      `${original.observation.id}.json`,
+    ));
+    await harness.programJourneyStatus();
+    expect(JSON.parse(readFileSync(join(personalDataDirectory, "program", "state.json"), "utf8")))
+      .toMatchObject({ symbolicLoadBindings: {} });
+  });
+
+  it("fails closed on invalid or conflicting active strength-test Observations across runtimes", async () => {
+    const personalDataDirectory = temporaryPersonalDataDirectory();
+    const runtimeDirectory = join(personalDataDirectory, "..", "shared-runtime");
+    await activateProgramFixture({ personalDataDirectory, programSpec: await programFixture() });
+    const createHarness = (candidate: ReturnType<typeof strengthTestCandidate>) =>
+      createScenarioHarness({
+        extractionRuntime: new ControlledExtractionRuntime([
+          { parsed: candidate, metadata: { provider: "controlled" } },
+        ]),
+        personalDataDirectory: () => personalDataDirectory,
+        runtimeDirectory: () => runtimeDirectory,
+        preflight: () => ({ readiness: "READY", reasons: [] }),
+      });
+    const firstHarness = createHarness(strengthTestCandidate());
+    const secondHarness = createHarness(strengthTestCandidate());
+    const firstPending = await firstHarness.ingestWorkoutLog({
+      runId: "cross-runtime-strength-a",
+      upload: rawMediaUploadFixture(),
+      timeoutMs: 2_000,
+    });
+    const secondUpload = rawMediaUploadFixture();
+    const secondPending = await secondHarness.ingestWorkoutLog({
+      runId: "cross-runtime-strength-b",
+      upload: { ...secondUpload, bytes: Buffer.concat([secondUpload.bytes, Buffer.from([0])]) },
+      timeoutMs: 2_000,
+    });
+    if (firstPending.status !== "confirmation" || secondPending.status !== "confirmation") {
+      throw new Error("Expected two strength-test confirmations");
+    }
+    const results = await Promise.allSettled([
+      firstHarness.confirmWorkoutLog({
+        confirmationId: firstPending.confirmationId,
+        values: confirmationValues(strengthTestCandidate()),
+      }),
+      secondHarness.confirmWorkoutLog({
+        confirmationId: secondPending.confirmationId,
+        values: confirmationValues(strengthTestCandidate()),
+      }),
+    ]);
+    expect(results.map(({ status }) => status).sort()).toEqual(["fulfilled", "rejected"]);
+    const activeFiles = readdirSync(join(personalDataDirectory, "observations", "workout-log"));
+    expect(activeFiles).toHaveLength(1);
+    const observationPath = join(
+      personalDataDirectory,
+      "observations",
+      "workout-log",
+      activeFiles[0]!,
+    );
+    const stateBeforeInvalidEdit = readFileSync(
+      join(personalDataDirectory, "program", "state.json"),
+      "utf8",
+    );
+    writeFileSync(observationPath, "{}\n");
+    await expect(firstHarness.programJourneyStatus()).rejects.toThrow(
+      /observations\/workout-log\/.+Workout-log Observation is schema-invalid/u,
+    );
+    expect(readFileSync(join(personalDataDirectory, "program", "state.json"), "utf8"))
+      .toBe(stateBeforeInvalidEdit);
   });
 });
 
@@ -460,6 +613,59 @@ function testResult(
 
 function field<T>(value: T) {
   return { value, confidence: "high" as const };
+}
+
+async function activateJourneyThroughWeek12(
+  harness: ReturnType<typeof createScenarioHarness>,
+): Promise<void> {
+  for (const [index, prerequisiteId] of [
+    "adjustable-dumbbells",
+    "pull-up-bar",
+    "printed-workout-log",
+    "recording-protocol",
+  ].entries()) {
+    await harness.acknowledgePrerequisite({
+      prerequisiteId,
+      acknowledgedAt: `2026-08-09T0${index}:00:00.000Z`,
+      source: { kind: "user-text", text: prerequisiteId },
+    });
+  }
+  await harness.recordJourneyBodyWeight({
+    role: "baseline",
+    text: "68.4 kg",
+    receivedAt: "2026-08-09T04:00:00.000Z",
+  });
+  for (const [index, [exerciseId, valueKg]] of [
+    ["goblet-squat", 30],
+    ["dumbbell-bench-press", 20],
+    ["dumbbell-deadlift", 38],
+  ].entries()) {
+    await harness.recordInitial12RM({
+      exerciseId: exerciseId as
+        | "goblet-squat"
+        | "dumbbell-bench-press"
+        | "dumbbell-deadlift",
+      valueKg: valueKg as number,
+      confirmationId: `00000000-0000-4000-8000-00000000020${index}`,
+      occurredAt: "2026-08-09T05:00:00.000Z",
+      recordedAt: "2026-08-09T05:01:00.000Z",
+      source: { kind: "user-text", text: `${exerciseId} ${valueKg} kg` },
+    });
+  }
+  await harness.activateProgram("2026-08-10");
+  for (const [checkpointWeek, receivedAt, amount] of [
+    [4, "2026-09-07T08:00:00.000Z", "68.8"],
+    [8, "2026-10-05T08:00:00.000Z", "69"],
+    [12, "2026-10-26T08:00:00.000Z", "69.2"],
+  ] as const) {
+    await harness.recordJourneyBodyWeight({
+      role: "checkpoint",
+      checkpointWeek,
+      text: `${amount} kg`,
+      receivedAt,
+      source: { channel: "test", messageId: `week-${checkpointWeek}-checkpoint` },
+    });
+  }
 }
 
 function temporaryPersonalDataDirectory(): string {

@@ -55,6 +55,7 @@ import {
 import {
   createProgramJourney,
   type Initial12RMExerciseId,
+  withProgramJourneyLock,
 } from "./program/journey.js";
 import {
   queryProgramFacts,
@@ -260,16 +261,46 @@ export function createStellaFitnessRuntime(options: {
   });
   let stopped = false;
   let programStateUpdateTail: Promise<void> = Promise.resolve();
+  const enqueueSpecialSessionStateRebuild = (
+    personalDataDirectory: string,
+  ): Promise<ProgramState | undefined> => {
+    const update = programStateUpdateTail.then(async () =>
+      await withProgramJourneyLock(requiredRuntimeDirectory(options), async () => {
+        const active = await readActiveProgramIfPresent({ personalDataDirectory });
+        return active === undefined
+          ? undefined
+          : await rebuildSpecialSessionState({ personalDataDirectory });
+      }),
+    );
+    programStateUpdateTail = update.then(
+      () => undefined,
+      () => undefined,
+    );
+    return update;
+  };
   const updateSpecialSessionState: UpdateSpecialSessionState = (
     personalDataDirectory,
     observation,
   ) => {
-    const update = programStateUpdateTail.then(async () =>
-      await persistSpecialSessionState({
-        personalDataDirectory,
-        observation,
-      }),
-    );
+    const update = programStateUpdateTail.then(async () => {
+      await journey().migrateLegacyCheckpointReferences();
+      return await withProgramJourneyLock(requiredRuntimeDirectory(options), async () => {
+      if (
+        observation.plannedSession.kind === "cycle-completion-retest" &&
+        await hasProgramJourneySetup(personalDataDirectory)
+      ) {
+        const start = new Date(`${observation.plannedSession.cycle.startDate}T00:00:00.000Z`);
+        const boundaryDate = new Date(start.getTime() + 12 * 604_800_000)
+          .toISOString()
+          .slice(0, 10);
+        const status = await journey().status({ date: boundaryDate });
+        if (status.state !== "ACTIVE") {
+          throw new Error(`Cycle completion is unavailable in ${status.state}`);
+        }
+      }
+        return await rebuildSpecialSessionState({ personalDataDirectory });
+      });
+    });
     programStateUpdateTail = update.then(
       () => undefined,
       () => undefined,
@@ -342,20 +373,25 @@ export function createStellaFitnessRuntime(options: {
 
   return {
     preflight,
-    programJourneyStatus(input) {
-      return journey().status(input);
+    async programJourneyStatus(input) {
+      await journey().migrateLegacyCheckpointReferences();
+      await enqueueSpecialSessionStateRebuild(requiredPersonalDataDirectory(options));
+      return await journey().status(input);
     },
     acknowledgePrerequisite(input) {
       return journey().acknowledgePrerequisite(input);
     },
-    recordJourneyBodyWeight(input) {
-      return journey().recordBodyWeight(input);
+    async recordJourneyBodyWeight(input) {
+      await journey().migrateLegacyCheckpointReferences();
+      return await journey().recordBodyWeight(input);
     },
-    correctJourneyBodyWeight(input) {
-      return journey().correctBodyWeight(input);
+    async correctJourneyBodyWeight(input) {
+      await journey().migrateLegacyCheckpointReferences();
+      return await journey().correctBodyWeight(input);
     },
-    deleteJourneyBodyWeight(input) {
-      return journey().deleteBodyWeight(input);
+    async deleteJourneyBodyWeight(input) {
+      await journey().migrateLegacyCheckpointReferences();
+      return await journey().deleteBodyWeight(input);
     },
     recordInitial12RM(input) {
       return journey().recordInitial12RM(input);
@@ -366,16 +402,20 @@ export function createStellaFitnessRuntime(options: {
     deleteInitial12RM(input) {
       return journey().deleteInitial12RM(input);
     },
-    submitProgramJourneyText(input) {
-      return journey().submitText(input);
+    async submitProgramJourneyText(input) {
+      await journey().migrateLegacyCheckpointReferences();
+      return await journey().submitText(input);
     },
-    confirmProgramJourneyCandidate(input) {
-      return journey().confirmCandidate(input);
+    async confirmProgramJourneyCandidate(input) {
+      await journey().migrateLegacyCheckpointReferences();
+      return await journey().confirmCandidate(input);
     },
     activateProgram(cycleStart) {
       return journey().activate(cycleStart);
     },
     async programFacts(query) {
+      await journey().migrateLegacyCheckpointReferences();
+      await enqueueSpecialSessionStateRebuild(requiredPersonalDataDirectory(options));
       if (query.kind !== "unsupported") {
         const status = await journey().status(
           query.kind === "today" || query.kind === "next" ? { date: query.date } : {},
@@ -399,8 +439,9 @@ export function createStellaFitnessRuntime(options: {
     async printableLog() {
       return await getPrintableLogWorkbook();
     },
-    weightFacts() {
-      return journey().weightFacts();
+    async weightFacts() {
+      await journey().migrateLegacyCheckpointReferences();
+      return await journey().weightFacts();
     },
     resolvePlannedSession(input) {
       return resolvePlannedSession({
@@ -1381,24 +1422,64 @@ function candidateTestResult(
   return result as Record<string, unknown>;
 }
 
-async function persistSpecialSessionState(options: {
+async function rebuildSpecialSessionState(options: {
   readonly personalDataDirectory: string;
-  readonly observation: Extract<
-    WorkoutLogObservation,
-    { kind: "workout-special-session" }
-  >;
 }): Promise<ProgramState> {
   const activeProgram = await readActiveProgram({
     personalDataDirectory: options.personalDataDirectory,
   });
+  const symbolicLoadBindings: Record<string, Record<string, ProgramState["symbolicLoadBindings"][string][string]>> = {};
+  for (const [exerciseId, bindings] of Object.entries(activeProgram.state.symbolicLoadBindings)) {
+    if (bindings.A !== undefined) {
+      symbolicLoadBindings[exerciseId] = { A: bindings.A };
+    }
+  }
+  const { nextCycle: _nextCycle, ...withoutNextCycle } = activeProgram.state;
+  let nextState: ProgramState = {
+    ...withoutNextCycle,
+    symbolicLoadBindings,
+    assistanceBindings: {},
+  };
+  const view = await rebuildTrainingRecordView(options.personalDataDirectory);
+  if (view.errors.length > 0) {
+    throw new Error(view.errors.map(({ file, message }) => `${file} - ${message}`).join("\n"));
+  }
+  const specialSessionKeys = new Set<string>();
+  for (const { observation } of view.records) {
+    if (
+      observation.kind !== "workout-special-session" ||
+      observation.programContext?.stateId !== activeProgram.state.id ||
+      observation.programContext.cycleStart !== activeProgram.state.cycle.startDate
+    ) {
+      continue;
+    }
+    const key = observation.plannedSession.kind === "cycle-completion-retest"
+      ? "cycle-completion-retest"
+      : `week-${observation.plannedSession.cycle.week}-strength-test`;
+    if (specialSessionKeys.has(key)) {
+      throw new Error(`Multiple active special-session Observations conflict for ${key}`);
+    }
+    specialSessionKeys.add(key);
+    nextState = applyStrengthTestBindings({ state: nextState, observation });
+  }
+  if (JSON.stringify(nextState) === JSON.stringify(activeProgram.state)) {
+    return activeProgram.state;
+  }
   return await replaceProgramState({
     personalDataDirectory: options.personalDataDirectory,
     previousState: activeProgram.state,
-    nextState: applyStrengthTestBindings({
-      state: activeProgram.state,
-      observation: options.observation,
-    }),
+    nextState,
   });
+}
+
+async function hasProgramJourneySetup(personalDataDirectory: string): Promise<boolean> {
+  try {
+    await readFile(join(personalDataDirectory, "program", "setup.json"), "utf8");
+    return true;
+  } catch (error) {
+    if (isMissingFile(error)) return false;
+    throw error;
+  }
 }
 
 function candidateExercise(

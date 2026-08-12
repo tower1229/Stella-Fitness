@@ -274,6 +274,16 @@ export async function readBodyWeightObservation(
   return observation;
 }
 
+export async function findBodyWeightObservationBySource(
+  personalDataDirectory: string,
+  source: ObservationSource,
+): Promise<BodyWeightObservation | undefined> {
+  return await observationWithSameSource(
+    join(personalDataDirectory, OBSERVATION_DIRECTORY),
+    source,
+  );
+}
+
 function parseBodyWeightObservation(source: string): BodyWeightObservation {
   const value: unknown = JSON.parse(source);
   if (

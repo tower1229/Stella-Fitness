@@ -20,6 +20,7 @@ import {
   persistBodyWeightCorrection,
   persistBodyWeightDeletion,
   persistBodyWeightObservation,
+  findBodyWeightObservationBySource,
   readBodyWeightObservation,
   rebuildBodyWeightView,
   resolveBodyWeightReference,
@@ -29,6 +30,7 @@ import { loadBuiltInProgramInput } from "./builtin.js";
 import {
   confirmProgramSetup,
   readActiveProgramIfPresent,
+  replaceProgramState,
   selectProgramForSetup,
   type ProgramState,
   type SymbolicLoadBinding,
@@ -126,7 +128,11 @@ type JourneyConfirmationField = {
 type PendingJourneyConfirmation = {
   readonly schemaVersion: "stella-fitness/program-journey-confirmation/v0.1";
   readonly confirmationId: string;
-  readonly kind: "baseline-body-weight" | "course-start-12rm";
+  readonly kind:
+    | "baseline-body-weight"
+    | "checkpoint-body-weight"
+    | "course-start-12rm";
+  readonly checkpointWeek?: 4 | 8 | 12;
   readonly candidate: Readonly<Record<string, string | number>>;
   readonly fields: readonly JourneyConfirmationField[];
   readonly source: ObservationSource;
@@ -161,6 +167,12 @@ export type WeightFactsView = {
   readonly schemaVersion: "stella-fitness/view/weight-facts/v0.1";
   readonly goal: "gain-weight";
   readonly baseline?: { readonly observationId: string; readonly amountKg: number };
+  readonly current?: {
+    readonly observationId: string;
+    readonly amountKg: number;
+    readonly occurredAt: string;
+  };
+  readonly errors: readonly { readonly file: string; readonly message: string }[];
   readonly checkpoints: Readonly<
     Partial<
       Record<
@@ -190,6 +202,28 @@ export function createProgramJourney(options: {
   const personalDataDirectory = options.personalDataDirectory;
   const runtimeDirectory = options.runtimeDirectory;
   return {
+    async migrateLegacyCheckpointReferences(): Promise<void> {
+      assertJourneyPreflight(options.preflight());
+      await withProgramJourneyLock(runtimeDirectory, async () => {
+        const setup = await ensureSetup(personalDataDirectory);
+        const active = await readActiveProgramIfPresent({ personalDataDirectory });
+        if (
+          active === undefined ||
+          Object.keys(active.state.phaseCheckpointObservationIds).length > 0 ||
+          Object.keys(setup.checkpointObservationIds).length === 0
+        ) {
+          return;
+        }
+        await replaceProgramState({
+          personalDataDirectory,
+          previousState: active.state,
+          nextState: {
+            ...active.state,
+            phaseCheckpointObservationIds: setup.checkpointObservationIds,
+          },
+        });
+      });
+    },
     async status(input: { readonly date?: string } = {}): Promise<ProgramJourneyStatus> {
       assertJourneyPreflight(options.preflight());
       const setup = await ensureSetup(personalDataDirectory);
@@ -271,7 +305,9 @@ export function createProgramJourney(options: {
         input.date,
       );
       for (const requiredCheckpointWeek of dueCheckpointWeeks) {
-        const checkpointId = setup.checkpointObservationIds[String(requiredCheckpointWeek) as "4" | "8" | "12"];
+        const checkpointId = active.state.phaseCheckpointObservationIds[
+          String(requiredCheckpointWeek) as "4" | "8" | "12"
+        ];
         const checkpoint = checkpointId === undefined
           ? undefined
           : await resolveBodyWeightReference(personalDataDirectory, checkpointId);
@@ -369,7 +405,44 @@ export function createProgramJourney(options: {
       if (input.role === "checkpoint" && ![4, 8, 12].includes(input.checkpointWeek ?? 0)) {
         throw new Error("Checkpoint week must be 4, 8 or 12");
       }
-      return await withSetupLock(runtimeDirectory, async () => {
+      return await withProgramJourneyLock(runtimeDirectory, async () => {
+        const source: ObservationSource = {
+          kind: "user-text",
+          text: input.text,
+          ...input.source,
+        };
+        const setup = await readSetup(personalDataDirectory);
+        const sameSource = await findBodyWeightObservationBySource(
+          personalDataDirectory,
+          source,
+        );
+        if (sameSource !== undefined) {
+          const reference = await activeJourneyBodyWeightReference(
+            personalDataDirectory,
+            setup,
+            sameSource.id,
+          );
+          const expectedCheckpointWeek = input.role === "checkpoint"
+            ? input.checkpointWeek
+            : undefined;
+          if (
+            reference?.role !== input.role ||
+            (reference.role === "checkpoint" &&
+              reference.checkpointWeek !== expectedCheckpointWeek) ||
+            sameSource.provenance.kind !== "body-weight-recording" ||
+            sameSource.value.amount !== candidate.amount ||
+            sameSource.value.unit !== candidate.unit ||
+            sameSource.occurredAt !== candidate.occurredAt ||
+            sameSource.source.text !== source.text
+          ) {
+            throw new Error("Body-weight source identity was reused for different facts");
+          }
+          return {
+            status: "recorded" as const,
+            role: input.role,
+            observation: sameSource,
+          };
+        }
         const journeyStatus = input.role === "baseline"
           ? await this.status()
           : await this.status({
@@ -391,24 +464,42 @@ export function createProgramJourney(options: {
         ) {
           throw new Error(`Checkpoint body weight is unavailable in ${journeyStatus.state}`);
         }
+        if (input.role === "checkpoint") {
+          await assertCheckpointOccurrence(
+            personalDataDirectory,
+            input.checkpointWeek!,
+            candidate.occurredAt,
+          );
+        }
         const observation = await persistBodyWeightObservation({
           personalDataDirectory,
           amount: candidate.amount,
           unit: candidate.unit,
           occurredAt: candidate.occurredAt,
-          source: { kind: "user-text", text: input.text, ...input.source },
+          source,
           recordedAt: new Date(input.receivedAt).toISOString(),
         });
+        if (input.role === "checkpoint") {
+          const active = await readActiveProgramIfPresent({ personalDataDirectory });
+          if (active === undefined) {
+            throw new Error("Checkpoint body weight requires an Active Program State");
+          }
+          await replaceProgramState({
+            personalDataDirectory,
+            previousState: active.state,
+            nextState: {
+              ...active.state,
+              phaseCheckpointObservationIds: {
+                ...active.state.phaseCheckpointObservationIds,
+                [String(input.checkpointWeek)]: observation.id,
+              },
+            },
+          });
+        }
         await writeUpdatedSetup(personalDataDirectory, (setup) =>
           input.role === "baseline"
             ? { ...setup, baselineObservationId: observation.id }
-            : {
-                ...setup,
-                checkpointObservationIds: {
-                  ...setup.checkpointObservationIds,
-                  [String(input.checkpointWeek)]: observation.id,
-                },
-              },
+            : setup,
         );
         return { status: "recorded" as const, role: input.role, observation };
       });
@@ -423,16 +514,28 @@ export function createProgramJourney(options: {
       assertJourneyPreflight(options.preflight());
       const candidate = parseBodyWeightInput(input);
       if ("status" in candidate) return candidate;
-      return await withSetupLock(runtimeDirectory, async () => {
+      return await withProgramJourneyLock(runtimeDirectory, async () => {
         const setup = await readSetup(personalDataDirectory);
-        const active = setup.baselineObservationId === undefined
-          ? undefined
-          : await resolveBodyWeightReference(
-              personalDataDirectory,
-              setup.baselineObservationId,
-            );
-        if (active?.id !== input.replacesObservationId) {
-          throw new Error("Only the active baseline body weight can be corrected");
+        const reference = await activeJourneyBodyWeightReference(
+          personalDataDirectory,
+          setup,
+          input.replacesObservationId,
+        );
+        if (reference === undefined) {
+          throw new Error("Only an active Program Journey body weight can be corrected");
+        }
+        if (reference.role === "checkpoint") {
+          const replaced = await readBodyWeightObservation(
+            personalDataDirectory,
+            input.replacesObservationId,
+          );
+          await assertCheckpointOccurrence(
+            personalDataDirectory,
+            reference.checkpointWeek,
+            candidate.occurrenceTimeSource === "explicit"
+              ? candidate.occurredAt
+              : replaced.occurredAt,
+          );
         }
         const observation = await persistBodyWeightCorrection({
           personalDataDirectory,
@@ -445,7 +548,14 @@ export function createProgramJourney(options: {
           source: { kind: "user-text", text: input.text, ...input.source },
           recordedAt: new Date(input.receivedAt).toISOString(),
         });
-        return { status: "recorded" as const, role: "baseline" as const, observation };
+        return {
+          status: "recorded" as const,
+          role: reference.role,
+          ...(reference.role === "checkpoint"
+            ? { checkpointWeek: reference.checkpointWeek }
+            : {}),
+          observation,
+        };
       });
     },
 
@@ -456,16 +566,15 @@ export function createProgramJourney(options: {
     }): Promise<BodyWeightObservation> {
       assertJourneyPreflight(options.preflight());
       assertTimestamp(input.deletedAt, "deletedAt");
-      return await withSetupLock(runtimeDirectory, async () => {
+      return await withProgramJourneyLock(runtimeDirectory, async () => {
         const setup = await readSetup(personalDataDirectory);
-        const active = setup.baselineObservationId === undefined
-          ? undefined
-          : await resolveBodyWeightReference(
-              personalDataDirectory,
-              setup.baselineObservationId,
-            );
-        if (active?.id !== input.observationId) {
-          throw new Error("Only the active baseline body weight can be deleted");
+        const reference = await activeJourneyBodyWeightReference(
+          personalDataDirectory,
+          setup,
+          input.observationId,
+        );
+        if (reference === undefined) {
+          throw new Error("Only an active Program Journey body weight can be deleted");
         }
         return await persistBodyWeightDeletion({
           personalDataDirectory,
@@ -501,7 +610,7 @@ export function createProgramJourney(options: {
         }
         throw new Error(`Course-start 12RM is unavailable in ${journeyStatus.state}`);
       }
-      return await withSetupLock(runtimeDirectory, async () => {
+      return await withProgramJourneyLock(runtimeDirectory, async () => {
         const setup = await readSetup(personalDataDirectory);
         const existingObservationId = setup.initial12RMObservationIds[input.exerciseId];
         if (existingObservationId !== undefined) {
@@ -541,7 +650,7 @@ export function createProgramJourney(options: {
       if ((await readActiveProgramIfPresent({ personalDataDirectory })) !== undefined) {
         throw new Error("Course-start 12RM cannot change after activation");
       }
-      return await withSetupLock(runtimeDirectory, async () => {
+      return await withProgramJourneyLock(runtimeDirectory, async () => {
         const setup = await readSetup(personalDataDirectory);
         const records = (await readInitial12RMObservations(personalDataDirectory)).observations;
         const activeEntry = INITIAL_12RM_EXERCISES.map((exerciseId) => ({
@@ -585,7 +694,7 @@ export function createProgramJourney(options: {
         throw new Error("Course-start 12RM cannot change after activation");
       }
       assertTimestamp(input.deletedAt, "deletedAt");
-      return await withSetupLock(runtimeDirectory, async () => {
+      return await withProgramJourneyLock(runtimeDirectory, async () => {
         const setup = await readSetup(personalDataDirectory);
         const records = (await readInitial12RMObservations(personalDataDirectory)).observations;
         const active = INITIAL_12RM_EXERCISES.map((exerciseId) => {
@@ -685,6 +794,36 @@ export function createProgramJourney(options: {
           receivedAt,
         });
       }
+      if (status.state === "PHASE_CHECKPOINT_REQUIRED") {
+        const checkpointWeek = status.requiredCheckpointWeek!;
+        const parsed = parseBodyWeightInput(input);
+        if (!("status" in parsed)) {
+          const recorded = await this.recordBodyWeight({
+            role: "checkpoint",
+            checkpointWeek,
+            ...input,
+          });
+          if (recorded.status !== "recorded") {
+            throw new Error("Clear checkpoint input unexpectedly needs confirmation");
+          }
+          return {
+            status: "recorded" as const,
+            kind: "checkpoint-body-weight" as const,
+            checkpointWeek,
+            observation: recorded.observation,
+          };
+        }
+        const candidate = partialBodyWeightCandidate(input.text, receivedAt);
+        const fields = bodyWeightConfirmationFields(candidate, parsed);
+        return await persistJourneyConfirmation(personalDataDirectory, {
+          kind: "checkpoint-body-weight",
+          checkpointWeek,
+          candidate,
+          fields,
+          source,
+          receivedAt,
+        });
+      }
       throw new Error(`Program Journey text recording is unavailable in ${status.state}`);
     },
 
@@ -695,7 +834,7 @@ export function createProgramJourney(options: {
       readonly source: ObservationSource;
     }) {
       assertJourneyPreflight(options.preflight());
-      return await withSetupLock(runtimeDirectory, async () => {
+      return await withProgramJourneyLock(runtimeDirectory, async () => {
         const pending = await readJourneyConfirmation(
         personalDataDirectory,
         input.confirmationId,
@@ -720,24 +859,51 @@ export function createProgramJourney(options: {
           throw new Error(`Program Journey confirmation is missing ${missing[0]!.path}`);
         }
         let result;
-        if (pending.kind === "baseline-body-weight") {
-          const status = await this.status();
-          if (status.state !== "BASELINE_WEIGHT_REQUIRED") {
-            throw new Error(`Baseline confirmation is unavailable in ${status.state}`);
+        if (
+          pending.kind === "baseline-body-weight" ||
+          pending.kind === "checkpoint-body-weight"
+        ) {
+          const checkpointWeek = pending.checkpointWeek;
+          const status = pending.kind === "baseline-body-weight"
+            ? await this.status()
+            : await this.status({
+                date: await checkpointGateDate(personalDataDirectory, checkpointWeek),
+              });
+          const expectedState = pending.kind === "baseline-body-weight"
+            ? "BASELINE_WEIGHT_REQUIRED"
+            : "PHASE_CHECKPOINT_REQUIRED";
+          if (
+            status.state !== expectedState ||
+            (pending.kind === "checkpoint-body-weight" &&
+              status.requiredCheckpointWeek !== checkpointWeek)
+          ) {
+            throw new Error(`${pending.kind} confirmation is unavailable in ${status.state}`);
           }
           const setup = await readSetup(personalDataDirectory);
-          const existingBaseline = setup.baselineObservationId === undefined
+          const active = pending.kind === "checkpoint-body-weight"
+            ? await readActiveProgramIfPresent({ personalDataDirectory })
+            : undefined;
+          const existingReference = pending.kind === "baseline-body-weight"
+            ? setup.baselineObservationId
+            : active?.state.phaseCheckpointObservationIds[
+                String(checkpointWeek) as "4" | "8" | "12"
+              ];
+          const existing = existingReference === undefined
             ? undefined
-            : await resolveBodyWeightReference(
-                personalDataDirectory,
-                setup.baselineObservationId,
-              );
-          if (existingBaseline !== undefined) {
-            throw new Error("Baseline body weight is already recorded");
+            : await resolveBodyWeightReference(personalDataDirectory, existingReference);
+          if (existing !== undefined) {
+            throw new Error(`${pending.kind} is already recorded`);
           }
-          const amount = positiveNumber(merged.amount, "Baseline amount");
+          const amount = positiveNumber(merged.amount, "Body-weight amount");
           const unit = bodyWeightUnit(merged.unit);
-          const occurredAt = canonicalTimestamp(merged.occurredAt, "Baseline occurredAt");
+          const occurredAt = canonicalTimestamp(merged.occurredAt, "Body-weight occurredAt");
+          if (pending.kind === "checkpoint-body-weight") {
+            await assertCheckpointOccurrence(
+              personalDataDirectory,
+              checkpointWeek!,
+              occurredAt,
+            );
+          }
           const observation = await persistBodyWeightObservation({
             personalDataDirectory,
             amount,
@@ -746,15 +912,39 @@ export function createProgramJourney(options: {
             source: confirmationSource(pending),
             recordedAt: new Date(input.confirmedAt).toISOString(),
           });
-          await writeUpdatedSetup(personalDataDirectory, (setup) => ({
-            ...setup,
-            baselineObservationId: observation.id,
-          }));
-          result = {
-            status: "recorded" as const,
-            kind: "baseline-body-weight" as const,
-            observation,
-          };
+          await writeUpdatedSetup(personalDataDirectory, (setup) =>
+            pending.kind === "baseline-body-weight"
+              ? { ...setup, baselineObservationId: observation.id }
+              : setup,
+          );
+          if (pending.kind === "checkpoint-body-weight") {
+            if (active === undefined) {
+              throw new Error("Checkpoint body weight requires an Active Program State");
+            }
+            await replaceProgramState({
+              personalDataDirectory,
+              previousState: active.state,
+              nextState: {
+                ...active.state,
+                phaseCheckpointObservationIds: {
+                  ...active.state.phaseCheckpointObservationIds,
+                  [String(checkpointWeek)]: observation.id,
+                },
+              },
+            });
+          }
+          result = pending.kind === "baseline-body-weight"
+            ? {
+                status: "recorded" as const,
+                kind: "baseline-body-weight" as const,
+                observation,
+              }
+            : {
+                status: "recorded" as const,
+                kind: "checkpoint-body-weight" as const,
+                checkpointWeek: checkpointWeek!,
+                observation,
+              };
         } else {
           const status = await this.status();
           if (status.state !== "INITIAL_12RM_REQUIRED") {
@@ -857,6 +1047,8 @@ export function createProgramJourney(options: {
     async weightFacts(): Promise<WeightFactsView> {
       assertJourneyPreflight(options.preflight());
       const setup = await ensureSetup(personalDataDirectory);
+      const active = await readActiveProgramIfPresent({ personalDataDirectory });
+      const bodyWeightView = await rebuildBodyWeightView(personalDataDirectory);
       const baseline = setup.baselineObservationId === undefined
         ? undefined
         : await resolveBodyWeightReference(personalDataDirectory, setup.baselineObservationId);
@@ -869,9 +1061,9 @@ export function createProgramJourney(options: {
           readonly fromPrevious: WeightChange;
         }
       >> = {};
-      let previous = baseline;
+      let previousCheckpoint: BodyWeightObservation | undefined;
       for (const week of ["4", "8", "12"] as const) {
-        const referenceId = setup.checkpointObservationIds[week];
+        const referenceId = active?.state.phaseCheckpointObservationIds[week];
         const checkpoint = referenceId === undefined
           ? undefined
           : await resolveBodyWeightReference(personalDataDirectory, referenceId);
@@ -885,15 +1077,19 @@ export function createProgramJourney(options: {
             amountKg,
           ),
           fromPrevious: weightChange(
-            previous === undefined ? undefined : toKg(previous),
+            week === "4"
+              ? baseline === undefined ? undefined : toKg(baseline)
+              : previousCheckpoint === undefined ? undefined : toKg(previousCheckpoint),
             amountKg,
           ),
         };
-        previous = checkpoint;
+        previousCheckpoint = checkpoint;
       }
+      const current = bodyWeightView.points.at(-1);
       return {
         schemaVersion: "stella-fitness/view/weight-facts/v0.1",
         goal: "gain-weight",
+        errors: bodyWeightView.errors,
         ...(baseline === undefined
           ? {}
           : {
@@ -902,10 +1098,52 @@ export function createProgramJourney(options: {
                 amountKg: toKg(baseline),
               },
             }),
+        ...(current === undefined
+          ? {}
+          : {
+              current: {
+                observationId: current.observationId,
+                amountKg: toKgValue(current.amount, current.unit),
+                occurredAt: current.occurredAt,
+              },
+            }),
         checkpoints,
       };
     },
   };
+}
+
+async function activeJourneyBodyWeightReference(
+  personalDataDirectory: string,
+  setup: ProgramSetup,
+  observationId: string,
+): Promise<
+  | { readonly role: "baseline" }
+  | { readonly role: "checkpoint"; readonly checkpointWeek: 4 | 8 | 12 }
+  | undefined
+> {
+  if (setup.baselineObservationId !== undefined) {
+    const baseline = await resolveBodyWeightReference(
+      personalDataDirectory,
+      setup.baselineObservationId,
+    );
+    if (baseline?.id === observationId) return { role: "baseline" };
+  }
+  for (const week of [4, 8, 12] as const) {
+    const active = await readActiveProgramIfPresent({ personalDataDirectory });
+    const referenceId = active?.state.phaseCheckpointObservationIds[
+      String(week) as "4" | "8" | "12"
+    ];
+    if (referenceId === undefined) continue;
+    const checkpoint = await resolveBodyWeightReference(
+      personalDataDirectory,
+      referenceId,
+    );
+    if (checkpoint?.id === observationId) {
+      return { role: "checkpoint", checkpointWeek: week };
+    }
+  }
+  return undefined;
 }
 
 async function ensureSetup(personalDataDirectory: string): Promise<ProgramSetup> {
@@ -940,7 +1178,7 @@ async function updateSetup(
   runtimeDirectory: string,
   update: (setup: ProgramSetup) => ProgramSetup,
 ): Promise<ProgramSetup> {
-  return await withSetupLock(runtimeDirectory, async () =>
+  return await withProgramJourneyLock(runtimeDirectory, async () =>
     await writeUpdatedSetup(personalDataDirectory, update),
   );
 }
@@ -966,7 +1204,10 @@ async function writeUpdatedSetup(
   return next;
 }
 
-async function withSetupLock<T>(runtimeDirectory: string, run: () => Promise<T>): Promise<T> {
+export async function withProgramJourneyLock<T>(
+  runtimeDirectory: string,
+  run: () => Promise<T>,
+): Promise<T> {
   await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
   const databasePath = join(runtimeDirectory, RUNTIME_LOCK_DATABASE);
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -1014,6 +1255,9 @@ async function persistJourneyConfirmation(
     schemaVersion: "stella-fitness/program-journey-confirmation/v0.1",
     confirmationId: stableJourneyConfirmationId(input.kind, input.source),
     kind: input.kind,
+    ...(input.checkpointWeek === undefined
+      ? {}
+      : { checkpointWeek: input.checkpointWeek }),
     candidate: input.candidate,
     fields: input.fields,
     source: input.source,
@@ -1062,6 +1306,9 @@ async function persistJourneyConfirmation(
   return {
     status: "confirmation" as const,
     kind: confirmation.kind,
+    ...(confirmation.checkpointWeek === undefined
+      ? {}
+      : { checkpointWeek: confirmation.checkpointWeek }),
     confirmationId: confirmation.confirmationId,
     fields: confirmation.fields,
   };
@@ -1107,7 +1354,12 @@ function parseJourneyConfirmation(source: string): PendingJourneyConfirmation {
     !isRecord(value) ||
     value.schemaVersion !== "stella-fitness/program-journey-confirmation/v0.1" ||
     !isUuid(value.confirmationId) ||
-    (value.kind !== "baseline-body-weight" && value.kind !== "course-start-12rm") ||
+    (value.kind !== "baseline-body-weight" &&
+      value.kind !== "checkpoint-body-weight" &&
+      value.kind !== "course-start-12rm") ||
+    (value.kind === "checkpoint-body-weight"
+      ? ![4, 8, 12].includes(Number(value.checkpointWeek))
+      : value.checkpointWeek !== undefined) ||
     !isRecord(value.candidate) ||
     !Object.values(value.candidate).every((entry) =>
       typeof entry === "string" ||
@@ -1313,6 +1565,17 @@ async function resolvedJourneyConfirmation(
     return {
       status: "recorded" as const,
       kind: pending.kind,
+      observation: await readBodyWeightObservation(
+        personalDataDirectory,
+        resolution.observationId,
+      ),
+    };
+  }
+  if (pending.kind === "checkpoint-body-weight") {
+    return {
+      status: "recorded" as const,
+      kind: pending.kind,
+      checkpointWeek: pending.checkpointWeek!,
       observation: await readBodyWeightObservation(
         personalDataDirectory,
         resolution.observationId,
@@ -1671,6 +1934,26 @@ async function checkpointGateDate(
     .slice(0, 10);
 }
 
+async function assertCheckpointOccurrence(
+  personalDataDirectory: string,
+  checkpointWeek: 4 | 8 | 12,
+  occurredAt: string,
+): Promise<void> {
+  const active = await readActiveProgramIfPresent({ personalDataDirectory });
+  if (active === undefined) {
+    throw new Error("Checkpoint body weight requires an Active Program State");
+  }
+  const start = new Date(`${active.state.cycle.startDate}T00:00:00.000Z`).getTime();
+  const occurrence = new Date(occurredAt).getTime();
+  const lower = start + (checkpointWeek - 1) * 604_800_000;
+  const upper = checkpointWeek === 12
+    ? Number.POSITIVE_INFINITY
+    : start + (checkpointWeek + 1) * 604_800_000;
+  if (occurrence < lower || occurrence >= upper) {
+    throw new Error(`Body-weight Observation does not belong to the Week ${checkpointWeek} checkpoint`);
+  }
+}
+
 function requiredPrerequisiteId(value: string): RequiredPrerequisiteId {
   if (!REQUIRED_PREREQUISITES.includes(value as RequiredPrerequisiteId)) {
     throw new Error(`Unknown Program prerequisite: ${value}`);
@@ -1701,11 +1984,11 @@ function isCanonicalTimestamp(value: string): boolean {
 }
 
 function toKg(observation: BodyWeightObservation): number {
-  return round(
-    observation.value.unit === "kg"
-      ? observation.value.amount
-      : observation.value.amount * 0.45359237,
-  );
+  return toKgValue(observation.value.amount, observation.value.unit);
+}
+
+function toKgValue(amount: number, unit: BodyWeightUnit): number {
+  return round(unit === "kg" ? amount : amount * 0.45359237);
 }
 
 function weightChange(from: number | undefined, to: number): WeightChange {

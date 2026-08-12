@@ -699,6 +699,7 @@ describe("scenario-level Plugin harness", () => {
       cycle: { startDate: "2026-08-10" },
       symbolicLoadBindings: {},
       assistanceBindings: {},
+      phaseCheckpointObservationIds: {},
       provenance: {
         kind: "program-selection-confirmation",
         selectionId: interruptedSetup.id,
