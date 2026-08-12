@@ -5,9 +5,9 @@
 ```text
 安装并启用 Plugin
 → 配置 Personal Data Directory
-→ 检查目录与 OpenClaw media/model 权限
+→ 独立检查 Personal Data Directory、conversation、media 与 model 权限
 → 自动载入卓叔 12 周 Built-in Program 并绑定当前 conversation
-→ 逐项确认可拆卸哑铃、引体向上杆和打印材料
+→ 逐项确认可拆卸哑铃、引体向上杆、打印材料和训练记录协议
 → 记录 baseline 体重
 → 分别确认高脚杯深蹲、哑铃卧推、哑铃硬拉初始 12RM
 → 确认星期一 cycle start 并建立 Program State
@@ -15,6 +15,7 @@
 ```
 
 配置不完整时不得接收或保存个人输入，也不得回退到 Runtime Directory。
+Technical Readiness 与 Program Journey Status 分开报告；每次 prerequisite acknowledgement 都在 Personal Data Directory 保存确认时间、provenance 和稳定幂等键。
 
 ## 2. 训练日
 

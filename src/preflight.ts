@@ -47,6 +47,23 @@ export type ReadinessReason = {
 export type ConfigurationPreflightResult = {
   readiness: Readiness;
   reasons: ReadinessReason[];
+  capabilities?: TechnicalReadinessCapabilities;
+};
+
+export type TechnicalReadinessCapability = {
+  readonly status: "ready" | "blocked" | "limited" | "setup-required";
+  readonly message: string;
+};
+
+export type TechnicalReadinessCapabilities = {
+  readonly personalDataDirectory: TechnicalReadinessCapability;
+  readonly conversation: TechnicalReadinessCapability;
+  readonly media: TechnicalReadinessCapability;
+  readonly modelPermission: TechnicalReadinessCapability;
+};
+
+export type TechnicalReadiness = ConfigurationPreflightResult & {
+  readonly capabilities: TechnicalReadinessCapabilities;
 };
 
 export type ExtractionPermission = "unconfigured" | "allowed" | "denied";
@@ -57,7 +74,7 @@ export function runConfigurationPreflight(options: {
   conversationAccess: boolean;
   structuredMedia: boolean;
   extraction: ExtractionPermission;
-}): ConfigurationPreflightResult {
+}): TechnicalReadiness {
   const reasons: ReadinessReason[] = [];
   const personalDataDirectory = validatePersonalDataDirectory(
     options.personalDataDirectory,
@@ -101,10 +118,12 @@ export function runConfigurationPreflight(options: {
   const blockingReasons = reasons.filter(
     ({ code }) => code !== "STRUCTURED_MEDIA_REQUIRED",
   );
+  const capabilities = technicalReadinessCapabilities(options, reasons);
   if (blockingReasons.length > 0) {
     return {
       readiness: "BLOCKED_CONFIGURATION",
       reasons,
+      capabilities,
     };
   }
 
@@ -118,6 +137,7 @@ export function runConfigurationPreflight(options: {
           message: "Configure an allowlisted extraction provider and model",
         },
       ],
+      capabilities,
     };
   }
 
@@ -125,10 +145,66 @@ export function runConfigurationPreflight(options: {
     return {
       readiness: "READY_WITH_LIMITED_CAPABILITIES",
       reasons,
+      capabilities,
     };
   }
 
-  return { readiness: "READY", reasons: [] };
+  return { readiness: "READY", reasons: [], capabilities };
+}
+
+function technicalReadinessCapabilities(
+  options: {
+    readonly conversationAccess: boolean;
+    readonly structuredMedia: boolean;
+    readonly extraction: ExtractionPermission;
+  },
+  reasons: readonly ReadinessReason[],
+): TechnicalReadinessCapabilities {
+  const personalDataReason = reasons.find(({ code }) =>
+    code.startsWith("PERSONAL_DATA_DIRECTORY_") ||
+    code === "DATA_DIRECTORIES_OVERLAP" ||
+    code === "RUNTIME_DIRECTORY_UNAVAILABLE"
+  );
+  return {
+    personalDataDirectory: personalDataReason === undefined
+      ? {
+          status: "ready",
+          message: "Personal Data Directory is readable and writable",
+        }
+      : { status: "blocked", message: personalDataReason.message },
+    conversation: options.conversationAccess
+      ? {
+          status: "ready",
+          message: "Plugin conversation hook access is enabled",
+        }
+      : {
+          status: "blocked",
+          message: "Enable Plugin conversation hook access",
+        },
+    media: options.structuredMedia
+      ? {
+          status: "ready",
+          message: "OpenClaw structured media extraction is available",
+        }
+      : {
+          status: "limited",
+          message: "Enable OpenClaw structured media extraction",
+        },
+    modelPermission: options.extraction === "allowed"
+      ? {
+          status: "ready",
+          message: "Extraction provider and model are allowlisted",
+        }
+      : options.extraction === "unconfigured"
+        ? {
+            status: "setup-required",
+            message: "Configure an allowlisted extraction provider and model",
+          }
+        : {
+            status: "blocked",
+            message: "Allowlist the configured extraction provider and model",
+          },
+  };
 }
 
 function validatePersonalDataDirectory(

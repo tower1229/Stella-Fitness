@@ -20,6 +20,18 @@ _Avoid_: 专业审核计划、监督策略
 用户当前周期、阶段、周次、训练日及每个动作的符号重量绑定等确定性状态。
 _Avoid_: Training Progress、训练表现诊断
 
+**Technical Readiness**:
+Plugin 对 Personal Data Directory、conversation access、structured media 和 extraction model permission 的独立技术检查结果。它不包含用户的训练前准备进度。
+_Avoid_: Program Journey Status、训练适用性检查
+
+**Program Journey Status**:
+由 Personal Data Directory 中的 Program Setup、Observation Records 和 Program State 重建的当前开课/阶段状态，只返回一个明确下一步。它与 Technical Readiness 独立。
+_Avoid_: Technical Readiness、后台监督状态
+
+**Prerequisite Acknowledgement**:
+用户对来源计划所需器材、打印材料或训练记录协议的逐项确认，包含时间、provenance 和稳定幂等键，保存在 Personal Data Directory。它不是健康筛查或训练适用性判断。
+_Avoid_: 安全批准、健康档案
+
 **Runtime Directory**:
 由 Plugin 自行创建和演进的运行目录，可保存可重建的游标、锁、缓存、任务状态和索引，但不是用户记录的 canonical store。
 _Avoid_: Personal Data Directory、训练档案

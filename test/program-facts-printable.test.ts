@@ -194,6 +194,7 @@ async function activeHarness() {
     "adjustable-dumbbells",
     "pull-up-bar",
     "printed-workout-log",
+    "recording-protocol",
   ].entries()) {
     await harness.acknowledgePrerequisite({
       prerequisiteId,

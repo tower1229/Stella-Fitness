@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
   mkdir,
@@ -34,6 +34,7 @@ const REQUIRED_PREREQUISITES = [
   "adjustable-dumbbells",
   "pull-up-bar",
   "printed-workout-log",
+  "recording-protocol",
 ] as const;
 const INITIAL_12RM_EXERCISES = [
   "goblet-squat",
@@ -73,6 +74,7 @@ type PrerequisiteAcknowledgement = {
   readonly prerequisiteId: RequiredPrerequisiteId;
   readonly acknowledgedAt: string;
   readonly source: ObservationSource;
+  readonly idempotencyKey?: string;
 };
 
 type ProgramSetup = {
@@ -244,13 +246,39 @@ export function createProgramJourney(options: {
       await ensureSetup(personalDataDirectory);
       await updateSetup(personalDataDirectory, runtimeDirectory, (setup) => {
         const existing = setup.prerequisiteAcknowledgements[prerequisiteId];
+        const idempotencyKey = prerequisiteIdempotencyKey(
+          prerequisiteId,
+          input.source,
+        );
+        const reusedBy = Object.values(setup.prerequisiteAcknowledgements)
+          .find((candidate) =>
+            candidate !== undefined &&
+            candidate.prerequisiteId !== prerequisiteId &&
+            (candidate.idempotencyKey ?? prerequisiteIdempotencyKey(
+              candidate.prerequisiteId,
+              candidate.source,
+            )) === idempotencyKey,
+          );
+        if (reusedBy !== undefined) {
+          throw new Error(
+            `Prerequisite idempotency key was reused for another prerequisite: ${reusedBy.prerequisiteId}`,
+          );
+        }
         const acknowledgement: PrerequisiteAcknowledgement = {
           prerequisiteId,
           acknowledgedAt: input.acknowledgedAt,
           source: input.source,
+          idempotencyKey,
         };
-        if (existing !== undefined && JSON.stringify(existing) !== JSON.stringify(acknowledgement)) {
-          throw new Error(`Prerequisite ${prerequisiteId} was already acknowledged with different provenance`);
+        if (existing !== undefined) {
+          const existingIdempotencyKey = existing.idempotencyKey ??
+            prerequisiteIdempotencyKey(prerequisiteId, existing.source);
+          if (existingIdempotencyKey === acknowledgement.idempotencyKey) {
+            return setup;
+          }
+          if (JSON.stringify(existing) !== JSON.stringify(acknowledgement)) {
+            throw new Error(`Prerequisite ${prerequisiteId} was already acknowledged with different provenance`);
+          }
         }
         return {
           ...setup,
@@ -740,12 +768,31 @@ function validPrerequisiteAcknowledgements(value: Record<string, unknown>): bool
   if (!hasOnlyKeys(value, REQUIRED_PREREQUISITES)) return false;
   return Object.entries(value).every(([key, acknowledgement]) =>
     isRecord(acknowledgement) &&
-    hasOnlyKeys(acknowledgement, ["prerequisiteId", "acknowledgedAt", "source"]) &&
+    hasOnlyKeys(acknowledgement, [
+      "prerequisiteId",
+      "acknowledgedAt",
+      "source",
+      "idempotencyKey",
+    ]) &&
     acknowledgement.prerequisiteId === key &&
     typeof acknowledgement.acknowledgedAt === "string" &&
     isCanonicalTimestamp(acknowledgement.acknowledgedAt) &&
+    (acknowledgement.idempotencyKey === undefined ||
+      /^sha256:[0-9a-f]{64}$/u.test(String(acknowledgement.idempotencyKey))) &&
     isObservationSource(acknowledgement.source),
   );
+}
+
+function prerequisiteIdempotencyKey(
+  prerequisiteId: RequiredPrerequisiteId,
+  source: ObservationSource,
+): string {
+  const identity = source.messageId !== undefined
+    ? ["message", source.channel ?? "", source.messageId]
+    : source.runId !== undefined
+      ? ["run", source.channel ?? "", source.runId]
+      : ["fallback", prerequisiteId, source.channel ?? "", source.text];
+  return `sha256:${createHash("sha256").update(identity.join("\u0000")).digest("hex")}`;
 }
 
 function validObservationReferences(

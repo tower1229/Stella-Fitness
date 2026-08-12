@@ -16,6 +16,8 @@
 | 体重只作事实记录 | Observation schema, ADR-024 | no-evaluation case |
 | 默认计划自动载入 | Built-in Program loader | clean-install channel journey |
 | Program Journey 唯一下一步 | Program Journey Interface | transition/restart tests |
+| Technical Readiness 四项独立报告 | configuration preflight | status + clean-install channel journey |
+| prerequisite 时间、provenance 与幂等键 | Program Setup | channel replay + restart tests |
 | baseline 与三个独立 `A` 激活门禁 | Program Setup + course-start 12RM Observation | activation happy/rejection cases |
 | 星期一 cycle start | Program State | activation rejection case |
 | today/next 确定性事实问答 | Program Facts Interface | channel + scenario facts cases |

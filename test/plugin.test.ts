@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 const READY_FOR_SETUP_STATUS =
-  "Stella Fitness: READY_FOR_SETUP\ncontract: openclaw>=2026.6.34\nscope: recording-only\nreason: EXTRACTION_MODEL_REQUIRED: Configure an allowlisted extraction provider and model";
+  "Stella Fitness: READY_FOR_SETUP\ncontract: openclaw>=2026.6.34\nscope: recording-only\ntechnical-readiness: personal-data-directory: ready - Personal Data Directory is readable and writable\ntechnical-readiness: conversation: ready - Plugin conversation hook access is enabled\ntechnical-readiness: media: ready - OpenClaw structured media extraction is available\ntechnical-readiness: model-permission: setup-required - Configure an allowlisted extraction provider and model\nreason: EXTRACTION_MODEL_REQUIRED: Configure an allowlisted extraction provider and model";
 
 describe("Plugin registration", () => {
   it("registers status CLI metadata without loading full runtime contracts", () => {
@@ -385,6 +385,66 @@ describe("Plugin registration", () => {
       handled: true,
       reply: { text: expect.stringContaining("pull-up-bar") },
     });
+  });
+
+  it("advances prerequisite acknowledgements from controlled natural language in a bound conversation", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: directories,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const inbound = hooks.get("inbound_claim")!;
+    const inputs = [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+    ];
+
+    for (const [index, content] of inputs.entries()) {
+      await expect(inbound(
+        {
+          content,
+          channel: "test-channel",
+          messageId: `natural-prerequisite-${index}`,
+          timestamp: `2026-08-12T0${index}:00:00.000Z`,
+          isGroup: false,
+        },
+        { pluginBinding: { pluginId: "stella-fitness" } },
+      )).resolves.toMatchObject({ handled: true });
+    }
+
+    const setup = JSON.parse(readFileSync(
+      join(directories.personalDataDirectory, "program", "setup.json"),
+      "utf8",
+    ));
+    expect(setup.prerequisiteAcknowledgements).toMatchObject({
+      "adjustable-dumbbells": {
+        acknowledgedAt: "2026-08-12T00:00:00.000Z",
+        idempotencyKey: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+        source: { channel: "test-channel", messageId: "natural-prerequisite-0" },
+      },
+      "pull-up-bar": expect.any(Object),
+      "printed-workout-log": expect.any(Object),
+      "recording-protocol": expect.any(Object),
+    });
+    await expect(inbound(
+      {
+        content: "我已了解训练记录协议",
+        channel: "test-channel",
+        messageId: "natural-prerequisite-3",
+        timestamp: "2026-08-12T04:00:00.000Z",
+        isGroup: false,
+      },
+      { pluginBinding: { pluginId: "stella-fitness" } },
+    )).resolves.toMatchObject({ handled: true });
   });
 
   it("connects configured Plugin runtime to OpenClaw structured extraction", async () => {
@@ -810,7 +870,7 @@ describe("Plugin registration", () => {
     openclawConfig.plugins.entries["stella-fitness"]!.config =
       correctedPluginConfig;
 
-    expect(runtime?.preflight()).toEqual({ readiness: "READY", reasons: [] });
+    expect(runtime?.preflight()).toMatchObject({ readiness: "READY", reasons: [] });
     await expect(
       runtime?.ingestWorkoutLog({
         runId: "plugin-corrected",

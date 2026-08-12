@@ -41,6 +41,12 @@ describe("ProgramSpec validator", () => {
         required: true,
         label: "打印训练日志",
       },
+      {
+        id: "recording-protocol",
+        kind: "recording-protocol",
+        required: true,
+        label: "训练记录协议",
+      },
     ]);
     expect(program.weeks.flatMap(({ sessions }) => sessions)).toHaveLength(44);
     expect(

@@ -45,6 +45,7 @@ describe("Program Journey", () => {
         "adjustable-dumbbells",
         "pull-up-bar",
         "printed-workout-log",
+        "recording-protocol",
       ],
     });
 
@@ -52,6 +53,7 @@ describe("Program Journey", () => {
       "adjustable-dumbbells",
       "pull-up-bar",
       "printed-workout-log",
+      "recording-protocol",
     ].entries()) {
       await harness.acknowledgePrerequisite({
         prerequisiteId,
@@ -281,6 +283,29 @@ describe("Program Journey", () => {
     ).toHaveLength(3);
   });
 
+  it("fails closed when one prerequisite message identity is reused for another fact", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-prerequisite-identity-"));
+    temporaryRoots.push(root);
+    const harness = journeyHarness(root);
+    const source = {
+      kind: "user-text" as const,
+      text: "我已准备好可拆卸哑铃",
+      channel: "test",
+      messageId: "same-message",
+    };
+    await harness.acknowledgePrerequisite({
+      prerequisiteId: "adjustable-dumbbells",
+      acknowledgedAt: "2026-08-12T00:00:00.000Z",
+      source,
+    });
+
+    await expect(harness.acknowledgePrerequisite({
+      prerequisiteId: "pull-up-bar",
+      acknowledgedAt: "2026-08-12T01:00:00.000Z",
+      source: { ...source, text: "我已准备好引体向上杆" },
+    })).rejects.toThrow("idempotency key was reused for another prerequisite");
+  });
+
   it("fails closed before writes, enforces step order and accepts limited readiness with a Runtime lock", async () => {
     const root = mkdtempSync(join(tmpdir(), "stella-journey-boundaries-"));
     temporaryRoots.push(root);
@@ -340,6 +365,7 @@ describe("Program Journey", () => {
       "adjustable-dumbbells",
       "pull-up-bar",
       "printed-workout-log",
+      "recording-protocol",
     ].entries()) {
       await harness.acknowledgePrerequisite({
         prerequisiteId,
@@ -453,6 +479,7 @@ async function advanceToInitial12RM(
     "adjustable-dumbbells",
     "pull-up-bar",
     "printed-workout-log",
+    "recording-protocol",
   ].entries()) {
     await harness.acknowledgePrerequisite({
       prerequisiteId,

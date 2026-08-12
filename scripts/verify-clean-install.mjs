@@ -17,6 +17,8 @@ const commandEnvironment = {
   OPENCLAW_CONFIG_PATH: join(stateDir, "openclaw.json"),
   npm_config_cache: join(temporaryRoot, "npm-cache"),
 };
+const progress = (message) =>
+  process.stderr.write(`[clean-install] ${message}\n`);
 
 function run(command, args) {
   return execFileSync(command, args, {
@@ -28,19 +30,24 @@ function run(command, args) {
 }
 
 try {
-  const tarball = run("npm", [
+  progress("packing workspace");
+  const [pack] = JSON.parse(run("npm", [
     "pack",
+    "--json",
     "--pack-destination",
     temporaryRoot,
     "--cache",
     commandEnvironment.npm_config_cache,
-  ]);
+  ]));
+  const tarball = pack.filename;
+  progress("workspace packed");
   run(openclaw, [
     "plugins",
     "install",
     `npm-pack:${join(temporaryRoot, tarball)}`,
     "--force",
   ]);
+  progress("package installed");
   run(openclaw, [
     "config",
     "set",
@@ -64,8 +71,9 @@ try {
     ]),
   );
   const status = run(openclaw, ["stella-fitness", "status"]);
+  progress("runtime inspection complete");
   const expectedStatus =
-    "Stella Fitness: BLOCKED_CONFIGURATION\ncontract: openclaw>=2026.6.34\nscope: recording-only\nreason: PERSONAL_DATA_DIRECTORY_REQUIRED: Configure an absolute Personal Data Directory";
+    "Stella Fitness: BLOCKED_CONFIGURATION\ncontract: openclaw>=2026.6.34\nscope: recording-only\ntechnical-readiness: personal-data-directory: blocked - Configure an absolute Personal Data Directory\ntechnical-readiness: conversation: ready - Plugin conversation hook access is enabled\ntechnical-readiness: media: ready - OpenClaw structured media extraction is available\ntechnical-readiness: model-permission: setup-required - Configure an allowlisted extraction provider and model\nreason: PERSONAL_DATA_DIRECTORY_REQUIRED: Configure an absolute Personal Data Directory";
 
   if (inspection.plugin.status !== "loaded") {
     throw new Error(`Plugin did not load: ${inspection.plugin.status}`);
@@ -105,6 +113,7 @@ try {
     throw new Error(`Unexpected status response: ${JSON.stringify(status)}`);
   }
   const recording = await verifyInstalledRecordingFlow();
+  progress("installed scenario recording complete");
   const channel = await verifyTelegramChannelFlow({
     workspace,
     temporaryRoot,
@@ -113,6 +122,7 @@ try {
     commandEnvironment,
     run,
   });
+  progress("Telegram channel journey complete");
 
   process.stdout.write(
     `${JSON.stringify({ installed: true, loaded: true, hooks: 3, commands, diagnostics: 0, recording, channel, status })}\n`,

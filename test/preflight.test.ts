@@ -30,7 +30,7 @@ describe("configuration preflight", () => {
       extraction: "allowed",
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       readiness: "BLOCKED_CONFIGURATION",
       reasons: [
         {
@@ -52,7 +52,7 @@ describe("configuration preflight", () => {
         structuredMedia: true,
         extraction: "unconfigured",
       }),
-    ).toEqual({
+    ).toMatchObject({
       readiness: "READY_FOR_SETUP",
       reasons: [
         {
@@ -66,15 +66,24 @@ describe("configuration preflight", () => {
   it("accepts an absolute readable and writable Personal Data Directory", () => {
     const { personalDataDirectory, runtimeDirectory } = isolatedDirectories();
 
-    expect(
-      runConfigurationPreflight({
+    const result = runConfigurationPreflight({
         personalDataDirectory,
         runtimeDirectory,
         conversationAccess: true,
         structuredMedia: true,
         extraction: "allowed",
-      }),
-    ).toEqual({ readiness: "READY", reasons: [] });
+      });
+
+    expect(result).toMatchObject({
+      readiness: "READY",
+      reasons: [],
+      capabilities: {
+        personalDataDirectory: { status: "ready" },
+        conversation: { status: "ready" },
+        media: { status: "ready" },
+        modelPermission: { status: "ready" },
+      },
+    });
     expect(readdirSync(personalDataDirectory)).toEqual([]);
   });
 
@@ -133,7 +142,7 @@ describe("configuration preflight", () => {
       extraction: "allowed",
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       readiness: "BLOCKED_CONFIGURATION",
       reasons: [
         {
@@ -181,7 +190,7 @@ describe("configuration preflight", () => {
         structuredMedia: false,
         extraction: "allowed",
       }),
-    ).toEqual({
+    ).toMatchObject({
       readiness: "READY_WITH_LIMITED_CAPABILITIES",
       reasons: [
         {

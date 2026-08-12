@@ -14,7 +14,7 @@ export type ProgramWeek = {
 
 export type ProgramPrerequisite = {
   readonly id: string;
-  readonly kind: "equipment" | "printed-material";
+  readonly kind: "equipment" | "printed-material" | "recording-protocol";
   readonly required: true;
   readonly label: string;
 };

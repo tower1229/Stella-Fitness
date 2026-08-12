@@ -52,9 +52,13 @@ function validatePrerequisites(input: unknown): readonly ProgramPrerequisite[] {
   return array(input, "prerequisites").map((value, index) => {
     const prerequisite = record(value, `prerequisites[${index}]`);
     const kind = text(prerequisite.kind, `prerequisites[${index}].kind`);
-    if (kind !== "equipment" && kind !== "printed-material") {
+    if (
+      kind !== "equipment" &&
+      kind !== "printed-material" &&
+      kind !== "recording-protocol"
+    ) {
       throw new InvalidProgramSpecError([
-        `prerequisites[${index}].kind must be equipment or printed-material`,
+        `prerequisites[${index}].kind must be equipment, printed-material or recording-protocol`,
       ]);
     }
     if (prerequisite.required !== true) {
@@ -64,7 +68,7 @@ function validatePrerequisites(input: unknown): readonly ProgramPrerequisite[] {
     }
     return {
       id: text(prerequisite.id, `prerequisites[${index}].id`),
-      kind,
+      kind: kind as ProgramPrerequisite["kind"],
       required: true,
       label: text(prerequisite.label, `prerequisites[${index}].label`),
     };

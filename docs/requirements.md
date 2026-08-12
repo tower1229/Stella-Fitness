@@ -44,7 +44,7 @@ v1 不提供：
 
 ```text
 安装 → 自动载入卓叔 12 周 Built-in Program
-→ 技术 preflight → 器材/打印材料确认 → baseline 体重
+→ 技术 preflight → 器材/打印材料/训练记录协议逐项确认 → baseline 体重
 → 三主项独立初始 12RM → 星期一激活 → Planned Session / 可打印日志
 → 纸笔填写 Actual → 训练后拍照
 → 图像结构化 → 必要字段确认 → Observation Record

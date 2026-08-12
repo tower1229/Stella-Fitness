@@ -22,6 +22,7 @@ import {
   createStellaFitnessRuntime,
   type StellaFitnessRuntime,
 } from "./plugin-runtime.js";
+import type { RequiredPrerequisiteId } from "./program/journey.js";
 import { createStatusResponse } from "./status.js";
 
 const STATUS_INPUT = "stella status";
@@ -121,7 +122,7 @@ export function registerStellaFitnessPlugin(
       const prerequisiteId = context.args?.trim();
       if (prerequisiteId === undefined || prerequisiteId.length === 0) {
         return {
-          text: "Usage: /stella-prerequisite <adjustable-dumbbells|pull-up-bar|printed-workout-log>",
+          text: "Usage: /stella-prerequisite <adjustable-dumbbells|pull-up-bar|printed-workout-log|recording-protocol>",
         };
       }
       const status = await stellaRuntime.acknowledgePrerequisite({
@@ -292,6 +293,20 @@ export function registerStellaFitnessPlugin(
       if (context?.pluginBinding?.pluginId === PLUGIN_ID) {
         const boundText = [event.content, event.body, event.bodyForAgent]
           .find((value): value is string => typeof value === "string") ?? "";
+        const prerequisiteId = parseNaturalPrerequisiteAcknowledgement(boundText);
+        if (prerequisiteId !== undefined) {
+          const { receivedAt: acknowledgedAt, source } = inboundSource(event);
+          const status = await stellaRuntime.acknowledgePrerequisite({
+            prerequisiteId,
+            acknowledgedAt,
+            source: {
+              kind: "user-text",
+              text: boundText,
+              ...source,
+            },
+          });
+          return { handled: true, reply: { text: formatJourneyStatus(status) } };
+        }
         const factKind = /(?:今天练什么|today(?:'s)?\s+(?:workout|session))/iu.test(boundText)
           ? "today"
           : /(?:下次练什么|next\s+(?:workout|session))/iu.test(boundText)
@@ -511,19 +526,44 @@ function parseBoundStellaCommand(
       };
 }
 
+function parseNaturalPrerequisiteAcknowledgement(
+  text: string,
+): RequiredPrerequisiteId | undefined {
+  const patterns = [
+    ["adjustable-dumbbells", /^\s*我(?:已|已经)?(?:准备好|备好|有)(?:了)?可拆卸哑铃[。.!]?\s*$/u],
+    ["pull-up-bar", /^\s*我(?:已|已经)?(?:准备好|备好|有)(?:了)?引体向上杆[。.!]?\s*$/u],
+    ["printed-workout-log", /^\s*我(?:已|已经)(?:打印|准备好)(?:了)?(?:打印)?训练日志[。.!]?\s*$/u],
+    ["recording-protocol", /^\s*我(?:已|已经)(?:了解|确认)(?:了)?训练记录协议[。.!]?\s*$/u],
+  ] as const;
+  return patterns.find(([, pattern]) => pattern.test(text))?.[0];
+}
+
+function inboundSource(event: PluginHookInboundClaimEvent): {
+  readonly receivedAt: string;
+  readonly source: {
+    readonly channel: string;
+    readonly messageId?: string;
+    readonly runId?: string;
+  };
+} {
+  return {
+    receivedAt: event.timestamp === undefined
+      ? new Date().toISOString()
+      : new Date(event.timestamp).toISOString(),
+    source: {
+      channel: event.channel,
+      ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
+      ...(event.runId === undefined ? {} : { runId: event.runId }),
+    },
+  };
+}
+
 async function handleBoundStellaCommand(
   runtime: StellaFitnessRuntime,
   event: PluginHookInboundClaimEvent,
   command: BoundStellaCommand,
 ) {
-  const receivedAt = event.timestamp === undefined
-    ? new Date().toISOString()
-    : new Date(event.timestamp).toISOString();
-  const source = {
-    channel: event.channel,
-    ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
-    ...(event.runId === undefined ? {} : { runId: event.runId }),
-  };
+  const { receivedAt, source } = inboundSource(event);
   if (command.name === "start" || command.name === "status") {
     return {
       handled: true,

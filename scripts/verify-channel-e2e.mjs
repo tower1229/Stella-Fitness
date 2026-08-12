@@ -20,6 +20,9 @@ export async function verifyTelegramChannelFlow(options) {
     "test/fixtures/openclaw-e2e-provider",
   );
   let gateway;
+  let gatewayStarts = 0;
+  const progress = (message) =>
+    process.stderr.write(`[channel-e2e] ${message}\n`);
   try {
     options.run(options.openclaw, [
       "plugins",
@@ -34,7 +37,21 @@ export async function verifyTelegramChannelFlow(options) {
     });
 
     gateway = startGateway(options, gatewayPort);
+    gatewayStarts += 1;
     await telegram.waitForCall(({ method }) => method === "getme");
+    progress("gateway ready");
+
+    const restartGateway = async (checkpoint) => {
+      progress(`restarting after ${checkpoint}`);
+      await stopGateway(gateway);
+      gateway = startGateway(options, gatewayPort);
+      gatewayStarts += 1;
+      await telegram.waitForCall(
+        ({ method, sequence }) =>
+          method === "getme" && sequence >= gatewayStarts,
+      );
+      progress(`recovered after ${checkpoint}`);
+    };
 
     telegram.pushText("/stella-start");
     const approval = await telegram.waitForMessage((message) =>
@@ -43,15 +60,17 @@ export async function verifyTelegramChannelFlow(options) {
     const approvalData = await telegram.waitForCallbackData("Always allow");
     telegram.pushCallback(approvalData, approval.platformMessage);
     await telegram.waitForCall(({ method }) => method === "answercallbackquery");
+    await restartGateway("conversation binding approval");
 
     const prerequisites = [
-      "adjustable-dumbbells",
-      "pull-up-bar",
-      "printed-workout-log",
+      ["adjustable-dumbbells", "我已准备好可拆卸哑铃"],
+      ["pull-up-bar", "我已准备好引体向上杆"],
+      ["printed-workout-log", "我已打印训练日志"],
+      ["recording-protocol", "我已了解训练记录协议"],
     ];
-    for (const [index, prerequisite] of prerequisites.entries()) {
-      telegram.pushText(`/stella-prerequisite ${prerequisite}`);
-      const remaining = prerequisites.slice(index + 1);
+    for (const [index, [, acknowledgement]] of prerequisites.entries()) {
+      telegram.pushText(acknowledgement, 2_000 + index);
+      const remaining = prerequisites.slice(index + 1).map(([id]) => id);
       try {
         await telegram.waitForText((text) =>
           text.includes(`Built-in Program: zhuoshu-12-week@0.2.0`) &&
@@ -61,14 +80,45 @@ export async function verifyTelegramChannelFlow(options) {
         );
       } catch (error) {
         throw new Error(
-          `${String(error)}\nPrerequisite: ${prerequisite}\nTelegram: ${JSON.stringify(telegram.snapshot())}\nGateway tail: ${gateway.logs().slice(-12_000)}`,
+          `${String(error)}\nPrerequisite: ${acknowledgement}\nTelegram: ${JSON.stringify(telegram.snapshot())}\nGateway tail: ${gateway.logs().slice(-12_000)}`,
         );
       }
+      await restartGateway(acknowledgement);
+    }
+    const setupPath = join(personalDataDirectory, "program", "setup.json");
+    const setupAfterPrerequisites = JSON.parse(readFileSync(setupPath, "utf8"));
+    const acknowledgements = Object.values(
+      setupAfterPrerequisites.prerequisiteAcknowledgements,
+    );
+    if (
+      acknowledgements.length !== 4 ||
+      acknowledgements.some((acknowledgement) =>
+        typeof acknowledgement.acknowledgedAt !== "string" ||
+        acknowledgement.source?.channel !== "telegram" ||
+        typeof acknowledgement.source?.messageId !== "string" ||
+        !/^sha256:[0-9a-f]{64}$/u.test(acknowledgement.idempotencyKey)
+      )
+    ) {
+      throw new Error(
+        `Prerequisite acknowledgements lack persisted time, provenance or idempotency: ${JSON.stringify(acknowledgements)}`,
+      );
+    }
+    telegram.pushText("我已了解训练记录协议", 2_003);
+    await telegram.waitForText((text) =>
+      text.includes("journey: BASELINE_WEIGHT_REQUIRED"),
+    );
+    const setupAfterReplay = JSON.parse(readFileSync(setupPath, "utf8"));
+    if (
+      JSON.stringify(setupAfterReplay.prerequisiteAcknowledgements) !==
+        JSON.stringify(setupAfterPrerequisites.prerequisiteAcknowledgements)
+    ) {
+      throw new Error("Duplicate prerequisite message changed persisted facts");
     }
     telegram.pushText("/stella-weight 2026-08-10T03:00:00Z 68.4 kg");
     await telegram.waitForText((text) =>
       text.startsWith("baseline body weight recorded: 68.4 kg"),
     );
+    await restartGateway("baseline body weight");
     for (const [exercise, value] of [
       ["goblet-squat", 32],
       ["dumbbell-bench-press", 24],
@@ -78,11 +128,13 @@ export async function verifyTelegramChannelFlow(options) {
       await telegram.waitForText((text) =>
         text.startsWith(`Initial 12RM recorded: ${exercise} ${value} kg`),
       );
+      await restartGateway(`${exercise} 12RM`);
     }
     telegram.pushText("/stella-activate 2026-08-10");
     await telegram.waitForText((text) =>
       text.startsWith("Program State activated:"),
     );
+    await restartGateway("Program State activation");
     telegram.pushText("/stella-facts today 2026-08-10");
     await telegram.waitForText((text) =>
       text.startsWith("today Planned Session: 2026-08-10"),
@@ -100,11 +152,7 @@ export async function verifyTelegramChannelFlow(options) {
       throw new Error(`Workout confirmation ID was missing: ${pending}`);
     }
 
-    await stopGateway(gateway);
-    gateway = startGateway(options, gatewayPort);
-    await telegram.waitForCall(
-      ({ method, sequence }) => method === "getme" && sequence > 1,
-    );
+    await restartGateway("pending workout-log confirmation");
 
     telegram.pushText(
       `/stella-confirm ${confirmationId} {"exercises[0].load.value":{"kind":"kg","value":20,"unit":"kg","raw":"20"}}`,
@@ -159,13 +207,14 @@ export async function verifyTelegramChannelFlow(options) {
       bindingApproved: true,
       builtInProgram: true,
       prerequisites: true,
+      prerequisiteReplayIdempotent: true,
       baseline: true,
       initial12RM: true,
       activated: true,
       facts: true,
       printablePdf: true,
       imageIngress: true,
-      gatewayRestarted: true,
+      gatewayRestarts: gatewayStarts - 1,
       confirmationRecovered: true,
       observationId,
     };
@@ -366,10 +415,10 @@ async function createFakeTelegramApi() {
   }
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
-    pushText(text) {
+    pushText(text, fixedMessageId) {
       updates.push({
         update_id: updateId++,
-        message: userMessage(inboundMessageId++, { text }),
+        message: userMessage(fixedMessageId ?? inboundMessageId++, { text }),
       });
     },
     pushPhoto(caption) {
