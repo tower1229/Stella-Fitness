@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { createServer as createTcpServer } from "node:net";
@@ -61,6 +62,21 @@ export async function verifyTelegramChannelFlow(options) {
     telegram.pushCallback(approvalData, approval.platformMessage);
     await telegram.waitForCall(({ method }) => method === "answercallbackquery");
     await restartGateway("conversation binding approval");
+
+    telegram.pushText("/stella-print");
+    const workbookCall = await telegram.waitForCall(
+      ({ method }) => method === "senddocument",
+    );
+    if (
+      workbookCall.body.fileName !== "zhuoshu-workout-log.xlsx" ||
+      workbookCall.body.mimeType !== "application/octet-stream" ||
+      workbookCall.body.sha256 !==
+        "a113a16f9844ceb518307369bd45979af3aa703e67da8eb3bbb6b5e991aebcca"
+    ) {
+      throw new Error(
+        `Telegram workbook attachment mismatch: ${JSON.stringify(workbookCall.body)}`,
+      );
+    }
 
     const prerequisites = [
       ["adjustable-dumbbells", "我已准备好可拆卸哑铃"],
@@ -188,9 +204,6 @@ export async function verifyTelegramChannelFlow(options) {
     if (today !== recoveredToday || !activation.includes(today)) {
       throw new Error("Program Facts changed after Gateway restart");
     }
-    telegram.pushText("/stella-print today 2026-08-10");
-    await telegram.waitForCall(({ method }) => method === "senddocument");
-
     telegram.pushPhoto("训练日志");
     const pending = await telegram.waitForText((text) =>
       text.includes("Workout log needs confirmation:"),
@@ -266,7 +279,7 @@ export async function verifyTelegramChannelFlow(options) {
       nextFacts: true,
       scopeRefusal: true,
       factsRecovered: true,
-      printablePdf: true,
+      printableWorkbook: true,
       imageIngress: true,
       gatewayRestarts: gatewayStarts - 1,
       confirmationRecovered: true,
@@ -446,8 +459,8 @@ async function createFakeTelegramApi() {
           document: {
             file_id: "printable-log",
             file_unique_id: "printable-log-unique",
-            file_name: "stella-printable-log.pdf",
-            mime_type: "application/pdf",
+            file_name: "zhuoshu-workout-log.xlsx",
+            mime_type: "application/octet-stream",
           },
         });
         return;
@@ -586,12 +599,44 @@ function telegramBot() {
 async function requestBody(request) {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
-  const source = Buffer.concat(chunks).toString("utf8");
-  if (!source) return {};
-  if (request.headers["content-type"]?.includes("application/json")) {
-    return JSON.parse(source);
+  const bytes = Buffer.concat(chunks);
+  if (bytes.length === 0) return {};
+  const contentType = request.headers["content-type"] ?? "";
+  if (contentType.includes("application/json")) {
+    return JSON.parse(bytes.toString("utf8"));
   }
-  return Object.fromEntries(new URLSearchParams(source));
+  if (contentType.includes("multipart/form-data")) {
+    return multipartFileSummary(bytes, contentType);
+  }
+  return Object.fromEntries(new URLSearchParams(bytes.toString("utf8")));
+}
+
+function multipartFileSummary(bytes, contentType) {
+  const boundary = /boundary="?([^";]+)"?/u.exec(contentType)?.[1];
+  if (boundary === undefined) return { multipart: true, bytes: bytes.length };
+  const separator = Buffer.from(`\r\n--${boundary}`);
+  let cursor = 0;
+  while (cursor < bytes.length) {
+    const headerEnd = bytes.indexOf(Buffer.from("\r\n\r\n"), cursor);
+    if (headerEnd < 0) break;
+    const headers = bytes.subarray(cursor, headerEnd).toString("latin1");
+    const fileNameMatch = /filename=(?:"([^"]+)"|([^;\r\n]+))/iu.exec(headers);
+    const fileName = fileNameMatch?.[1] ?? fileNameMatch?.[2]?.trim();
+    const bodyStart = headerEnd + 4;
+    const bodyEnd = bytes.indexOf(separator, bodyStart);
+    if (bodyEnd < 0) break;
+    if (fileName !== undefined) {
+      const file = bytes.subarray(bodyStart, bodyEnd);
+      return {
+        fileName,
+        mimeType: /content-type:\s*([^\r\n]+)/iu.exec(headers)?.[1],
+        bytes: file.length,
+        sha256: createHash("sha256").update(file).digest("hex"),
+      };
+    }
+    cursor = bodyEnd + separator.length;
+  }
+  return { multipart: true, bytes: bytes.length };
 }
 
 function parsedJson(value) {

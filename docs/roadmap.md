@@ -46,7 +46,7 @@
 ## Phase 4 — Packaging & Release
 
 - clean install 与 packaged Plugin 端到端验收；
-- 排除 raw DOCX/XLSX、用户数据和未授权内容；
+- 排除 raw DOCX、任意非白名单 Office 文件、用户数据和未授权内容；校验内置 XLSX digest；
 - 取得课程派生制品发行授权；
 - 核验 ClawHub owner、package identity 和实时发布权限。
 

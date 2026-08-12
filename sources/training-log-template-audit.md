@@ -5,7 +5,7 @@
 **provenance:** confirmed by user as original-course companion material from the original author or another reliable same-source version  
 **prescription authority:** accepted for source-plan reconciliation  
 **public GitHub repository inclusion:** explicitly approved by user on 2026-08-08  
-**ClawHub/npm/package bundling:** separate release decision, not implied by repository inclusion
+**ClawHub/npm/package bundling:** adopted for the exact workbook bytes, subject to the release authorization gate
 
 ## Repository artifact
 
@@ -89,4 +89,4 @@ These interpretations are recorded in `knowledge/programs/zhuoshu-12-week/open-q
 
 The user has explicitly approved committing this raw XLSX to the public `tower1229/Stella-Fitness` GitHub repository.
 
-This approval resolves **repository archival** only. The v1 distributable includes the derived runtime ProgramSpec, required structured knowledge, generated/blank log template, and rights notices; the raw XLSX remains a repository audit artifact and is not bundled. Release still requires verifiable authorization covering the derived work, modifications, attribution, and actual distribution channels.
+The source workbook is also the v1 built-in printable log. The build copies these exact bytes to the fixed distribution path, and `/stella-print` sends the complete workbook after conversation binding. Package inspection allows only this workbook path and SHA-256 while continuing to reject the raw DOCX and arbitrary Office artifacts. Public release still requires durable, verifiable authorization covering the exact workbook, modifications, attribution, and actual distribution channels.

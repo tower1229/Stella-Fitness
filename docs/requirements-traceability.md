@@ -21,7 +21,7 @@
 | baseline 与三个独立 `A` 激活门禁 | Program Setup + course-start 12RM Observation | activation happy/rejection cases |
 | 星期一 cycle start | Program State | activation rejection case |
 | today/next 确定性事实问答 | Program Facts Interface | channel + scenario facts cases |
-| A4 黑白可打印日志 | Printable Log Interface | PDF render + channel attachment |
+| 完整 12 周可打印日志 | Printable Log Interface | fixed-digest XLSX + channel attachment |
 | Week 4/8/12 体重 checkpoint | Program Journey | phase checkpoint cases |
 | 体重数学方向、无建议 | Weight Facts View, ADR-024 | fixed kg/percent/direction fixtures |
 | 绑定会话拒绝超范围问题 | OpenClaw inbound adapter | bound-conversation refusal case |
@@ -40,7 +40,7 @@
 | 不处理健康风险 | ADR-024 | G-SCOPE-002 |
 | 不保留隐藏监督分支 | ADR-024 | G-SCOPE-004 + code search |
 | 软件与内容权利分离 | ADR-018 | package inspection |
-| raw Office 文件不入包 | ADR-010/011 | artifact exclusion test |
+| 原始 DOCX 与任意非白名单 Office 文件不入包 | ADR-010/011 | exact-path/digest allowlist + artifact exclusion test |
 | Built-in Program 在安装包且授权 fail closed | package/release gate | artifact inspection |
 
 冻结需求变更时必须同步本矩阵、Golden Cases 和适用 ADR。

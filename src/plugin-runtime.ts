@@ -61,8 +61,7 @@ import {
   type ProgramFactsQuery,
 } from "./program/facts.js";
 import {
-  generatePrintableLog,
-  type PrintableLogRange,
+  getPrintableLogWorkbook,
 } from "./reporting/printable-log.js";
 import {
   applyStrengthTestBindings,
@@ -200,10 +199,7 @@ export type StellaFitnessRuntime = {
   >[0]): ReturnType<ReturnType<typeof createProgramJourney>["confirmCandidate"]>;
   activateProgram(cycleStart: string): Promise<ProgramState>;
   programFacts(query: ProgramFactsQuery): ReturnType<typeof queryProgramFacts>;
-  printableLog(input: {
-    readonly range: PrintableLogRange;
-    readonly date: string;
-  }): ReturnType<typeof generatePrintableLog>;
+  printableLog(): ReturnType<typeof getPrintableLogWorkbook>;
   weightFacts(): ReturnType<ReturnType<typeof createProgramJourney>["weightFacts"]>;
 };
 
@@ -400,15 +396,8 @@ export function createStellaFitnessRuntime(options: {
       }
       return result;
     },
-    async printableLog(input) {
-      const status = await journey().status({ date: input.date });
-      if (status.state !== "ACTIVE") {
-        throw new Error(`Printable Log is unavailable in ${status.state}`);
-      }
-      return await generatePrintableLog({
-        personalDataDirectory: requiredPersonalDataDirectory(options),
-        ...input,
-      });
+    async printableLog() {
+      return await getPrintableLogWorkbook();
     },
     weightFacts() {
       return journey().weightFacts();

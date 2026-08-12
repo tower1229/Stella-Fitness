@@ -54,7 +54,7 @@ Recovery session 保持来源计划中的 session identity，但系统不评价�
 
 ## 5. 事实问答与打印
 
-绑定 conversation 支持 today/next Planned Session 事实问答，以及 today/week/phase A4 PDF。普通训练 PDF 预填计划处方并保留 Actual、动作质量和问题备注空白；第 4 周力量测试使用独立布局。无法识别或超出 Program Facts 范围的问题由 Plugin 明确拒绝，不传给通用 Agent 诊断或调整计划。
+绑定 conversation 支持 today/next Planned Session 事实问答，以及直接获取固定 digest 的完整 12 周 XLSX。`/stella-print` 不要求 Program 已激活，不接受 today/week/phase 范围，也不在运行时生成 PDF；用户在工作簿中自行选择需要打印的页面。无法识别或超出 Program Facts 范围的问题由 Plugin 明确拒绝，不传给通用 Agent 诊断或调整计划。
 
 ## 6. 纠错与删除
 

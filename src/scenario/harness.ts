@@ -81,8 +81,8 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
     programFacts(input: Parameters<typeof pluginRuntime.programFacts>[0]) {
       return pluginRuntime.programFacts(input);
     },
-    printableLog(input: Parameters<typeof pluginRuntime.printableLog>[0]) {
-      return pluginRuntime.printableLog(input);
+    printableLog() {
+      return pluginRuntime.printableLog();
     },
     weightFacts() {
       return pluginRuntime.weightFacts();

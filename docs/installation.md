@@ -10,8 +10,9 @@
 4. 显式配置 Personal Data Directory；
 5. 运行 `/stella-start` 并批准当前 conversation binding；
 6. Plugin 自动验证并使用唯一的卓叔 12 周 Built-in Program；
-7. 逐项确认可拆卸哑铃、引体向上杆、打印训练日志和训练记录协议；
-8. 按唯一下一步记录 baseline、三个初始 12RM，并确认星期一 cycle start。
+7. 运行 `/stella-print` 获取完整 12 周内置 XLSX 并打印所需页面；
+8. 逐项确认可拆卸哑铃、引体向上杆、打印训练日志和训练记录协议；
+9. 按唯一下一步记录 baseline、三个初始 12RM，并确认星期一 cycle start。
 
 首次使用不提供计划选择器、ProgramSpec 导入或文件路径输入。`/stella-status` 独立报告 Personal Data Directory、conversation、media 和 model permission；Program Journey Status 只报告训练前准备与当前唯一下一步。
 
@@ -26,7 +27,7 @@ onboarding 不要求健康档案、营养目标或监督策略配置。
 - ProgramSpec validation；
 - workout photo → confirmation → Observation 流程；
 - Personal/Runtime directory 边界和媒体净化；
-- package 不含 raw DOCX/XLSX、用户数据、pilot 或未授权内容；
+- package 不含 raw DOCX、用户数据、pilot 或未授权内容；内置 XLSX 必须匹配白名单路径与 digest；
 - privacy、数据目录和 Provider permission 说明；
 - 课程派生制品授权与 required notice。
 

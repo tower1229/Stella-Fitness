@@ -215,6 +215,49 @@ describe("Plugin registration", () => {
     expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
   });
 
+  it("sends the full built-in workbook after binding without requiring Program activation", async () => {
+    const commands: Array<Record<string, unknown>> = [];
+    const personalDataDirectory = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands,
+      hooks: new Map(),
+      cliRegistrations: [],
+      pluginConfig: personalDataDirectory,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const command = commands.find(({ name }) => name === "stella-print");
+    const requestConversationBinding = vi.fn().mockResolvedValue({
+      status: "bound",
+      binding: { bindingId: "stella-binding-print" },
+    });
+    const handler = command?.handler as (context: {
+      channel: string;
+      commandBody: string;
+      isAuthorizedSender: boolean;
+      requestConversationBinding: typeof requestConversationBinding;
+    }) => Promise<unknown>;
+
+    expect(command).toMatchObject({
+      name: "stella-print",
+      acceptsArgs: false,
+      requireAuth: true,
+    });
+    await expect(handler({
+      channel: "test",
+      commandBody: "/stella-print",
+      isAuthorizedSender: true,
+      requestConversationBinding,
+    })).resolves.toMatchObject({
+      text: "完整 12 周训练日志工作簿",
+      mediaUrl: expect.stringMatching(/zhuoshu-workout-log\.xlsx$/u),
+      trustedLocalMedia: true,
+    });
+    expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
+  });
+
   it("claims clear body-weight text and returns only the recorded facts", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const personalDataDirectory = configuredPersonalDirectory();

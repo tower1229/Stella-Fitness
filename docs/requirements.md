@@ -156,8 +156,8 @@ OpenClaw 负责 Provider、凭据、endpoint、授权和实际模型执行。Plu
 ## 13. 发布边界
 
 - Plugin 代码、通用 schema 与原创材料采用 Apache-2.0；
-- 原始 DOCX/XLSX 只作源码审计材料，不进入安装包；
+- 原始 DOCX 只作源码审计材料；训练日志原始 XLSX 以固定 digest 作为内置打印模板进入安装包；
 - 课程派生运行时制品只有在取得覆盖实际制品与渠道的授权后才能公开发行；
 - 发布制品不得包含用户数据、研发 pilot 或未授权来源内容；
 - clean install 与真实 OpenClaw load 是发行验收的一部分。
-- 安装包必须包含默认 Built-in Program 与项目自有 PDF 生成能力；公开发行仍须通过精确制品授权 gate。
+- 安装包必须包含默认 Built-in Program 与完整 12 周内置 XLSX；Plugin 直接发送该静态工作簿，不在运行时生成 PDF。公开发行仍须通过精确制品授权 gate。

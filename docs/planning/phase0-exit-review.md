@@ -50,7 +50,7 @@ Stella Fitness v1 是训练计划执行与记录工具，不是训练监督系�
 
 - [x] 教程、XLSX、Markdown 与 ProgramSpec v0.2 完成 source cross-check；
 - [x] 所有训练日与关键关系语义已确认；
-- [x] 原始 Office 文件只作源码审计材料；
+- [x] 原始 DOCX 只作源码审计材料；训练日志 XLSX 作为固定 digest 的内置打印模板；
 - [x] 来源忠实性与专业背书已明确分离；
 - [ ] `[IMPLEMENTATION TASK]` schema validator 与完整 fixture test；
 - [ ] `[RELEASE-BLOCKING]` 取得课程派生制品发行授权。
@@ -120,7 +120,7 @@ implementation kickoff 的第一项工作是按本机 OpenClaw stable 基线核�
 
 - 取得覆盖实际课程派生制品和渠道的授权；
 - 核验 ClawHub owner/package 权限；
-- 检查制品不包含 raw DOCX/XLSX、用户数据或未授权内容；
+- 检查制品不包含 raw DOCX、任意非白名单 Office 文件、用户数据或未授权内容，并校验内置 XLSX digest；
 - 在 clean environment 安装、启用、加载并执行关键记录流程。
 
 ## 10. Sign-off

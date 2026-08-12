@@ -18,6 +18,7 @@ import {
 
 const workspace = fileURLToPath(new URL("../", import.meta.url));
 const temporaryRoot = mkdtempSync(join(tmpdir(), "stella-release-"));
+const builtInWorkbookPath = "dist/assets/zhuoshu-workout-log.xlsx";
 
 try {
   verifyRelease();
@@ -31,7 +32,8 @@ function verifyRelease() {
   const packageRoot = extractPackageArtifact({ artifact, temporaryRoot });
   const packageJson = readJson(join(packageRoot, "package.json"));
   const derivativePaths = listPackageFiles(packageRoot).filter((path) =>
-    path.startsWith("dist/program/fidelity/"),
+    path.startsWith("dist/program/fidelity/") ||
+    path === builtInWorkbookPath
   );
   const blockers = [];
 

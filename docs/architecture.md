@@ -191,7 +191,7 @@ v1 不需要 Blind Diagnostician、Belief Extractor、Auditor、Reporter 或多�
 - correction、dedupe、restart、external deletion 和 invalid edit；
 - 原件字节保真、orientation、metadata strip 和全部退出路径清理；
 - payload 最小化与 operator model permission；
-- 发行包排除原始 Office 文件、用户数据和未授权内容。
+- 发行包排除原始 DOCX、任意非白名单 Office 文件、用户数据和未授权内容；唯一允许的原始 Office 制品是固定路径与 digest 的内置训练日志 XLSX。
 
 不建立 diagnosis、nutrition、safety、framing invariance、Policy Gate 或 periodic supervision 测试分支。
 

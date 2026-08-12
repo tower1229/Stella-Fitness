@@ -5,7 +5,7 @@
 
 用户已明确确认：该 XLSX 是原课程配套资料，来自原作者或其他可靠同源版本；其中第 4 周周五的力量测试就是训练计划正式内容。
 
-用户已明确允许将原始 XLSX 收录到本公开 GitHub 仓库，原件现归档于 `sources/originals/zhuoshu-workout-log.xlsx`。卓叔计划将作为 v1 `Built-in Program`，但 raw XLSX 只作源码审计原件，不进入安装包；安装包提供生成式/空白日志模板。
+用户已明确允许使用原始 XLSX。原件归档于 `sources/originals/zhuoshu-workout-log.xlsx`，并由构建按原始字节复制为 v1 内置打印模板；Plugin 在 binding 完成后直接发送完整工作簿，不生成替代 PDF。
 
 ## 1. Workbook 结构
 
@@ -171,4 +171,5 @@ Tier A 直接以这份 workbook 的真实打印/填写/拍照结果为主，覆�
 - 可私下打印并准备 benchmark；
 - raw XLSX 继续作为公开源码仓库中的不可静默改写来源归档；
 - 不得在可核验授权完成前发布包含该来源计划的发行包；
-- raw XLSX 不进入正式发行包；安装包只携带运行时派生制品和生成式/空白日志模板。
+- raw XLSX 以固定路径和 digest 进入正式发行包，并由 `/stella-print` 直接发送；
+- 任意其他 raw Office 文件仍不得进入发行包。

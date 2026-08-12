@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -42,11 +42,28 @@ describe("course-derivative release authorization gate", () => {
     );
   });
 
+  it("rejects authorization that does not cover the exact workbook bytes", async () => {
+    const fixture = await createReleaseFixture();
+    const authorization = await createAuthorization(
+      fixture,
+      sha256(fixture.derivative),
+      "0".repeat(64),
+    );
+
+    const result = runVerifier(fixture.tarball, authorization);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Authorization digest does not match dist/assets/zhuoshu-workout-log.xlsx",
+    );
+  });
+
   it("accepts evidence that identifies the grant, derivatives, changes, attribution and channel", async () => {
     const fixture = await createReleaseFixture();
     const authorization = await createAuthorization(
       fixture,
       sha256(fixture.derivative),
+      sha256(fixture.workbook),
     );
 
     const result = runVerifier(fixture.tarball, authorization);
@@ -56,7 +73,7 @@ describe("course-derivative release authorization gate", () => {
       authorizationId: "authorization-test-1",
       authorized: true,
       channels: ["ClawHub"],
-      coveredDerivatives: 1,
+      coveredDerivatives: 2,
     });
   });
 });
@@ -71,7 +88,7 @@ describe("real distribution artifact inspection", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       package: "@tower1229/stella-fitness@0.1.0",
       forbiddenPaths: 0,
-      courseDerivativePaths: 1,
+      courseDerivativePaths: 2,
       sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
     });
   });
@@ -91,21 +108,39 @@ describe("real distribution artifact inspection", () => {
       `Package includes forbidden path: ${forbiddenPath}`,
     );
   });
+
+  it("rejects modified bytes at the allowed built-in workbook path", async () => {
+    const fixture = await createReleaseFixture({
+      workbook: Buffer.from("modified workbook"),
+    });
+
+    const result = runPackageVerifier(fixture.tarball);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Built-in workout-log workbook digest does not match source",
+    );
+  });
 });
 
 type ReleaseFixture = {
   root: string;
   tarball: string;
   derivative: string;
+  workbook: Buffer;
 };
 
 async function createReleaseFixture(
-  options: { forbiddenPath?: string } = {},
+  options: { forbiddenPath?: string; workbook?: Buffer } = {},
 ): Promise<ReleaseFixture> {
   const root = await mkdtemp(join(tmpdir(), "stella-release-test-"));
   temporaryRoots.push(root);
   const packageRoot = join(root, "package-source");
   const derivative = "id: zhuoshu-12-week\nversion: fixture\n";
+  const workbook = options.workbook ?? await readFile(new URL(
+    "../sources/originals/zhuoshu-workout-log.xlsx",
+    import.meta.url,
+  ));
   await mkdir(join(packageRoot, "dist/program/fidelity"), { recursive: true });
   await Promise.all([
     writeFile(
@@ -158,6 +193,12 @@ async function createReleaseFixture(
       join(packageRoot, "dist/program/fidelity/zhuoshu-v0.2.yaml"),
       derivative,
     ),
+    mkdir(join(packageRoot, "dist/assets"), { recursive: true }).then(() =>
+      writeFile(
+        join(packageRoot, "dist/assets/zhuoshu-workout-log.xlsx"),
+        workbook,
+      ),
+    ),
     writeFile(join(packageRoot, "LICENSE"), "Apache License 2.0 fixture.\n"),
     writeFile(
       join(packageRoot, "NOTICE"),
@@ -197,7 +238,7 @@ async function createReleaseFixture(
     },
   );
   const [pack] = JSON.parse(packOutput) as [{ filename: string }];
-  return { root, tarball: join(root, pack.filename), derivative };
+  return { root, tarball: join(root, pack.filename), derivative, workbook };
 }
 
 async function writeForbiddenFixture(packageRoot: string, path: string) {
@@ -208,6 +249,7 @@ async function writeForbiddenFixture(packageRoot: string, path: string) {
 async function createAuthorization(
   fixture: ReleaseFixture,
   derivativeDigest: string,
+  workbookDigest = sha256(fixture.workbook),
 ): Promise<string> {
   const evidence = "Signed course-derivative distribution grant fixture.\n";
   const evidencePath = join(fixture.root, "authorization-evidence.txt");
@@ -229,6 +271,10 @@ async function createAuthorization(
         {
           path: "dist/program/fidelity/zhuoshu-v0.2.yaml",
           sha256: derivativeDigest,
+        },
+        {
+          path: "dist/assets/zhuoshu-workout-log.xlsx",
+          sha256: workbookDigest,
         },
       ],
       modifications: "Structured into deterministic executable data.",
@@ -266,6 +312,6 @@ function runPackageVerifier(tarball: string) {
   );
 }
 
-function sha256(value: string): string {
+function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }

@@ -52,13 +52,13 @@ Plugin 代码许可证与训练教程再分发许可是独立问题。
 v1 已决定采用保守发行边界：
 
 - 卓叔计划将作为 v1 `Built-in Program` 直接随包提供；
-- package 包含运行时 ProgramSpec、必要结构化知识、生成式/空白日志模板及权利声明；
-- 原始 DOCX/XLSX 不进入安装包，只作公开源码仓库审计原件；
+- package 包含运行时 ProgramSpec、必要结构化知识、固定 digest 的原始训练日志 XLSX 及权利声明；
+- 原始 DOCX 不进入安装包；训练日志 XLSX 仅允许从白名单路径按原始字节复制；
 - 发布前必须取得覆盖实际制品、版本、渠道、修改和署名要求的可核验授权；
 - 专业签署和 Rights Review 都是发布 gate。
 - package 必须携带标准 `LICENSE`、`NOTICE` 及 Built-in Program 的独立 rights notice。
 
-不得因为教程已经被结构化成 YAML/Markdown 就假定获得再发布权。自动化 package inspection 必须验证受限来源内容没有进入发行产物。
+不得因为教程已经被结构化成 YAML/Markdown 就假定获得再发布权。自动化 package inspection 必须拒绝未授权来源内容，并验证允许分发的内置 XLSX 路径与 digest。
 
 ## 5. 发布策略
 

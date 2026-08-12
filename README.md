@@ -102,7 +102,7 @@ Privacy Review 已批准。训练/营养监督和 Safety Review 因对应能力�
 
 - 覆盖实际课程派生制品和发行渠道的可核验授权；
 - ClawHub/npm 制品检查与实时发布权限验证；
-- 原始 DOCX/XLSX 不进入发行包。
+- 原始 DOCX 不进入发行包；仅允许固定 digest 的内置训练日志 XLSX 随包分发。
 
 ## 仓库结构
 

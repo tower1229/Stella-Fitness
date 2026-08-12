@@ -12,7 +12,7 @@
 1. 本目录中的 Office 文件作为原始来源归档，不在仓库内改写其内容；
 2. `knowledge/` 中的 Markdown / ProgramSpec 是派生、可审阅、可版本化的结构化层；
 3. 用户已于 2026-08-08 明确确认允许将这两份原始 Office 文件提交到本公开 GitHub 仓库；
-4. 卓叔计划将作为 v1 `Built-in Program`，但这些原件只作公开源码仓库审计归档，不进入正式发行包；
+4. 卓叔计划将作为 v1 `Built-in Program`；原始 DOCX 只作公开源码仓库审计归档，训练日志 XLSX 以固定 digest 进入正式发行包；
 5. 如原件内容与派生文档发生冲突，应回溯原件并记录 reconciliation，而不是静默修改来源事实。
 
 ## 权利边界

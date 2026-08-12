@@ -293,19 +293,15 @@ export function registerStellaFitnessPlugin(
 
   api.registerCommand({
     name: "stella-print",
-    description: "Generate an A4 printable training log PDF",
-    acceptsArgs: true,
+    description: "Send the complete built-in workout-log workbook",
+    acceptsArgs: false,
     requireAuth: true,
     async handler(context) {
       const bindingReply = await requireProgramJourneyBinding(context);
       if (bindingReply !== undefined) return bindingReply;
-      const input = parsePrintableCommand(context.args);
-      if (input === undefined) {
-        return { text: "Usage: /stella-print <today|week|phase> [YYYY-MM-DD]" };
-      }
-      const result = await stellaRuntime.printableLog(input);
+      const result = await stellaRuntime.printableLog();
       return {
-        text: `Printable Log: ${result.range}, ${result.pages} page(s)`,
+        text: "完整 12 周训练日志工作簿",
         mediaUrl: result.path,
         trustedLocalMedia: true,
       };
@@ -826,18 +822,11 @@ async function handleBoundStellaCommand(
       },
     };
   }
-  const input = parsePrintableCommand(command.args);
-  if (input === undefined) {
-    return {
-      handled: true,
-      reply: { text: "Usage: /stella-print <today|week|phase> [YYYY-MM-DD]" },
-    };
-  }
-  const result = await runtime.printableLog(input);
+  const result = await runtime.printableLog();
   return {
     handled: true,
     reply: {
-      text: `Printable Log: ${result.range}, ${result.pages} page(s)`,
+      text: "完整 12 周训练日志工作簿",
       mediaUrl: result.path,
       trustedLocalMedia: true,
     },
@@ -1370,19 +1359,6 @@ function isQuestion(text: string): boolean {
 
 function factsUsage(): string {
   return "Usage: /stella-facts <today|next> [YYYY-MM-DD] | symbol <exercise-id> <A|N>";
-}
-
-function parsePrintableCommand(args: string | undefined):
-  | { readonly range: "today" | "week" | "phase"; readonly date: string }
-  | undefined {
-  const match = /^\s*(today|week|phase)(?:\s+(\d{4}-\d{2}-\d{2}))?\s*$/iu.exec(
-    args ?? "",
-  );
-  if (match?.[1] === undefined) return undefined;
-  return {
-    range: match[1].toLowerCase() as "today" | "week" | "phase",
-    date: match[2] ?? new Date().toISOString().slice(0, 10),
-  };
 }
 
 function formatProgramFacts(

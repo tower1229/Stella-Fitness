@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -145,54 +146,33 @@ describe("Program Facts and Printable Log", () => {
       });
   });
 
-  it("generates a persistent A4 PDF with a normal-session table and blank Actual cells", async () => {
-    const harness = await activeHarness();
+  it("returns the immutable full workout-log workbook before Program activation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-printable-workbook-"));
+    temporaryRoots.push(root);
+    const personalDataDirectory = join(root, "personal");
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([]),
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => join(root, "runtime"),
+      preflight: () => ({ readiness: "READY_FOR_SETUP", reasons: [] }),
+    });
 
-    const result = await harness.printableLog({
-      range: "today",
-      date: "2026-08-10",
-    });
-    const pdf = readFileSync(result.path);
+    const result = await harness.printableLog();
+    const workbook = readFileSync(result.path);
 
-    expect(result).toMatchObject({
-      range: "today",
-      mediaType: "application/pdf",
-      layout: "ordinary-training",
+    expect(result).toEqual({
+      path: expect.stringMatching(/zhuoshu-workout-log\.xlsx$/u),
+      fileName: "zhuoshu-workout-log.xlsx",
+      mediaType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      sha256:
+        "a113a16f9844ceb518307369bd45979af3aa703e67da8eb3bbb6b5e991aebcca",
     });
-    expect(pdf.subarray(0, 8).toString("ascii")).toBe("%PDF-1.4");
-    expect(pdf.toString("latin1")).toContain("/MediaBox [0 0 595.28 841.89]");
-    expect(pdf.toString("latin1")).toContain("/ActualFieldsBlank true");
-    expect(pdf.toString("latin1")).toContain("/Subtype /Image");
-
-    const strengthTest = await harness.printableLog({
-      range: "today",
-      date: "2026-09-04",
-    });
-    expect(strengthTest).toMatchObject({
-      layout: "strength-test",
-      pages: 1,
-      mediaType: "application/pdf",
-    });
-    expect(readFileSync(strengthTest.path).toString("latin1")).toContain(
-      "/ActualFieldsBlank true",
+    expect(createHash("sha256").update(workbook).digest("hex")).toBe(
+      result.sha256,
     );
-
-    await expect(harness.printableLog({
-      range: "week",
-      date: "2026-08-10",
-    })).resolves.toMatchObject({
-      range: "week",
-      layout: "ordinary-training",
-      pages: 3,
-    });
-    await expect(harness.printableLog({
-      range: "phase",
-      date: "2026-08-10",
-    })).resolves.toMatchObject({
-      range: "phase",
-      layout: "mixed",
-      pages: 12,
-    });
+    expect(workbook.subarray(0, 2).toString("ascii")).toBe("PK");
+    expect(existsSync(personalDataDirectory)).toBe(false);
   });
 
   it("gates Week 5 on a Week 4 checkpoint and rebuilds deterministic weight facts", async () => {

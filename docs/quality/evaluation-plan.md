@@ -56,7 +56,7 @@ Stella Fitness 的质量由来源忠实、记录准确、纠错可追溯、数�
 
 ## 6. Packaging
 
-- 制品不含 raw DOCX/XLSX；
+- 制品不含 raw DOCX 或任意非白名单 Office 文件，且内置 XLSX digest 正确；
 - 不含用户数据、pilot 或未授权内容；
 - package identity 和 notice 正确；
 - clean environment 可完成关键记录流程。

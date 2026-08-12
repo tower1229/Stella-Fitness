@@ -18,6 +18,9 @@ import {
 
 const workspace = fileURLToPath(new URL("../", import.meta.url));
 const temporaryRoot = mkdtempSync(join(tmpdir(), "stella-package-"));
+const builtInWorkbookPath = "dist/assets/zhuoshu-workout-log.xlsx";
+const builtInWorkbookSha256 =
+  "a113a16f9844ceb518307369bd45979af3aa703e67da8eb3bbb6b5e991aebcca";
 
 try {
   const artifact = resolveArtifact(process.argv.slice(2));
@@ -30,6 +33,7 @@ try {
     "dist/plugin.js",
     "dist/scenario/harness.js",
     "dist/program/fidelity/zhuoshu-v0.2.yaml",
+    builtInWorkbookPath,
     "openclaw.plugin.json",
     "package.json",
     "README.md",
@@ -65,9 +69,9 @@ try {
   const forbiddenPaths = files.filter((path) =>
     forbiddenPrefixes.some((prefix) => path.startsWith(prefix)) ||
     path.split("/").some((segment) => forbiddenSegments.has(segment)) ||
-    forbiddenExtensions.some((extension) =>
+    (path !== builtInWorkbookPath && forbiddenExtensions.some((extension) =>
       path.toLowerCase().endsWith(extension),
-    ),
+    )),
   );
 
   for (const path of required) {
@@ -77,6 +81,13 @@ try {
   }
   for (const path of forbiddenPaths) {
     blockers.push(`Package includes forbidden path: ${path}`);
+  }
+  if (
+    files.includes(builtInWorkbookPath) &&
+    sha256(readFileSync(join(packageRoot, builtInWorkbookPath))) !==
+      builtInWorkbookSha256
+  ) {
+    blockers.push("Built-in workout-log workbook digest does not match source");
   }
   validateIdentity(packageJson, manifest, blockers);
   validateRecordingOnlySurface(packageJson, manifest, blockers);
@@ -92,7 +103,8 @@ try {
       `${JSON.stringify({
         artifact,
         courseDerivativePaths: files.filter((path) =>
-          path.startsWith("dist/program/fidelity/"),
+          path.startsWith("dist/program/fidelity/") ||
+          path === builtInWorkbookPath
         ).length,
         files: files.length,
         forbiddenPaths: 0,

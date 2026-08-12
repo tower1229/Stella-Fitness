@@ -18,6 +18,6 @@ The software license decision therefore closes the code-license gap but does not
 ## Consequences
 
 - Every source and release package containing Apache-licensed work includes `LICENSE` and `NOTICE`.
-- Package inspection verifies both the notices and the exclusion of raw Office artifacts.
+- Package inspection verifies the notices, excludes raw DOCX and arbitrary Office artifacts, and allows only the exact authorized built-in workout-log XLSX path and digest.
 - The Built-in Program cannot be released merely because it is stored beside Apache-licensed code.
 - Personal data remains controlled by the user and is never treated as a project contribution or licensed project artifact merely because the Plugin processed it.
