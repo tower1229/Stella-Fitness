@@ -41,6 +41,11 @@ export async function loadLiveBenchmark(manifestPath) {
     ...REQUIRED_LIVE_BENCHMARK_COVERAGE,
     ...additionalCoverage,
   ])];
+  const providerEvidence = await loadProviderEvidence({
+    value: manifest.providerEvidence,
+    rootDirectory,
+    realRootDirectory,
+  });
   const cases = await Promise.all(manifest.cases.map(async (entry) => {
     if (entry.reviewStatus !== "approved") {
       throw new Error(`${String(entry.id)} ground truth is not human-approved`);
@@ -94,6 +99,7 @@ export async function loadLiveBenchmark(manifestPath) {
     provider: manifest.provider,
     model: manifest.model,
     requiredCoverage,
+    providerEvidence,
     cases,
   };
 }
@@ -114,12 +120,15 @@ export function scoreLiveBenchmarkCase(expected, actual) {
     const matched = isRecord(actual) &&
       actual.layout === "multi-session-page" &&
       actual.reason === "multiple-session-blocks";
-    return emptyScore(
+    const score = emptyScore(
       matched ? "crop-required" : "invalid",
       matched,
       "crop-required",
       "crop-required",
     );
+    score.layoutClassification.total = 1;
+    if (matched) score.layoutClassification.correct = 1;
+    return score;
   }
 
   let candidate;
@@ -132,6 +141,9 @@ export function scoreLiveBenchmarkCase(expected, actual) {
       "ordinary",
       coverageForExpected(expected),
     );
+  }
+  if (expected.kind === "strength-test" && "testResults" in candidate) {
+    return scoreStrengthTest(expected, candidate);
   }
   if (expected.kind !== "ordinary" || !("exercises" in candidate)) {
     return emptyScore(
@@ -148,6 +160,8 @@ export function scoreLiveBenchmarkCase(expected, actual) {
     "ordinary",
     coverageForExpected(expected),
   );
+  score.layoutClassification.total = 1;
+  score.layoutClassification.correct = 1;
   const uncertainPaths = new Set(candidate.uncertainFields.map((field) => field.path));
   for (const key of ["stage", "week", "weekday", "sessionType"]) {
     score.identity.total += 1;
@@ -189,6 +203,12 @@ export function scoreLiveBenchmarkCase(expected, actual) {
       score,
       criticalNumeric: expectedExercise.load.value?.kind === "kg",
     });
+    score.loadSemantics.total += 1;
+    if (projectLoad(matched.exercise.load.value)?.kind === expectedExercise.load.value?.kind) {
+      score.loadSemantics.correct += 1;
+    } else {
+      score.correctionsRequired += 1;
+    }
     expectedExercise.sets.forEach((expectedSet, setIndex) => {
       const actualSet = matched.exercise.sets[setIndex];
       const path = `exercises[${matched.index}].sets[${setIndex}].value`;
@@ -224,13 +244,92 @@ export function scoreLiveBenchmarkCase(expected, actual) {
       score,
     });
   }
+  scoreUnexpectedRows({
+    actualIds: candidate.exercises.map((exercise) => exercise.exerciseId.value),
+    expectedIds: expected.exercises.map((exercise) => exercise.exerciseId),
+    score,
+  });
   return score;
+}
+
+function scoreStrengthTest(expected, candidate) {
+  const score = emptyScore(
+    "strength-test",
+    true,
+    "strength-test",
+    "strength-test",
+  );
+  score.layoutClassification.total = 1;
+  score.layoutClassification.correct = 1;
+  const uncertainPaths = new Set(candidate.uncertainFields.map((field) => field.path));
+  for (const key of ["stage", "week", "weekday", "sessionType"]) {
+    score.identity.total += 1;
+    score.exactFields.total += 1;
+    if (candidate[key].value === expected.identity[key]) {
+      score.identity.correct += 1;
+      score.exactFields.correct += 1;
+    } else {
+      score.correctionsRequired += 1;
+    }
+    if (uncertainPaths.has(`${key}.value`)) score.abstention.falsePositive += 1;
+  }
+  const actualByExerciseId = new Map(candidate.testResults.map((result, index) => [
+    result.exerciseId.value,
+    { result, index },
+  ]));
+  for (const expectedResult of expected.testResults) {
+    score.identity.total += 1;
+    score.exactFields.total += 1;
+    const matched = actualByExerciseId.get(expectedResult.exerciseId);
+    if (matched === undefined || matched.result.test !== expectedResult.test) {
+      score.correctionsRequired += 1;
+      scoreMissingField(expectedResult.result, score, {
+        criticalNumeric: expectedResult.result.visibility === "visible",
+      });
+      continue;
+    }
+    score.identity.correct += 1;
+    score.exactFields.correct += 1;
+    scoreExpectedField({
+      expected: expectedResult.result,
+      actualValue: projectStrengthTestResult(matched.result.result.value),
+      path: `testResults[${matched.index}].result.value`,
+      uncertainPaths,
+      score,
+      criticalNumeric: expectedResult.result.visibility === "visible",
+    });
+  }
+  scoreUnexpectedRows({
+    actualIds: candidate.testResults.map((result) => result.exerciseId.value),
+    expectedIds: expected.testResults.map((result) => result.exerciseId),
+    score,
+  });
+  return score;
+}
+
+function scoreUnexpectedRows({ actualIds, expectedIds, score }) {
+  const remaining = new Map();
+  for (const expectedId of expectedIds) {
+    remaining.set(expectedId, (remaining.get(expectedId) ?? 0) + 1);
+  }
+  for (const actualId of actualIds) {
+    const count = remaining.get(actualId) ?? 0;
+    if (count > 0) {
+      remaining.set(actualId, count - 1);
+      continue;
+    }
+    score.identity.total += 1;
+    score.exactFields.total += 1;
+    score.correctionsRequired += 1;
+  }
 }
 
 function scoreMissingExercise(expectedExercise, score) {
   scoreMissingField(expectedExercise.load, score, {
     criticalNumeric: expectedExercise.load.value?.kind === "kg",
   });
+  score.loadSemantics.total += 1;
+  score.correctionsRequired += 1;
   for (const expectedSet of expectedExercise.sets) {
     scoreMissingField(expectedSet, score, {
       criticalNumeric: expectedSet.visibility === "visible",
@@ -272,6 +371,7 @@ export async function runLiveBenchmark(options) {
     const bytes = await readFile(benchmarkCase.imagePath);
     const startedAt = performance.now();
     let parsed;
+    let execution;
     let errorMessage;
     try {
       const result = await options.extractStructured({
@@ -284,6 +384,12 @@ export async function runLiveBenchmark(options) {
         instructions: WORKOUT_LOG_EXTRACTION_INSTRUCTIONS,
         schemaName: "stella_workout_log_candidate_v2",
         jsonSchema: WORKOUT_LOG_CANDIDATE_SCHEMA,
+      });
+      execution = validateExecutionEvidence({
+        execution: result.execution,
+        provider: benchmark.provider,
+        model: benchmark.model,
+        exactHost: benchmark.providerEvidence?.exactHost,
       });
       parsed = normalizeWorkoutLogExtraction(result.parsed);
     } catch (error) {
@@ -300,15 +406,66 @@ export async function runLiveBenchmark(options) {
       id: benchmarkCase.id,
       latencyMs,
       ...(parsed === undefined ? {} : { parsed }),
+      ...(execution === undefined ? {} : { execution }),
       ...(errorMessage === undefined ? {} : { error: errorMessage }),
       score,
     });
   }
+  const executionReceipts = cases
+    .map((entry) => entry.execution?.requestId)
+    .filter((requestId) => requestId !== undefined);
+  const boundProviderEvidence = {
+    ...benchmark.providerEvidence,
+    adapterSha256: options.adapterSha256,
+    executionReceipts,
+    executionEvidenceComplete: executionReceipts.length === cases.length &&
+      new Set(executionReceipts).size === executionReceipts.length,
+  };
   return {
     cases,
+    evidence: boundProviderEvidence,
     summary: summarizeLiveBenchmark(cases.map((entry) => entry.score), {
       requiredCoverage: benchmark.requiredCoverage,
+      providerEvidence: boundProviderEvidence,
     }),
+  };
+}
+
+function validateExecutionEvidence({ execution, provider, model, exactHost }) {
+  if (!isRecord(execution) ||
+    execution.provider !== provider ||
+    execution.model !== model ||
+    typeof execution.host !== "string" || execution.host.trim().length === 0 ||
+    (exactHost !== undefined && execution.host !== exactHost) ||
+    typeof execution.requestId !== "string" || execution.requestId.trim().length === 0 ||
+    execution.operatorPermissionVerified !== true) {
+    throw new Error("Live-model adapter execution evidence did not match the request");
+  }
+  return execution;
+}
+
+async function loadProviderEvidence({ value, rootDirectory, realRootDirectory }) {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || typeof value.termsReceipt !== "string") {
+    throw new Error("Live-model provider evidence requires a termsReceipt path");
+  }
+  const receiptPath = resolve(rootDirectory, value.termsReceipt);
+  const unresolvedRelative = relative(rootDirectory, receiptPath);
+  if (unresolvedRelative.startsWith("..") || unresolvedRelative.length === 0) {
+    throw new Error("Live-model terms receipt must stay inside the benchmark directory");
+  }
+  const realReceiptPath = await realpath(receiptPath);
+  const resolvedRelative = relative(realRootDirectory, realReceiptPath);
+  if (resolvedRelative.startsWith("..") || resolvedRelative.length === 0) {
+    throw new Error("Live-model terms receipt must stay inside the benchmark directory");
+  }
+  const actualSha256 = sha256(await readFile(realReceiptPath));
+  if (actualSha256 !== value.termsReceiptSha256) {
+    throw new Error("Live-model terms receipt changed after review");
+  }
+  return {
+    ...value,
+    termsReceipt: relative(rootDirectory, realReceiptPath),
   };
 }
 
@@ -357,6 +514,11 @@ function projectLoad(load) {
   return { kind: load.kind };
 }
 
+function projectStrengthTestResult(result) {
+  if (result === null) return null;
+  return { kind: result.kind, value: result.value };
+}
+
 function equivalentValue(actual, expected) {
   return JSON.stringify(actual) === JSON.stringify(expected);
 }
@@ -367,6 +529,7 @@ export function summarizeLiveBenchmark(scores, options = {}) {
   const coveredRequiredLayouts = requiredCoverageValues.filter((value) =>
     observedCoverage.has(value)).length;
   const coveragePassed = coveredRequiredLayouts === requiredCoverageValues.length;
+  const providerEvidencePassed = isProviderEvidenceComplete(options.providerEvidence);
   const totals = {
     cases: scores.length,
     structuredValid: scores.filter((score) => score.structuredValid).length,
@@ -381,6 +544,10 @@ export function summarizeLiveBenchmark(scores, options = {}) {
     numericTotal: sum(scores, (score) => score.criticalNumeric.total),
     blankCorrect: sum(scores, (score) => score.blankPreservation.correct),
     blankTotal: sum(scores, (score) => score.blankPreservation.total),
+    loadSemanticsCorrect: sum(scores, (score) => score.loadSemantics.correct),
+    loadSemanticsTotal: sum(scores, (score) => score.loadSemantics.total),
+    layoutCorrect: sum(scores, (score) => score.layoutClassification.correct),
+    layoutTotal: sum(scores, (score) => score.layoutClassification.total),
     semanticsCorrect: sum(scores, (score) => score.setSemantics.correct),
     semanticsTotal: sum(scores, (score) => score.setSemantics.total),
     abstentionTruePositive: sum(scores, (score) => score.abstention.truePositive),
@@ -396,6 +563,14 @@ export function summarizeLiveBenchmark(scores, options = {}) {
   const exactFieldAccuracy = ratio(totals.exactCorrect, totals.exactTotal);
   const criticalNumericErrorRate = errorRate(totals.numericErrors, totals.numericTotal);
   const blankPreservationAccuracy = ratio(totals.blankCorrect, totals.blankTotal);
+  const loadSemanticAccuracy = ratio(
+    totals.loadSemanticsCorrect,
+    totals.loadSemanticsTotal,
+  );
+  const layoutClassificationAccuracy = ratio(
+    totals.layoutCorrect,
+    totals.layoutTotal,
+  );
   const setSemanticAccuracy = ratio(totals.semanticsCorrect, totals.semanticsTotal);
   const abstentionPrecision = ratio(
     totals.abstentionTruePositive,
@@ -408,6 +583,12 @@ export function summarizeLiveBenchmark(scores, options = {}) {
   const planLeakageRate = errorRate(totals.leakageErrors, totals.leakageTotal);
   const correctionBurden = totals.corrections;
   const medianLatencyMs = median(scores.map((score) => score.latencyMs));
+  const metricEvidencePassed = totals.numericTotal > 0 &&
+    totals.blankTotal > 0 &&
+    totals.loadSemanticsTotal > 0 &&
+    totals.layoutTotal > 0 &&
+    totals.semanticsTotal > 0 &&
+    totals.abstentionTruePositive + totals.abstentionFalseNegative > 0;
   return {
     cases: totals.cases,
     structuredValidity,
@@ -416,6 +597,8 @@ export function summarizeLiveBenchmark(scores, options = {}) {
     exactFieldAccuracy,
     criticalNumericErrorRate,
     blankPreservationAccuracy,
+    loadSemanticAccuracy,
+    layoutClassificationAccuracy,
     setSemanticAccuracy,
     abstentionPrecision,
     abstentionRecall,
@@ -425,19 +608,43 @@ export function summarizeLiveBenchmark(scores, options = {}) {
     requiredCoverage: requiredCoverageValues.length,
     coveredRequiredLayouts,
     coveragePassed,
+    metricEvidencePassed,
+    providerEvidencePassed,
     gatePassed: structuredValidity === 1 &&
       coveragePassed &&
+      metricEvidencePassed &&
+      providerEvidencePassed &&
       cropRequiredAccuracy === 1 &&
       identityAccuracy === 1 &&
       exactFieldAccuracy === 1 &&
       criticalNumericErrorRate === 0 &&
       blankPreservationAccuracy === 1 &&
+      loadSemanticAccuracy === 1 &&
+      layoutClassificationAccuracy === 1 &&
       setSemanticAccuracy === 1 &&
       abstentionPrecision === 1 &&
       abstentionRecall === 1 &&
       planLeakageRate === 0 &&
       correctionBurden === 0,
   };
+}
+
+function isProviderEvidenceComplete(value) {
+  return isRecord(value) &&
+    value.operatorPermissionVerified === true &&
+    typeof value.exactHost === "string" && value.exactHost.trim().length > 0 &&
+    typeof value.termsReviewedAt === "string" &&
+    !Number.isNaN(Date.parse(value.termsReviewedAt)) &&
+    typeof value.costCurrency === "string" && value.costCurrency.trim().length > 0 &&
+    typeof value.totalCost === "number" && Number.isFinite(value.totalCost) &&
+    value.totalCost >= 0 &&
+    typeof value.adapterSha256 === "string" && /^[0-9a-f]{64}$/u.test(value.adapterSha256) &&
+    Array.isArray(value.executionReceipts) && value.executionReceipts.length > 0 &&
+    value.executionReceipts.every((entry) => typeof entry === "string" && entry.length > 0) &&
+    new Set(value.executionReceipts).size === value.executionReceipts.length &&
+    value.executionEvidenceComplete === true &&
+    typeof value.termsReceiptSha256 === "string" &&
+    /^[0-9a-f]{64}$/u.test(value.termsReceiptSha256);
 }
 
 function emptyScore(outcome, structuredValid, expectedOutcome, coverage) {
@@ -450,6 +657,8 @@ function emptyScore(outcome, structuredValid, expectedOutcome, coverage) {
     exactFields: { correct: 0, total: 0 },
     criticalNumeric: { errors: 0, total: 0 },
     blankPreservation: { correct: 0, total: 0 },
+    loadSemantics: { correct: 0, total: 0 },
+    layoutClassification: { correct: 0, total: 0 },
     setSemantics: { correct: 0, total: 0 },
     abstention: { truePositive: 0, falsePositive: 0, falseNegative: 0 },
     planLeakage: { errors: 0, total: 0 },
@@ -462,6 +671,7 @@ function coverageForExpected(expected) {
   if (expected.kind === "ordinary") {
     return `stage-${String(expected.identity?.stage)}-ordinary`;
   }
+  if (expected.kind === "strength-test") return "strength-test";
   return "unknown";
 }
 
@@ -499,11 +709,15 @@ async function loadLiveModelAdapter(environment) {
   if (adapterPath === undefined || adapterPath.length === 0 || !isAbsolute(adapterPath)) {
     throw new Error("STELLA_LIVE_MODEL_ADAPTER must be an absolute path");
   }
-  const adapter = await import(pathToFileURL(await realpath(adapterPath)).href);
+  const realAdapterPath = await realpath(adapterPath);
+  const adapter = await import(pathToFileURL(realAdapterPath).href);
   if (typeof adapter.extractStructured !== "function") {
     throw new Error("Live-model adapter must export extractStructured(request)");
   }
-  return adapter.extractStructured;
+  return {
+    extractStructured: adapter.extractStructured,
+    sha256: sha256(await readFile(realAdapterPath)),
+  };
 }
 
 async function main() {
@@ -512,10 +726,11 @@ async function main() {
     environment: process.env,
   });
   const benchmark = await loadLiveBenchmark(manifestPath);
-  const extractStructured = await loadLiveModelAdapter(process.env);
+  const adapter = await loadLiveModelAdapter(process.env);
   const report = await runLiveBenchmark({
     manifestPath: benchmark.manifestPath,
-    extractStructured,
+    extractStructured: adapter.extractStructured,
+    adapterSha256: adapter.sha256,
   });
   const resultsDirectory = join(benchmark.rootDirectory, "results");
   await mkdir(resultsDirectory, { recursive: true, mode: 0o700 });

@@ -132,6 +132,8 @@ describe("live-model benchmark manifest", () => {
         exactFields: { correct: 14, total: 15 },
         criticalNumeric: { errors: 1, total: 2 },
         blankPreservation: { correct: 6, total: 6 },
+        loadSemantics: { correct: 1, total: 1 },
+        layoutClassification: { correct: 1, total: 1 },
         setSemantics: { correct: 1, total: 1 },
         abstention: { truePositive: 1, falsePositive: 0, falseNegative: 0 },
         planLeakage: { errors: 0, total: 6 },
@@ -160,6 +162,8 @@ describe("live-model benchmark manifest", () => {
         exactFields: { correct: 1, total: 1 },
         criticalNumeric: { errors: 0, total: 1 },
         blankPreservation: { correct: 1, total: 1 },
+        loadSemantics: { correct: 1, total: 1 },
+        layoutClassification: { correct: 1, total: 1 },
         setSemantics: { correct: 1, total: 1 },
         abstention: { truePositive: 0, falsePositive: 0, falseNegative: 0 },
         planLeakage: { errors: 0, total: 1 },
@@ -337,6 +341,38 @@ describe("live-model benchmark metrics", () => {
     });
   });
 
+  it("counts duplicate or extra exercise rows as corrections", () => {
+    const actual = workoutLogCandidate();
+    actual.exercises.push(structuredClone(actual.exercises[0]!));
+    actual.exercises.push({
+      ...structuredClone(actual.exercises[0]!),
+      exerciseId: { value: "dumbbell-bench-press", confidence: "high" },
+    });
+    const expected = {
+      kind: "ordinary",
+      identity: {
+        stage: 1,
+        week: 1,
+        weekday: "monday",
+        sessionType: "full-body",
+      },
+      exercises: [{
+        exerciseId: "goblet-squat",
+        load: { visibility: "visible", value: { kind: "kg", value: 20 } },
+        setSemantic: "repetitions",
+        sets: [{ visibility: "visible", value: 10 }],
+        actionQuality: { visibility: "ambiguous" },
+        problemNote: { visibility: "absent" },
+      }],
+    };
+
+    expect(scoreLiveBenchmarkCase(expected, actual)).toMatchObject({
+      identity: { correct: 5, total: 7 },
+      correctionsRequired: expect.any(Number),
+    });
+    expect(scoreLiveBenchmarkCase(expected, actual).correctionsRequired).toBeGreaterThan(1);
+  });
+
   it("runs approved cases through the provider seam", async () => {
     const root = await mkdtemp(join(tmpdir(), "stella-live-benchmark-test-"));
     await mkdir(join(root, "cases"), { recursive: true });
@@ -369,6 +405,13 @@ describe("live-model benchmark metrics", () => {
             layout: "multi-session-page",
             reason: "multiple-session-blocks",
           },
+          execution: {
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            host: "test-host",
+            requestId: "test-request-1",
+            operatorPermissionVerified: true,
+          },
         };
       },
     });
@@ -387,8 +430,83 @@ describe("live-model benchmark metrics", () => {
       cases: 1,
       requiredCoverage: 5,
       coveredRequiredLayouts: 1,
+      providerEvidencePassed: false,
       gatePassed: false,
     });
+  });
+
+  it("rejects adapter execution evidence that does not match the requested model", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stella-live-benchmark-test-"));
+    await mkdir(join(root, "cases"));
+    const image = Buffer.from("image");
+    await writeFile(join(root, "cases", "full.png"), image);
+    const expected = { kind: "crop-required" };
+    const manifestPath = join(root, "manifest.json");
+    await writeFile(manifestPath, JSON.stringify({
+      schemaVersion: 1,
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      cases: [{
+        id: "full",
+        image: "cases/full.png",
+        reviewStatus: "approved",
+        expected,
+        approval: approvalFor(image, expected),
+      }],
+    }));
+
+    const report = await runLiveBenchmark({
+      manifestPath,
+      adapterSha256: "a".repeat(64),
+      extractStructured: async () => ({
+        parsed: {
+          layout: "multi-session-page",
+          reason: "multiple-session-blocks",
+        },
+        execution: {
+          provider: "fake",
+          model: "fake-model",
+          host: "fake-host",
+          requestId: "request-1",
+          operatorPermissionVerified: true,
+        },
+      }),
+    });
+
+    expect(report.cases[0]).toMatchObject({
+      score: { structuredValid: false },
+      error: expect.stringContaining("execution evidence did not match"),
+    });
+  });
+
+  it("rejects a provider terms receipt whose bytes changed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "stella-live-benchmark-test-"));
+    await mkdir(join(root, "cases"));
+    const image = Buffer.from("image");
+    await writeFile(join(root, "cases", "full.png"), image);
+    await writeFile(join(root, "terms-receipt.txt"), "changed");
+    const expected = { kind: "crop-required" };
+    const manifestPath = join(root, "manifest.json");
+    await writeFile(manifestPath, JSON.stringify({
+      schemaVersion: 1,
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      providerEvidence: {
+        termsReceipt: "terms-receipt.txt",
+        termsReceiptSha256: sha256(Buffer.from("approved")),
+      },
+      cases: [{
+        id: "full",
+        image: "cases/full.png",
+        reviewStatus: "approved",
+        expected,
+        approval: approvalFor(image, expected),
+      }],
+    }));
+
+    await expect(loadLiveBenchmark(manifestPath)).rejects.toThrow(
+      "terms receipt changed after review",
+    );
   });
 });
 
