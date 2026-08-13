@@ -11,6 +11,7 @@ import {
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { assertOperatorModelPermission } from "./contracts/openclaw.js";
+import { MultiSessionWorkoutLogPageError } from "./extraction/candidate.js";
 import { createOpenClawExtractionRuntime } from "./extraction/openclaw.js";
 import type { ExtractionRuntime } from "./extraction/runtime.js";
 import {
@@ -513,12 +514,25 @@ export function registerStellaFitnessPlugin(
         signal: new AbortController().signal,
       };
       const correctionId = workoutLogCorrectionId(event);
-      const result = correctionId === undefined
-        ? await stellaRuntime.ingestWorkoutLog(request)
-        : await stellaRuntime.correctWorkoutLog({
-            ...request,
-            replacesObservationId: correctionId,
-          });
+      let result;
+      try {
+        result = correctionId === undefined
+          ? await stellaRuntime.ingestWorkoutLog(request)
+          : await stellaRuntime.correctWorkoutLog({
+              ...request,
+              replacesObservationId: correctionId,
+            });
+      } catch (error) {
+        if (error instanceof MultiSessionWorkoutLogPageError) {
+          return {
+            handled: true,
+            reply: {
+              text: "Please crop the photo to exactly one session block and send it again.",
+            },
+          };
+        }
+        throw error;
+      }
       return {
         handled: true,
         reply: { text: formatWorkoutLogResult(result) },

@@ -15,6 +15,12 @@ const ordinaryCandidate = {
       actionQuality: field("高"),
       problemNote: field(null),
     },
+    ordinaryExercise("哑铃卧推", "dumbbell-bench-press"),
+    ordinaryExercise("哑铃硬拉", "dumbbell-deadlift"),
+    {
+      ...ordinaryExercise("平板支撑", "plank"),
+      load: field({ kind: "none", raw: "-" }),
+    },
   ],
   uncertainFields: [
     {
@@ -70,4 +76,15 @@ function field(value, confidence = "high") {
 
 function strengthResult(exerciseId, test, result) {
   return { exerciseId: field(exerciseId), test, result: field(result) };
+}
+
+function ordinaryExercise(rawLabel, exerciseId) {
+  return {
+    rawLabel: field(rawLabel),
+    exerciseId: field(exerciseId),
+    load: field({ kind: "kg", value: 20, unit: "kg", raw: "20" }),
+    sets: [field(10), field(null)],
+    actionQuality: field("高"),
+    problemNote: field(null),
+  };
 }

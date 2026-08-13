@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createOpenClawExtractionRuntime } from "../src/extraction/openclaw.js";
+import {
+  createOpenClawExtractionRuntime,
+  StructuredExtractionProviderUnavailableError,
+} from "../src/extraction/openclaw.js";
 import { sanitizedMediaFixture } from "./support/sanitized-media.js";
 
 describe("OpenClaw structured extraction adapter", () => {
@@ -34,14 +37,14 @@ describe("OpenClaw structured extraction adapter", () => {
         jsonMode: true,
         schemaName: "stella_workout_log_candidate_v2",
         jsonSchema: expect.objectContaining({
-          oneOf: [
+          oneOf: expect.arrayContaining([
             expect.objectContaining({
               required: expect.arrayContaining(["exercises"]),
             }),
             expect.objectContaining({
               required: expect.arrayContaining(["testResults"]),
             }),
-          ],
+          ]),
         }),
         input: [
           {
@@ -97,8 +100,145 @@ describe("OpenClaw structured extraction adapter", () => {
 
     await expect(extraction).rejects.toMatchObject({ name: "AbortError" });
   });
+
+  it("normalizes bounded model aliases and uncertainty paths before candidate validation", async () => {
+    const parsed = ordinaryCandidateFromLiveModel();
+    const extractStructuredWithModel = vi.fn().mockResolvedValue({
+      text: JSON.stringify(parsed),
+      parsed,
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      contentType: "json",
+    });
+    const runtime = createOpenClawExtractionRuntime({
+      extractStructuredWithModel,
+      openclawConfig: {},
+      model: { provider: "codex", model: "gpt-5.6-sol" },
+    });
+
+    await expect(runtime.extract({
+      runId: "live-model-aliases",
+      media: sanitizedFixture(),
+      timeoutMs: 1_500,
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({
+      parsed: {
+        sessionType: { value: "full-body", confidence: "low" },
+        exercises: [
+          { exerciseId: { value: "goblet-squat", confidence: "high" } },
+          { exerciseId: { value: "dumbbell-bench-press", confidence: "high" } },
+          { exerciseId: { value: "dumbbell-deadlift", confidence: "high" } },
+          { exerciseId: { value: "plank", confidence: "high" } },
+        ],
+        uncertainFields: [
+          expect.objectContaining({
+            path: "sessionType.value",
+            candidates: ["full-body"],
+          }),
+          expect.objectContaining({ path: "exercises[3].load.value" }),
+        ],
+      },
+    });
+  });
+
+  it("asks the provider to abstain when one image contains multiple session blocks", async () => {
+    const extractStructuredWithModel = vi.fn().mockResolvedValue({
+      text: '{"layout":"multi-session-page","reason":"multiple-session-blocks"}',
+      parsed: {
+        layout: "multi-session-page",
+        reason: "multiple-session-blocks",
+      },
+    });
+    const runtime = createOpenClawExtractionRuntime({
+      extractStructuredWithModel,
+      openclawConfig: {},
+      model: { provider: "codex", model: "gpt-5.6-sol" },
+    });
+
+    const result = await runtime.extract({
+      runId: "multi-session-page",
+      media: sanitizedFixture(),
+      timeoutMs: 1_500,
+      signal: new AbortController().signal,
+    });
+
+    const request = extractStructuredWithModel.mock.calls[0]?.[0];
+    expect(request.instructions).toContain("exactly one session block");
+    expect(request.instructions).toContain("multi-session-page");
+    expect(request.jsonSchema.oneOf).toContainEqual(
+      expect.objectContaining({
+        required: ["layout", "reason"],
+        properties: expect.objectContaining({
+          layout: { const: "multi-session-page" },
+        }),
+      }),
+    );
+    expect(result.parsed).toEqual({
+      layout: "multi-session-page",
+      reason: "multiple-session-blocks",
+    });
+  });
+
+  it("reports an explicit compatibility error when the selected provider lacks structured extraction", async () => {
+    const extractStructuredWithModel = vi.fn().mockRejectedValue(
+      new Error("Provider does not support structured extraction: codex"),
+    );
+    const runtime = createOpenClawExtractionRuntime({
+      extractStructuredWithModel,
+      openclawConfig: {},
+      model: { provider: "codex", model: "gpt-5.6-sol" },
+    });
+
+    await expect(runtime.extract({
+      runId: "unsupported-provider",
+      media: sanitizedFixture(),
+      timeoutMs: 1_500,
+      signal: new AbortController().signal,
+    })).rejects.toEqual(
+      new StructuredExtractionProviderUnavailableError("codex", "gpt-5.6-sol"),
+    );
+  });
 });
 
 function sanitizedFixture() {
   return sanitizedMediaFixture(Buffer.from("sanitized-image"), "sanitized.jpg");
+}
+
+function ordinaryCandidateFromLiveModel() {
+  const field = <T>(value: T, confidence: "high" | "low" = "high") => ({
+    value,
+    confidence,
+  });
+  const exercise = (rawLabel: string, exerciseId: string) => ({
+    rawLabel: field(rawLabel),
+    exerciseId: field(exerciseId),
+    load: field(null),
+    sets: [field(10)],
+    actionQuality: field(null),
+    problemNote: field(null),
+  });
+  return {
+    layout: field("zhuoshu-three-stage-workbook"),
+    stage: field(1),
+    week: field(1),
+    weekday: field("friday"),
+    sessionType: field("full_body_training", "low"),
+    exercises: [
+      exercise("高脚杯深蹲", "goblet_squat"),
+      exercise("哑铃卧推", "dumbbell_bench_press"),
+      exercise("哑铃硬拉", "dumbbell_deadlift"),
+      exercise("平板支撑", "plank"),
+    ],
+    uncertainFields: [
+      {
+        path: "sessionType.value",
+        kind: "low-confidence",
+        candidates: ["full_body_training"],
+      },
+      {
+        path: "exercises[3].load",
+        kind: "unknown",
+      },
+    ],
+  };
 }

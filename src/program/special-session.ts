@@ -58,16 +58,14 @@ export function resolveSpecialSession(options: {
   return plannedSession;
 }
 
-export function resolveRecoverySession(options: {
+export function resolveOrdinarySession(options: {
   readonly candidate: OrdinaryWorkoutLogCandidate;
   readonly program: ProgramSpec;
   readonly state: ProgramState;
-}):
-  | {
-      readonly candidate: OrdinaryWorkoutLogCandidate;
-      readonly plannedSession: PlannedSession & { readonly recovery: true };
-    }
-  | undefined {
+}): {
+  readonly candidate: OrdinaryWorkoutLogCandidate;
+  readonly plannedSession: PlannedSession;
+} {
   const plannedSession = resolvePlannedSession({
     program: options.program,
     programVersion: options.state.program.version,
@@ -77,28 +75,48 @@ export function resolveRecoverySession(options: {
   if (plannedSession?.type === "strength-test") {
     throw new Error("Strength-test photos must use the strength_test layout");
   }
-  if (plannedSession === null || !plannedSession.recovery) {
-    return undefined;
+  if (plannedSession === null) {
+    throw new Error("Workout photo does not identify a planned session");
   }
-  const plannedExercises = new Set(
+  const expectedPhase = `phase-${options.candidate.stage.value}`;
+  if (
+    plannedSession.cycle.phase !== expectedPhase ||
+    plannedSession.cycle.week !== options.candidate.week.value ||
+    plannedSession.day !== options.candidate.weekday.value
+  ) {
+    throw new Error("Workout photo location does not match its planned session");
+  }
+  if (
+    !plannedSession.recovery &&
+    plannedSession.type !== options.candidate.sessionType.value
+  ) {
+    throw new Error("Workout photo type does not match its planned session");
+  }
+  const plannedExercises = new Set<string>(
     plannedSession.exercises.map(({ exerciseId }) => exerciseId),
   );
+  const candidateExerciseIds = options.candidate.exercises.map(
+    ({ exerciseId }) => exerciseId.value,
+  );
+  const candidateExercises = new Set(candidateExerciseIds);
   if (
-    options.candidate.exercises.some(
-      ({ exerciseId }) => !plannedExercises.has(exerciseId.value),
-    )
+    candidateExercises.size !== candidateExerciseIds.length ||
+    candidateExercises.size !== plannedExercises.size ||
+    candidateExerciseIds.some((exerciseId) => !plannedExercises.has(exerciseId))
   ) {
-    throw new Error("Recovery photo contains an exercise outside its planned session");
+    throw new Error("Workout photo exercises do not match its planned session");
   }
   return {
-    candidate: {
-      ...options.candidate,
-      sessionType: {
-        value: plannedSession.type,
-        confidence: "high",
-      },
-    },
-    plannedSession: plannedSession as PlannedSession & { readonly recovery: true },
+    candidate: plannedSession.recovery
+      ? {
+          ...options.candidate,
+          sessionType: {
+            value: plannedSession.type,
+            confidence: "high",
+          },
+        }
+      : options.candidate,
+    plannedSession,
   };
 }
 

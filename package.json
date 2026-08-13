@@ -29,7 +29,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:deterministic": "vitest run",
-    "test:live-model": "node scripts/verify-live-model-gate.mjs",
+    "test:live-model": "node scripts/live-model-benchmark.mjs",
     "test:watch": "vitest",
     "verify:internal": "npm run typecheck && npm run test:deterministic && npm run build && npm run verify:package && npm run verify:clean-install",
     "verify:package": "node scripts/verify-package.mjs",

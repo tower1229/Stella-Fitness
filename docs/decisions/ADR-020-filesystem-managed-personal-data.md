@@ -5,7 +5,9 @@
 
 ## Decision
 
-Stella Fitness v1 does not provide Plugin-level delete, export, backup, retention-policy, or recycle-bin features. The user-configured Personal Data Directory is itself the complete, portable data artifact and is managed with normal filesystem or Personal Data Repository tools.
+Stella Fitness v1 does not provide general-purpose Plugin-level delete, export, backup, retention-policy, or recycle-bin features. The user-configured Personal Data Directory is itself the complete, portable data artifact and is managed with normal filesystem or Personal Data Repository tools.
+
+The one narrow delete exception is part of the Program Journey recording workflow specified by Issues #22 and #27: when the user explicitly invalidates an active baseline or checkpoint BodyWeight Observation, the Plugin appends a canonical deletion record with provenance and rebuilds the journey and fact views. This does not expose arbitrary file deletion or a general data-maintenance surface; filesystem deletion remains the mechanism for all other user-managed data removal.
 
 The Plugin must nevertheless honor filesystem changes as part of its data contract:
 
@@ -19,7 +21,7 @@ Copying the directory is the v1 export mechanism. Backup history, Git history, r
 
 ## Consequences
 
-- v1 has no parallel data-maintenance UI or command surface.
+- v1 has no parallel general-purpose data-maintenance UI or command surface; the Program Journey may expose only its provenance-preserving BodyWeight Observation invalidation command.
 - The on-disk layout, schema versions, relative references, and validation errors must be documented and human-navigable.
 - Acceptance tests exercise external file deletion/editing followed by rescan and deterministic rebuild.
 - User correction through the core extraction workflow remains supported; it is distinct from general-purpose data maintenance.

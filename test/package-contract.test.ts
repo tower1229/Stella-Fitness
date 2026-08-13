@@ -21,7 +21,7 @@ describe("installable Plugin package contract", () => {
       scripts: {
         "verify:internal": expect.any(String),
         "test:deterministic": "vitest run",
-        "test:live-model": expect.any(String),
+        "test:live-model": "node scripts/live-model-benchmark.mjs",
         "verify:clean-install": "node scripts/verify-clean-install.mjs",
         "verify:clawhub": "node scripts/verify-clawhub.mjs",
         "verify:release": expect.stringContaining("verify:clawhub"),

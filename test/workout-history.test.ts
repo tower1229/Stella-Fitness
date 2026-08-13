@@ -329,7 +329,7 @@ describe("workout history", () => {
     const firstCycle = harness(
       personalDataDirectory,
       new ControlledExtractionRuntime([
-        { parsed: workoutLogCandidate(), metadata: { provider: "controlled" } },
+        { parsed: plannedWorkoutLogCandidate(), metadata: { provider: "controlled" } },
       ]),
     );
     await activateProgramFixture({ personalDataDirectory, programSpec: programFixture() });
@@ -343,7 +343,7 @@ describe("workout history", () => {
     const secondCycle = harness(
       personalDataDirectory,
       new ControlledExtractionRuntime([
-        { parsed: workoutLogCandidate(), metadata: { provider: "controlled" } },
+        { parsed: plannedWorkoutLogCandidate(), metadata: { provider: "controlled" } },
       ]),
     );
 
@@ -527,4 +527,35 @@ function programFixture(): unknown {
       "utf8",
     ),
   );
+}
+
+function plannedWorkoutLogCandidate() {
+  const candidate = workoutLogCandidate();
+  return {
+    ...candidate,
+    exercises: [
+      ...candidate.exercises,
+      workoutExercise("哑铃卧推", "dumbbell-bench-press"),
+      workoutExercise("哑铃硬拉", "dumbbell-deadlift"),
+      {
+        ...workoutExercise("平板支撑", "plank"),
+        load: field({ kind: "none", raw: "-" }),
+      },
+    ],
+  };
+}
+
+function workoutExercise(rawLabel: string, exerciseId: string) {
+  return {
+    rawLabel: field(rawLabel),
+    exerciseId: field(exerciseId),
+    load: field({ kind: "kg", value: 20, unit: "kg", raw: "20" }),
+    sets: [field(10), field(null)],
+    actionQuality: field("高"),
+    problemNote: field(null),
+  };
+}
+
+function field<T>(value: T) {
+  return { value, confidence: "high" as const };
 }

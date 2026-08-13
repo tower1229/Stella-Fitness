@@ -79,6 +79,28 @@ function fieldSchema(value: Readonly<Record<string, unknown>>) {
 }
 
 const NULLABLE_STRING = { type: ["string", "null"] } as const;
+const ORDINARY_SESSION_TYPES = [
+  "full-body",
+  "torso",
+  "limbs",
+  "torso-recovery",
+  "limbs-recovery",
+] as const;
+const CANONICAL_EXERCISE_IDS = [
+  "goblet-squat",
+  "dumbbell-bench-press",
+  "dumbbell-deadlift",
+  "plank",
+  "pull-up",
+  "dumbbell-overhead-press",
+  "dumbbell-lateral-raise",
+  "push-up",
+  "one-arm-dumbbell-row",
+  "dumbbell-curl",
+  "dumbbell-hammer-curl",
+] as const;
+const UNCERTAINTY_PATH_PATTERN =
+  "^(layout|stage|week|weekday|sessionType)\\.value$|^exercises\\[\\d+\\]\\.(rawLabel|exerciseId|load|actionQuality|problemNote)\\.value$|^exercises\\[\\d+\\]\\.sets\\[\\d+\\]\\.value$|^testResults\\[\\d+\\]\\.(exerciseId|result)\\.value$";
 const LOAD_SCHEMA = {
   anyOf: [
     { type: "null" },
@@ -145,7 +167,7 @@ const ORDINARY_WORKOUT_LOG_CANDIDATE_SCHEMA = {
       type: "string",
       enum: ["monday", "tuesday", "wednesday", "thursday", "friday"],
     }),
-    sessionType: fieldSchema({ type: "string", minLength: 1 }),
+    sessionType: fieldSchema({ type: "string", enum: ORDINARY_SESSION_TYPES }),
     exercises: {
       type: "array",
       minItems: 1,
@@ -162,7 +184,10 @@ const ORDINARY_WORKOUT_LOG_CANDIDATE_SCHEMA = {
         ],
         properties: {
           rawLabel: fieldSchema({ type: "string", minLength: 1 }),
-          exerciseId: fieldSchema({ type: "string", minLength: 1 }),
+          exerciseId: fieldSchema({
+            type: "string",
+            enum: CANONICAL_EXERCISE_IDS,
+          }),
           load: fieldSchema(LOAD_SCHEMA),
           sets: {
             type: "array",
@@ -186,7 +211,7 @@ const ORDINARY_WORKOUT_LOG_CANDIDATE_SCHEMA = {
         additionalProperties: false,
         required: ["path", "kind"],
         properties: {
-          path: { type: "string", minLength: 1 },
+          path: { type: "string", pattern: UNCERTAINTY_PATH_PATTERN },
           kind: {
             type: "string",
             enum: [
@@ -279,12 +304,83 @@ const SPECIAL_SESSION_CANDIDATE_SCHEMA = {
   },
 } as const;
 
+const MULTI_SESSION_PAGE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["layout", "reason"],
+  properties: {
+    layout: { const: "multi-session-page" },
+    reason: { const: "multiple-session-blocks" },
+  },
+} as const;
+
 export const WORKOUT_LOG_CANDIDATE_SCHEMA = {
   oneOf: [
     ORDINARY_WORKOUT_LOG_CANDIDATE_SCHEMA,
     SPECIAL_SESSION_CANDIDATE_SCHEMA,
+    MULTI_SESSION_PAGE_SCHEMA,
   ],
 } as const;
+
+const SESSION_TYPE_ALIASES: Readonly<Record<string, string>> = {
+  full_body: "full-body",
+  full_body_training: "full-body",
+  "full-body-training": "full-body",
+  全身训练: "full-body",
+  躯干训练: "torso",
+  四肢训练: "limbs",
+};
+
+const CANONICAL_EXERCISE_ID_SET = new Set<string>(CANONICAL_EXERCISE_IDS);
+
+export function normalizeWorkoutLogExtraction(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  const normalized = structuredClone(value);
+  if (!isRecord(normalized)) return value;
+  normalizeFieldAlias(normalized.sessionType, SESSION_TYPE_ALIASES);
+  if (Array.isArray(normalized.exercises)) {
+    for (const exercise of normalized.exercises) {
+      if (!isRecord(exercise) || !isRecord(exercise.exerciseId)) continue;
+      const exerciseId = exercise.exerciseId.value;
+      if (typeof exerciseId !== "string") continue;
+      const hyphenated = exerciseId.replaceAll("_", "-");
+      if (CANONICAL_EXERCISE_ID_SET.has(hyphenated)) {
+        exercise.exerciseId.value = hyphenated;
+      }
+    }
+  }
+  if (Array.isArray(normalized.uncertainFields)) {
+    for (const uncertainty of normalized.uncertainFields) {
+      if (!isRecord(uncertainty) || typeof uncertainty.path !== "string") continue;
+      uncertainty.path = normalizeUncertaintyPath(uncertainty.path);
+      if (
+        uncertainty.path === "sessionType.value" &&
+        Array.isArray(uncertainty.candidates)
+      ) {
+        uncertainty.candidates = uncertainty.candidates.map((candidate) =>
+          typeof candidate === "string"
+            ? (SESSION_TYPE_ALIASES[candidate] ?? candidate)
+            : candidate
+        );
+      }
+    }
+  }
+  return normalized;
+}
+
+function normalizeFieldAlias(
+  field: unknown,
+  aliases: Readonly<Record<string, string>>,
+): void {
+  if (!isRecord(field) || typeof field.value !== "string") return;
+  field.value = aliases[field.value] ?? field.value;
+}
+
+function normalizeUncertaintyPath(path: string): string {
+  if (parseWorkoutLogFieldPath(path) !== undefined) return path;
+  const candidate = `${path}.value`;
+  return parseWorkoutLogFieldPath(candidate) === undefined ? path : candidate;
+}
 
 export class InvalidWorkoutLogCandidateError extends Error {
   constructor() {
@@ -293,9 +389,22 @@ export class InvalidWorkoutLogCandidateError extends Error {
   }
 }
 
+export class MultiSessionWorkoutLogPageError extends Error {
+  constructor() {
+    super("Workout-log image contains multiple session blocks; crop to exactly one session");
+    this.name = "MultiSessionWorkoutLogPageError";
+  }
+}
+
 export function parseWorkoutLogCandidate(value: unknown): WorkoutLogCandidate {
   if (!isRecord(value)) {
     throw new InvalidWorkoutLogCandidateError();
+  }
+  if (
+    value.layout === "multi-session-page" &&
+    value.reason === "multiple-session-blocks"
+  ) {
+    throw new MultiSessionWorkoutLogPageError();
   }
   if (value.layout !== undefined && isCandidateField(
     value.layout,

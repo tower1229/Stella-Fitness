@@ -37,4 +37,4 @@ onboarding 不要求健康档案、营养目标或监督策略配置。
 
 不得把产品描述为 AI 私教、训练监督、营养识别、健康风险筛查或医疗能力。
 
-在 #3 获得真实填写训练日志照片、人工 ground truth 与 live provider 结果前，不得宣称固定 layout 数字准确率或裁剪 abstention 已完成。
+仓库和安装包不分发私有 benchmark。只有经授权的本地真实照片、人工 ground truth、完整模板布局覆盖和 live provider gate 全部通过后，才能宣称固定 layout 数字准确率或裁剪 abstention 已完成；2026-08-13 的第一阶段私有 pilot 因 identity、abstention 和覆盖不足仍未通过。

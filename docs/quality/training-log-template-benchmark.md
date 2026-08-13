@@ -85,8 +85,11 @@ regular_training_block | strength_test_block
 
 - 模板源文件：已提供；
 - 模板结构审计：已完成；
-- 真实手写照片集：未准备；
-- 人工 ground truth：未准备；
+- 真实手写照片集：本机私有 2 张，已按用户授权生成 2 个净化全页样本和 5 个单区块裁切样本，不进入 Git 或 package；
+- 人工 ground truth：上述 7 个本地样本已于 2026-08-13 确认；
+- 布局覆盖：仅 `crop-required` 与第一阶段常规全身训练，仍缺第二/三阶段和力量测试；
+- 当前 live 结果：`codex/gpt-5.6-sol` 的 structured validity、crop-required accuracy、critical numeric、blank preservation、set semantic 和 plan leakage 均通过；identity accuracy 95%，abstention precision 31.25%，abstention recall 17.86%，median latency 24.91s，gate failed；
+- 模型成本与 Provider 条款证据：未完成；
 - 模型选择：仍不得开始冻结。
 
-因此“训练日志模板选择”可以关闭，但 `GAP-014` 的真实 benchmark artifact 仍保持 OPEN。
+因此“训练日志模板选择”可以关闭，但 `GAP-014` 仍保持 OPEN；当前私有第一阶段 pilot 不能替代完整模板覆盖或可分发 benchmark artifact。

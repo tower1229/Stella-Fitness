@@ -16,9 +16,11 @@
 
 **状态：EXTRACTION MODEL SELECTION BLOCKED**
 
-固定模板 benchmark 规范已存在，但仍缺真实填写、拍摄噪声和人工 ground truth。该项阻止选择默认 extraction model，不阻止使用 deterministic fixtures 开始基础实现。
+固定模板 benchmark 规范已存在。2026-08-13 已用 2 张经用户明确授权的真实填写照片建立本机私有 benchmark：2 个全页 crop-required 样本、5 个第一阶段常规训练裁切样本及人工确认 ground truth。图片、ground truth 和逐例输出均在 Git 忽略目录中，不属于仓库、安装包或公开 fixture。
 
-确定性 CI 与 live-model gate 已分离；`npm run test:live-model` 在这些真实材料缺失时 fail closed，不把本地 fixture 结果计作 #3 完成证据。
+当前 `codex/gpt-5.6-sol` 结果通过结构有效性、全页裁切判断、关键数字、空白保持、set 语义和 plan-leakage 检查，但 identity accuracy 为 95%，abstention precision/recall 为 31.25%/17.86%，且只覆盖 5 个要求布局中的 2 个，因此 live-model gate 仍失败。第二/三阶段、力量测试、成本和 Provider 条款证据仍缺失，默认 extraction model 继续保持 selection blocked。
+
+确定性 CI 与 live-model gate 保持分离；本机私有 pilot 不进入 deterministic suite，也不构成公开发行或真实 Telegram E2E 证据。
 
 ## GAP-004：课程派生制品发行授权
 

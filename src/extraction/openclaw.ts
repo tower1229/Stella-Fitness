@@ -7,6 +7,8 @@ import type {
 } from "./runtime.js";
 import { rejectOnAbort, throwIfAborted } from "./cancellation.js";
 import { WORKOUT_LOG_CANDIDATE_SCHEMA } from "./candidate.js";
+import { normalizeWorkoutLogExtraction } from "./candidate.js";
+import { WORKOUT_LOG_EXTRACTION_INSTRUCTIONS } from "./instructions.js";
 
 type ExtractStructuredWithModel =
   OpenClawPluginApi["runtime"]["mediaUnderstanding"]["extractStructuredWithModel"];
@@ -27,33 +29,45 @@ export function createOpenClawExtractionRuntime(
     async extract(request: ExtractionRequest): Promise<ExtractionResult> {
       throwIfAborted(request.signal);
 
-      const extraction = options.extractStructuredWithModel({
-        input: [
-          {
-            type: "image",
-            buffer: request.media.bytes,
-            fileName: request.media.fileName,
-            mime: request.media.mime,
-          },
-        ],
-        instructions:
-          "Extract only candidate facts from the fixed Zhuoshu three-stage workout workbook. Classify ordinary pages as zhuoshu-three-stage-workbook and strength-test pages as zhuoshu-strength-test-block. Use strength_test for Week 4 Friday and end_of_cycle_retest only for the post-cycle 12RM retest. Identify stage, week, weekday, session type, ordinary exercises or strength-test results, load semantics, set-cell values, action quality, notes, field confidence, and uncertainty. Treat intentionally blank actual cells as null. Never copy ProgramSpec targets into blank actual cells. Never treat the pull-up max result as a replacement for programmed total reps. Do not diagnose, advise, or infer health, safety, nutrition, or training quality.",
-        schemaName: "stella_workout_log_candidate_v2",
-        jsonSchema: WORKOUT_LOG_CANDIDATE_SCHEMA,
-        jsonMode: true,
-        cfg: options.openclawConfig,
-        provider: options.model.provider,
-        model: options.model.model,
-        timeoutMs: request.timeoutMs,
-      });
-
-      const result = await rejectOnAbort(extraction, request.signal);
+      let result: Awaited<ReturnType<ExtractStructuredWithModel>>;
+      try {
+        const extraction = options.extractStructuredWithModel({
+          input: [
+            {
+              type: "image",
+              buffer: request.media.bytes,
+              fileName: request.media.fileName,
+              mime: request.media.mime,
+            },
+          ],
+          instructions: WORKOUT_LOG_EXTRACTION_INSTRUCTIONS,
+          schemaName: "stella_workout_log_candidate_v2",
+          jsonSchema: WORKOUT_LOG_CANDIDATE_SCHEMA,
+          jsonMode: true,
+          cfg: options.openclawConfig,
+          provider: options.model.provider,
+          model: options.model.model,
+          timeoutMs: request.timeoutMs,
+        });
+        result = await rejectOnAbort(extraction, request.signal);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.includes("does not support structured extraction")
+        ) {
+          throw new StructuredExtractionProviderUnavailableError(
+            options.model.provider,
+            options.model.model,
+          );
+        }
+        throw error;
+      }
       if (result.parsed === undefined) {
         throw new Error("OpenClaw returned no structured extraction result");
       }
 
       return {
-        parsed: result.parsed,
+        parsed: normalizeWorkoutLogExtraction(result.parsed),
         metadata: compactMetadata({
           provider: result.provider,
           model: result.model,
@@ -62,6 +76,20 @@ export function createOpenClawExtractionRuntime(
       };
     },
   };
+}
+
+export class StructuredExtractionProviderUnavailableError extends Error {
+  readonly provider: string;
+  readonly model: string;
+
+  constructor(provider: string, model: string) {
+    super(
+      `OpenClaw provider ${provider}/${model} does not support structured extraction`,
+    );
+    this.name = "StructuredExtractionProviderUnavailableError";
+    this.provider = provider;
+    this.model = model;
+  }
 }
 
 function compactMetadata(metadata: {

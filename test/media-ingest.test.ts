@@ -5,6 +5,9 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -40,16 +43,9 @@ describe("workout-log Raw Artifact ingest", () => {
   it("preserves the original and submits only an oriented metadata-free payload", async () => {
     const directories = temporaryDirectories();
     const rawBytes = await orientedJpeg();
-    const runtime = new ControlledExtractionRuntime([
-      {
-        parsed: candidate(),
-        metadata: {
-          provider: "controlled",
-          model: "fixture-v1",
-          contentType: "json",
-        },
-      },
-    ]);
+    const runtime = new InspectingExtractionRuntime(
+      directories.runtimeDirectory,
+    );
     const harness = readyHarness(runtime, directories);
 
     const output = await harness.ingestWorkoutLog({
@@ -83,6 +79,12 @@ describe("workout-log Raw Artifact ingest", () => {
     ).toEqual(output.artifact);
 
     expect(runtime.requests).toHaveLength(1);
+    expect(runtime.runtimeFilesDuringExtraction).toEqual([
+      expect.stringMatching(/^sanitized-media\/[0-9a-f-]+\.png$/u),
+    ]);
+    expect(runtime.runtimeFileMode).toBe(0o600);
+    expect(runtime.runtimeDirectoryMode).toBe(0o700);
+    expect(runtime.runtimeFileBytes).toEqual(runtime.requests[0]!.media.bytes);
     const submitted = runtime.requests[0]!.media;
     expect(submitted.mime).toBe("image/png");
     expect(submitted.fileName).toMatch(/\.png$/u);
@@ -259,7 +261,7 @@ describe("workout-log Raw Artifact ingest", () => {
 
   it("disposes a sanitized buffer that resolves after cancellation", async () => {
     const directories = temporaryDirectories();
-    const sanitizer = new DelayedMediaSanitizer();
+    const sanitizer = new DelayedMediaSanitizer(directories.runtimeDirectory);
     const harness = createScenarioHarness({
       extractionRuntime: new ControlledExtractionRuntime([]),
       mediaSanitizer: sanitizer,
@@ -283,6 +285,7 @@ describe("workout-log Raw Artifact ingest", () => {
     await vi.waitFor(() =>
       expect(sanitizer.bytes.every((byte) => byte === 0)).toBe(true),
     );
+    expect(filesUnder(directories.runtimeDirectory)).toEqual([]);
   });
 
   it("keeps runtime execution metadata when candidate validation fails", async () => {
@@ -317,6 +320,35 @@ describe("workout-log Raw Artifact ingest", () => {
       },
     });
   });
+
+  it("fails closed with an explicit crop-required error for a multi-session page", async () => {
+    const directories = temporaryDirectories();
+    const runtime = new ControlledExtractionRuntime([
+      {
+        parsed: {
+          layout: "multi-session-page",
+          reason: "multiple-session-blocks",
+        },
+        metadata: { provider: "controlled", model: "fixture-v1" },
+      },
+    ]);
+    const harness = readyHarness(runtime, directories);
+
+    await expect(harness.ingestWorkoutLog({
+      runId: "media-multi-session-page",
+      upload: upload(await orientedJpeg()),
+      timeoutMs: 2_000,
+    })).rejects.toMatchObject({
+      name: "MultiSessionWorkoutLogPageError",
+      message: expect.stringContaining("crop"),
+    });
+
+    expect(singleProcessingRecord(directories)).toMatchObject({
+      status: "failed",
+      errorCategory: "invalid-result",
+      execution: { provider: "controlled", model: "fixture-v1" },
+    });
+  });
 });
 
 function readyHarness(
@@ -345,6 +377,36 @@ class RejectingExtractionRuntime implements ExtractionRuntime {
   }
 }
 
+class InspectingExtractionRuntime extends ControlledExtractionRuntime {
+  runtimeFilesDuringExtraction: string[] = [];
+  runtimeFileBytes?: Buffer;
+  runtimeFileMode?: number;
+  runtimeDirectoryMode?: number;
+
+  constructor(readonly runtimeDirectory: string) {
+    super([{
+      parsed: candidate(),
+      metadata: {
+        provider: "controlled",
+        model: "fixture-v1",
+        contentType: "json",
+      },
+    }]);
+  }
+
+  override async extract(request: ExtractionRequest): Promise<ExtractionResult> {
+    this.runtimeFilesDuringExtraction = filesUnder(this.runtimeDirectory);
+    const [runtimeFile] = this.runtimeFilesDuringExtraction;
+    if (runtimeFile !== undefined) {
+      const absolutePath = join(this.runtimeDirectory, runtimeFile);
+      this.runtimeFileBytes = readFileSync(absolutePath);
+      this.runtimeFileMode = statSync(absolutePath).mode & 0o777;
+      this.runtimeDirectoryMode = statSync(dirname(absolutePath)).mode & 0o777;
+    }
+    return await super.extract(request);
+  }
+}
+
 class PendingExtractionRuntime implements ExtractionRuntime {
   transientBytes?: Buffer;
 
@@ -365,6 +427,8 @@ class DelayedMediaSanitizer implements MediaSanitizer {
   started = false;
   #resolve?: (lease: SanitizedMediaLease) => void;
 
+  constructor(readonly runtimeDirectory: string) {}
+
   async sanitize(): Promise<SanitizedMediaLease> {
     this.started = true;
     return await new Promise<SanitizedMediaLease>((resolve) => {
@@ -374,6 +438,10 @@ class DelayedMediaSanitizer implements MediaSanitizer {
 
   resolve(): void {
     const bytes = this.bytes;
+    const directory = join(this.runtimeDirectory, "sanitized-media");
+    const runtimePath = join(directory, "late.png");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    writeFileSync(runtimePath, bytes, { flag: "wx", mode: 0o600 });
     this.#resolve?.({
       media: {
         bytes,
@@ -383,7 +451,11 @@ class DelayedMediaSanitizer implements MediaSanitizer {
       transport: "buffer",
       sha256: sha256(bytes),
       async dispose() {
-        bytes.fill(0);
+        try {
+          unlinkSync(runtimePath);
+        } finally {
+          bytes.fill(0);
+        }
       },
     });
   }

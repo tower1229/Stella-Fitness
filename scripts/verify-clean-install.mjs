@@ -5,20 +5,23 @@ import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { verifyTelegramChannelFlow } from "./verify-channel-e2e.mjs";
+import { resolveCleanInstallNpmCache } from "./clean-install-cache.mjs";
 
 const workspace = fileURLToPath(new URL("../", import.meta.url));
 const temporaryRoot = mkdtempSync(join(tmpdir(), "stella-clean-install-"));
 const openclaw = resolve(workspace, "node_modules/.bin/openclaw");
 const stateDir = join(temporaryRoot, "state");
+const cleanInstallNpmCache = resolveCleanInstallNpmCache({
+  temporaryRoot,
+  environment: process.env,
+});
 const commandEnvironment = {
   ...process.env,
   OPENCLAW_HOME: join(temporaryRoot, "home"),
   OPENCLAW_STATE_DIR: stateDir,
   OPENCLAW_CONFIG_PATH: join(stateDir, "openclaw.json"),
-  npm_config_cache:
-    process.env.NPM_CONFIG_CACHE ??
-    process.env.npm_config_cache ??
-    join(temporaryRoot, "npm-cache"),
+  NPM_CONFIG_CACHE: cleanInstallNpmCache,
+  npm_config_cache: cleanInstallNpmCache,
 };
 const progress = (message) =>
   process.stderr.write(`[clean-install] ${message}\n`);
@@ -40,7 +43,7 @@ try {
     "--pack-destination",
     temporaryRoot,
     "--cache",
-    commandEnvironment.npm_config_cache,
+    cleanInstallNpmCache,
   ]));
   const tarball = pack.filename;
   progress("workspace packed");

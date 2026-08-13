@@ -24,7 +24,8 @@ Phase 0 已批准进入实现，Plugin foundation 与 scenario harness 已建立
 ## 规则
 
 - 每个切片必须有用户可观察的 scenario-level acceptance；
-- 模型仅用于候选字段抽取；`npm run test:deterministic` 使用 fake/recorded outputs，`npm run test:live-model` 是独立 fail-closed gate，在 #3 的真实填写照片与人工 ground truth 可用前明确保持 blocked；
+- `verify:clean-install` 默认使用隔离的临时 npm cache；需要跨次复用下载时，只接受绝对路径的 `STELLA_CLEAN_INSTALL_NPM_CACHE`，不得回退到用户级 npm cache；
+- 模型仅用于候选字段抽取；`npm run test:deterministic` 使用 fake/recorded outputs，`npm run test:live-model` 从 Git 忽略的 `.stella-benchmark/manifest.json`（或绝对路径 `STELLA_LIVE_MODEL_BENCHMARK`）读取经人工批准的私有样本，并通过绝对路径 `STELLA_LIVE_MODEL_ADAPTER` 指向的本地 operator adapter 调用真实 Provider；仓库不发现、内置或打包 Provider 私有实现。样本、adapter 缺失或未批准，布局覆盖不足或任一关键指标失败时保持 fail closed，结果仅写入本地 benchmark 目录；
 - 无效配置、ProgramSpec 和关键字段歧义 fail closed；
 - 不实现训练表现、营养、健康风险、诊断、Policy Gate 或周期监督；
 - 公开发行前保留课程授权和制品 gate。

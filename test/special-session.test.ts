@@ -546,6 +546,35 @@ function strengthTestCandidate() {
 }
 
 function recoveryCandidate(week: 8 | 12, weekday: "thursday" | "friday") {
+  const exercises = week === 12 && weekday === "thursday"
+    ? [
+        ["引体向上", "pull-up"],
+        ["哑铃卧推", "dumbbell-bench-press"],
+        ["哑铃推肩", "dumbbell-overhead-press"],
+        ["俯卧撑", "push-up"],
+        ["单臂哑铃划船", "one-arm-dumbbell-row"],
+      ] as const
+    : week === 12
+      ? [
+          ["高脚杯深蹲", "goblet-squat"],
+          ["哑铃硬拉", "dumbbell-deadlift"],
+          ["哑铃侧平举", "dumbbell-lateral-raise"],
+          ["哑铃弯举", "dumbbell-curl"],
+          ["哑铃锤式弯举", "dumbbell-hammer-curl"],
+        ] as const
+      : weekday === "thursday"
+    ? [
+        ["引体向上", "pull-up"],
+        ["哑铃卧推", "dumbbell-bench-press"],
+        ["哑铃推肩", "dumbbell-overhead-press"],
+        ["平板支撑", "plank"],
+      ] as const
+    : [
+        ["高脚杯深蹲", "goblet-squat"],
+        ["哑铃硬拉", "dumbbell-deadlift"],
+        ["哑铃侧平举", "dumbbell-lateral-raise"],
+        ["平板支撑", "plank"],
+      ] as const;
   return {
     layout: field("zhuoshu-three-stage-workbook"),
     stage: field(week === 8 ? 2 : 3),
@@ -553,20 +582,18 @@ function recoveryCandidate(week: 8 | 12, weekday: "thursday" | "friday") {
     weekday: field(weekday),
     // The fixed page can look like the ordinary split. ProgramSpec owns recovery identity.
     sessionType: field(weekday === "thursday" ? "torso" : "limbs"),
-    exercises: [
-      {
-        rawLabel: field(weekday === "thursday" ? "哑铃卧推" : "高脚杯深蹲"),
-        exerciseId: field(
-          weekday === "thursday"
-            ? "dumbbell-bench-press"
-            : "goblet-squat",
+    exercises: exercises.map(([rawLabel, exerciseId]) => ({
+        rawLabel: field(rawLabel),
+        exerciseId: field(exerciseId),
+        load: field(
+          exerciseId === "plank"
+            ? { kind: "none", raw: "-" }
+            : { kind: "kg", value: 24, unit: "kg", raw: "24" },
         ),
-        load: field({ kind: "kg", value: 24, unit: "kg", raw: "24" }),
         sets: [field(12), field(12), field(12)],
         actionQuality: field(null),
         problemNote: field(null),
-      },
-    ],
+      })),
     uncertainFields: [],
   };
 }

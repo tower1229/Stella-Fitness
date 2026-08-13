@@ -1,17 +1,21 @@
 import {
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { readFile } from "node:fs/promises";
+import { parse } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   ControlledExtractionRuntime,
   createScenarioHarness,
 } from "../src/scenario/harness.js";
+import { activateProgramFixture } from "./support/program-state.js";
 import { rawMediaUploadFixture } from "./support/sanitized-media.js";
 
 const temporaryRoots: string[] = [];
@@ -23,6 +27,162 @@ afterEach(() => {
 });
 
 describe("workout-log Observation recording", () => {
+  it("fails closed when an ordinary page session type conflicts with ProgramSpec", async () => {
+    const personalDataDirectory = temporaryDirectory("stella-personal-");
+    const runtimeDirectory = temporaryDirectory("stella-runtime-");
+    const candidate = plannedTorsoPage();
+    candidate.sessionType = field("limbs");
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([
+        { parsed: candidate, metadata: { provider: "controlled" } },
+      ]),
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => runtimeDirectory,
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+    });
+
+    await expect(harness.ingestWorkoutLog({
+      runId: "ordinary-session-mismatch",
+      upload: rawMediaUploadFixture(),
+      timeoutMs: 2_000,
+    })).rejects.toThrow("planned session");
+
+    expect(filesUnder(join(personalDataDirectory, "observations", "workout-log")))
+      .toEqual([]);
+    const processingFiles = filesUnder(
+      join(personalDataDirectory, "processing", "workout-log"),
+    );
+    expect(processingFiles).toHaveLength(1);
+    expect(JSON.parse(readFileSync(processingFiles[0]!, "utf8"))).toMatchObject({
+      status: "failed",
+      errorCategory: "invalid-result",
+    });
+  });
+
+  it.each([
+    ["has no planned date", (candidate: ReturnType<typeof plannedTorsoPage>) => {
+      candidate.weekday = field("wednesday");
+    }],
+    ["misses a planned exercise", (candidate: ReturnType<typeof plannedTorsoPage>) => {
+      candidate.exercises.pop();
+    }],
+    ["contains an extra exercise", (candidate: ReturnType<typeof plannedTorsoPage>) => {
+      candidate.exercises.push({
+        rawLabel: field("俯卧撑"),
+        exerciseId: field("push-up"),
+        load: field({ kind: "bodyweight", raw: "徒手" }),
+        sets: [field(10)],
+        actionQuality: field(null),
+        problemNote: field(null),
+      });
+    }],
+    ["duplicates a planned exercise", (candidate: ReturnType<typeof plannedTorsoPage>) => {
+      candidate.exercises[2]!.exerciseId = field("dumbbell-bench-press");
+    }],
+  ])("fails closed when an ordinary page %s", async (_label, mutate) => {
+    const personalDataDirectory = temporaryDirectory("stella-personal-");
+    const candidate = plannedTorsoPage();
+    mutate(candidate);
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([
+        { parsed: candidate, metadata: { provider: "controlled" } },
+      ]),
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => temporaryDirectory("stella-runtime-"),
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+    });
+
+    await expect(harness.ingestWorkoutLog({
+      runId: `ordinary-${String(_label).replaceAll(" ", "-")}`,
+      upload: rawMediaUploadFixture(),
+      timeoutMs: 2_000,
+    })).rejects.toThrow("planned session");
+    expect(filesUnder(join(personalDataDirectory, "observations", "workout-log")))
+      .toEqual([]);
+  });
+
+  it("revalidates ProgramSpec after workout-log confirmation", async () => {
+    const personalDataDirectory = temporaryDirectory("stella-personal-");
+    const candidate = plannedTorsoPage();
+    candidate.sessionType = field("torso", "low");
+    candidate.uncertainFields = [{
+      path: "sessionType.value",
+      kind: "conflict",
+      candidates: ["torso", "limbs"],
+    }];
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([
+        { parsed: candidate, metadata: { provider: "controlled" } },
+      ]),
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => temporaryDirectory("stella-runtime-"),
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+    });
+    const pending = await harness.ingestWorkoutLog({
+      runId: "ordinary-confirmed-mismatch",
+      upload: rawMediaUploadFixture(),
+      timeoutMs: 2_000,
+    });
+    if (pending.status !== "confirmation") {
+      throw new Error("Expected workout-log confirmation");
+    }
+
+    await expect(harness.confirmWorkoutLog({
+      confirmationId: pending.confirmationId,
+      values: { "sessionType.value": "limbs" },
+    })).rejects.toThrow("planned session");
+
+    expect(filesUnder(join(personalDataDirectory, "observations", "workout-log")))
+      .toEqual([]);
+    const processingFiles = filesUnder(
+      join(personalDataDirectory, "processing", "workout-log"),
+    );
+    expect(processingFiles).toHaveLength(2);
+    expect(
+      processingFiles.map((path) => JSON.parse(readFileSync(path, "utf8"))),
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        operation: "workout-log-confirmation",
+        status: "failed",
+        errorCategory: "invalid-result",
+      }),
+    ]));
+  });
+
+  it("records an ordinary page that matches its Planned Session", async () => {
+    const personalDataDirectory = temporaryDirectory("stella-personal-");
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([
+        { parsed: plannedTorsoPage(), metadata: { provider: "controlled" } },
+      ]),
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => temporaryDirectory("stella-runtime-"),
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+    });
+
+    await expect(harness.ingestWorkoutLog({
+      runId: "ordinary-session-match",
+      upload: rawMediaUploadFixture(),
+      timeoutMs: 2_000,
+    })).resolves.toMatchObject({ status: "recorded" });
+  });
+
   it("records a high-confidence fixed-layout page without filling blank actuals", async () => {
     const personalDataDirectory = temporaryDirectory("stella-personal-");
     const runtimeDirectory = temporaryDirectory("stella-runtime-");
@@ -485,6 +645,19 @@ function completedTorsoPage(): {
   };
 }
 
+function plannedTorsoPage(): ReturnType<typeof completedTorsoPage> {
+  const candidate = completedTorsoPage();
+  candidate.exercises.splice(2, 0, {
+    rawLabel: field("哑铃推肩"),
+    exerciseId: field("dumbbell-overhead-press"),
+    load: field({ kind: "kg", value: 12, unit: "kg", raw: "12" }),
+    sets: [field(10), field(9), field(8)],
+    actionQuality: field("中"),
+    problemNote: field(null),
+  });
+  return candidate;
+}
+
 function field<T>(value: T, confidence: "high" | "low" = "high") {
   return { value, confidence };
 }
@@ -493,4 +666,30 @@ function temporaryDirectory(prefix: string): string {
   const directory = mkdtempSync(join(tmpdir(), prefix));
   temporaryRoots.push(directory);
   return directory;
+}
+
+function filesUnder(root: string): string[] {
+  try {
+    return readdirSync(root, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => join(entry.parentPath, entry.name))
+      .sort();
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+async function programFixture(): Promise<unknown> {
+  return parse(
+    await readFile(
+      new URL(
+        "../knowledge/programs/zhuoshu-12-week/program-spec.v0.2.yaml",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
 }

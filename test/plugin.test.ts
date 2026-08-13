@@ -969,6 +969,53 @@ describe("Plugin registration", () => {
     ).toHaveLength(1);
   });
 
+  it("asks the user to crop a multi-session workout-log page", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const personalDataDirectory = configuredPersonalDirectory();
+    const mediaPath = join(
+      personalDataDirectory.personalDataDirectory,
+      "multi-session-workout.png",
+    );
+    writeFileSync(mediaPath, rawMediaUploadFixture().bytes);
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: {
+        ...personalDataDirectory,
+        extraction: {
+          provider: "operator-provider",
+          model: "operator-model",
+        },
+      },
+      openclawConfig: permittedOpenClawConfig({ allowModel: true }),
+      extractStructuredWithModel: vi.fn().mockResolvedValue({
+        parsed: {
+          layout: "multi-session-page",
+          reason: "multiple-session-blocks",
+        },
+        provider: "operator-provider",
+        model: "operator-model",
+        contentType: "json",
+      }),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(hooks.get("inbound_claim")?.({
+      content: "记录训练",
+      channel: "test-channel",
+      messageId: "multi-session-message",
+      metadata: { mediaPath, mediaType: "image/png" },
+    }, {})).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringContaining("crop the photo to exactly one session"),
+      },
+    });
+  });
+
   it("confirms uncertain image fields through a bound conversation", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const commands: Array<Record<string, unknown>> = [];

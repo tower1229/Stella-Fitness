@@ -35,7 +35,7 @@ import type {
   ExtractionRuntime,
 } from "./extraction/runtime.js";
 import {
-  createBufferMediaSanitizer,
+  createRuntimeFileMediaSanitizer,
   InvalidWorkoutLogImageError,
   type MediaSanitizer,
   type SanitizedMediaLease,
@@ -66,7 +66,7 @@ import {
 } from "./reporting/printable-log.js";
 import {
   applyStrengthTestBindings,
-  resolveRecoverySession,
+  resolveOrdinarySession,
   resolveSpecialSession,
 } from "./program/special-session.js";
 import {
@@ -253,7 +253,9 @@ export function createStellaFitnessRuntime(options: {
     Promise<PendingWorkoutLogConfirmation | undefined>
   >();
   const preflight = options.preflight;
-  const mediaSanitizer = options.mediaSanitizer ?? createBufferMediaSanitizer();
+  const mediaSanitizer = options.mediaSanitizer ?? createRuntimeFileMediaSanitizer(
+    () => requiredRuntimeDirectory(options),
+  );
   const journey = () => createProgramJourney({
     personalDataDirectory: requiredPersonalDataDirectory(options),
     runtimeDirectory: requiredRuntimeDirectory(options),
@@ -763,10 +765,15 @@ async function executeWorkoutLogIngest(options: {
       throw new ProcessingFailureError("invalid-result", error);
     }
     candidate = requireSpecialSessionConfirmation(candidate);
-    const context = await resolveCandidateSessionContext({
-      personalDataDirectory: options.personalDataDirectory,
-      candidate,
-    });
+    let context: CandidateSessionContext;
+    try {
+      context = await resolveCandidateSessionContext({
+        personalDataDirectory: options.personalDataDirectory,
+        candidate,
+      });
+    } catch (error) {
+      throw new ProcessingFailureError("invalid-result", error);
+    }
     candidate = context.candidate;
     const { plannedSession } = context;
     const replaced = options.replacesObservationId === undefined
@@ -1207,13 +1214,33 @@ async function recordConfirmedWorkoutLog(options: {
   }
   corrected.uncertainFields = [];
   let candidate = parseWorkoutLogCandidate(corrected);
-  const context = await resolveCandidateSessionContext({
-    personalDataDirectory: options.personalDataDirectory,
-    candidate,
-  });
+  const attemptedAt = new Date().toISOString();
+  let context: CandidateSessionContext;
+  try {
+    context = await resolveCandidateSessionContext({
+      personalDataDirectory: options.personalDataDirectory,
+      candidate,
+    });
+  } catch (error) {
+    await persistWorkoutLogProcessingRecord({
+      personalDataDirectory: options.personalDataDirectory,
+      record: {
+        schemaVersion: "stella-fitness/processing/workout-log/v0.1",
+        operation: "workout-log-confirmation",
+        runId: options.pending.runId,
+        startedAt: attemptedAt,
+        completedAt: new Date().toISOString(),
+        status: "failed",
+        artifact: artifactReference(options.pending.artifact),
+        execution: options.pending.execution,
+        errorCategory: "invalid-result",
+      },
+    });
+    throw error;
+  }
   candidate = context.candidate;
   const { plannedSession } = context;
-  const recordedAt = new Date().toISOString();
+  const recordedAt = attemptedAt;
   const persisted = await persistWorkoutLogObservation({
     personalDataDirectory: options.personalDataDirectory,
     candidate,
@@ -1371,14 +1398,12 @@ async function resolveCandidateSessionContext(options: {
       }),
     };
   }
-  const recovery = resolveRecoverySession({
+  const ordinary = resolveOrdinarySession({
     candidate: options.candidate,
     program: activeProgram.program,
     state: activeProgram.state,
   });
-  return recovery === undefined
-    ? { candidate: options.candidate, programContext }
-    : { ...recovery, programContext };
+  return { ...ordinary, programContext };
 }
 
 function setCandidateFieldValue(
