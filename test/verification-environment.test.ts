@@ -185,6 +185,7 @@ describe("unified verification environment", () => {
       /npm run verify:env -- "\$VERIFICATION_PROFILE" --json/u,
     );
     expect(workflow).toMatch(/if: always\(\)/u);
+    expect(workflow).toMatch(/actions\/upload-artifact@v7/u);
     expect(workflow).toMatch(
       /\.stella\/verification\/\$\{\{ matrix\.profile \}\}\.json/u,
     );
