@@ -37,7 +37,7 @@
     "verify:package": "node scripts/verify-package.mjs",
     "verify:clean-install": "node scripts/verify-clean-install.mjs",
     "verify:clawhub": "node scripts/verify-clawhub.mjs",
-    "verify:release": "npm run verify:internal && npm run verify:clawhub && node scripts/verify-release.mjs"
+    "verify:release": "npm run verify:env -- release"
   },
   "peerDependencies": {
     "openclaw": ">=2026.6.34"

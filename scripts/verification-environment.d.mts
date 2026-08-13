@@ -24,7 +24,16 @@ export interface VerificationReceipt {
   readonly status: "passed" | "failed" | "environment_blocked" | "usage_error";
   readonly exitCode: number;
   readonly reasonCode?: string;
-  readonly steps?: readonly Readonly<Record<string, unknown>>[];
+  readonly startedAt?: string;
+  readonly finishedAt?: string;
+  readonly steps?: readonly Readonly<{
+    name: string;
+    status: "passed" | "failed" | "environment_blocked";
+    exitCode: number;
+    durationMs: number;
+    signal?: NodeJS.Signals | null;
+    reasonCode?: string;
+  }>[];
 }
 
 export function resolveVerificationCache(options: {
