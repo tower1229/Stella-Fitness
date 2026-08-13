@@ -32,6 +32,8 @@
     "test:live-model": "node scripts/live-model-benchmark.mjs",
     "test:watch": "vitest",
     "verify:internal": "npm run typecheck && npm run test:deterministic && npm run build && npm run verify:package && npm run verify:clean-install",
+    "verify:env": "node scripts/run-verification.mjs",
+    "verify:network-install": "node scripts/verify-network-install.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "verify:clean-install": "node scripts/verify-clean-install.mjs",
     "verify:clawhub": "node scripts/verify-clawhub.mjs",
