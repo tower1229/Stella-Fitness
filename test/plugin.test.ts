@@ -1018,6 +1018,32 @@ describe("Plugin registration", () => {
       reply: { text: expect.stringContaining("today Planned Session: 2026-08-10") },
     });
     await expect(inbound({
+      content: "给出本周训练计划",
+      channel: "test-channel",
+      timestamp: "2026-08-14T08:02:40.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /week Planned Sessions: 2026-08-10 to 2026-08-16.+2026-08-10 monday.+type: full-body.+2026-08-11 tuesday: No Planned Session\..+2026-08-12 wednesday.+type: full-body.+2026-08-14 friday.+type: full-body.+2026-08-16 sunday: No Planned Session\./su,
+        ),
+      },
+    });
+    await expect(inbound({
+      content: "/stella-facts week 2026-08-14",
+      channel: "test-channel",
+      timestamp: "2026-08-14T08:02:50.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringContaining(
+          "week Planned Sessions: 2026-08-10 to 2026-08-16",
+        ),
+      },
+    });
+    await expect(inbound({
       content: "高脚杯深蹲当前 N 是多少？",
       channel: "test-channel",
       timestamp: "2026-08-10T08:03:00.000Z",

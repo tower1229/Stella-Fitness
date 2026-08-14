@@ -5,24 +5,37 @@ import { readActiveProgram } from "./state.js";
 export type ProgramFactsQuery =
   | { readonly kind: "today"; readonly date: string }
   | { readonly kind: "next"; readonly date: string }
+  | { readonly kind: "week"; readonly date: string }
   | { readonly kind: "symbol"; readonly exerciseId: string; readonly symbol: "A" | "N" }
   | { readonly kind: "unsupported"; readonly question: string };
+
+type PlannedSessionFacts = Omit<PlannedSession, "exercises"> & {
+  readonly exercises: readonly (PlannedExercise & {
+    readonly resolvedLoad?: {
+      readonly symbol: string;
+      readonly value: number;
+      readonly unit: "kg";
+      readonly observationId: string;
+    };
+    readonly unresolvedLoad?: UnresolvedLoad;
+  })[];
+};
 
 export type ProgramFactsResult =
   | {
       readonly kind: "planned-session-facts";
       readonly relation: "today" | "next";
-      readonly session: Omit<PlannedSession, "exercises"> & {
-        readonly exercises: readonly (PlannedExercise & {
-          readonly resolvedLoad?: {
-            readonly symbol: string;
-            readonly value: number;
-            readonly unit: "kg";
-            readonly observationId: string;
-          };
-          readonly unresolvedLoad?: UnresolvedLoad;
-        })[];
-      };
+      readonly session: PlannedSessionFacts;
+    }
+  | {
+      readonly kind: "planned-week-facts";
+      readonly startDate: string;
+      readonly endDate: string;
+      readonly days: readonly {
+        readonly date: string;
+        readonly day: Weekday;
+        readonly session: PlannedSessionFacts | null;
+      }[];
     }
   | {
       readonly kind: "symbol-fact";
@@ -56,6 +69,18 @@ type UnresolvedLoad = {
   readonly nextStep: string;
 };
 
+const MILLISECONDS_PER_DAY = 86_400_000;
+const WEEKDAYS = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+] as const;
+type Weekday = (typeof WEEKDAYS)[number];
+
 export async function queryProgramFacts(options: {
   readonly personalDataDirectory: string;
   readonly query: ProgramFactsQuery;
@@ -86,6 +111,9 @@ export async function queryProgramFacts(options: {
       observationId: binding.observationId,
     };
   }
+  if (options.query.kind === "week") {
+    return weekFacts(program, state, options.query.date);
+  }
   const relation = options.query.kind;
   const session = relation === "today"
     ? resolvePlannedSession({
@@ -99,13 +127,62 @@ export async function queryProgramFacts(options: {
   return {
     kind: "planned-session-facts",
     relation,
-    session: {
-      ...session,
-      exercises: session.exercises.map((exercise) => ({
-        ...exercise,
-        ...resolvedLoad(exercise, state.symbolicLoadBindings),
-      })),
-    },
+    session: sessionFacts(session, state.symbolicLoadBindings),
+  };
+}
+
+function weekFacts(
+  program: Awaited<ReturnType<typeof readActiveProgram>>["program"],
+  state: Awaited<ReturnType<typeof readActiveProgram>>["state"],
+  anchorDate: string,
+): Extract<ProgramFactsResult, { readonly kind: "planned-week-facts" }> {
+  const anchor = parseDate(anchorDate);
+  const daysSinceMonday = (anchor.getUTCDay() + 6) % 7;
+  const monday = new Date(
+    anchor.getTime() - daysSinceMonday * MILLISECONDS_PER_DAY,
+  );
+  const startDate = monday.toISOString().slice(0, 10);
+  const endDate = new Date(monday.getTime() + 6 * MILLISECONDS_PER_DAY)
+    .toISOString()
+    .slice(0, 10);
+  const dates = WEEKDAYS.map((day, offset) => ({
+    day,
+    date: new Date(monday.getTime() + offset * MILLISECONDS_PER_DAY)
+      .toISOString()
+      .slice(0, 10),
+  }));
+  return {
+    kind: "planned-week-facts",
+    startDate,
+    endDate,
+    days: dates.map(({ date, day }) => {
+      const session = resolvePlannedSession({
+        program,
+        programVersion: state.program.version,
+        cycleStart: state.cycle.startDate,
+        date,
+      });
+      return {
+        date,
+        day,
+        session: session === null
+          ? null
+          : sessionFacts(session, state.symbolicLoadBindings),
+      };
+    }),
+  };
+}
+
+function sessionFacts(
+  session: PlannedSession,
+  bindings: Awaited<ReturnType<typeof readActiveProgram>>["state"]["symbolicLoadBindings"],
+): PlannedSessionFacts {
+  return {
+    ...session,
+    exercises: session.exercises.map((exercise) => ({
+      ...exercise,
+      ...resolvedLoad(exercise, bindings),
+    })),
   };
 }
 

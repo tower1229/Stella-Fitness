@@ -20,7 +20,7 @@
 | prerequisite 时间、provenance 与幂等键 | Program Setup | channel replay + restart tests |
 | baseline 与三个独立 `A` 激活门禁 | Program Setup + course-start 12RM Observation | activation happy/rejection cases |
 | 星期一 cycle start | Program State | activation rejection case |
-| today/next 确定性事实问答 | Program Facts Interface | channel + scenario facts cases |
+| today/next/week 确定性事实问答 | Program Facts Interface | channel + scenario facts cases |
 | 完整 12 周可打印日志 | Printable Log Interface | fixed-digest XLSX + channel attachment |
 | Week 4/8/12 体重 checkpoint | Program Journey | phase checkpoint cases |
 | v0.1 原地幂等升级 | Program State migration | clean-install channel + repeated-upgrade scenario |

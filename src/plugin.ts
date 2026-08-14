@@ -272,7 +272,7 @@ export function registerStellaFitnessPlugin(
 
   api.registerCommand({
     name: "stella-facts",
-    description: "Read deterministic current or next Planned Session facts",
+    description: "Read deterministic today, next or week Planned Session facts",
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
@@ -1595,12 +1595,12 @@ function parseFactsCommand(args: string | undefined):
       symbol: symbolMatch[2].toUpperCase() as "A" | "N",
     };
   }
-  const match = /^\s*(today|next)(?:\s+(\d{4}-\d{2}-\d{2}))?\s*$/iu.exec(
+  const match = /^\s*(today|next|week)(?:\s+(\d{4}-\d{2}-\d{2}))?\s*$/iu.exec(
     args ?? "",
   );
   if (match?.[1] === undefined) return undefined;
   return {
-    kind: match[1].toLowerCase() as "today" | "next",
+    kind: match[1].toLowerCase() as "today" | "next" | "week",
     date: match[2] ?? new Date().toISOString().slice(0, 10),
   };
 }
@@ -1616,6 +1616,11 @@ function parseNaturalProgramFactsQuery(
   );
   if (exerciseId !== undefined && symbol !== undefined) {
     return { kind: "symbol", exerciseId, symbol };
+  }
+  if (
+    /(?:本周|这周|本星期|这星期)(?:的)?(?:训练|课程|计划|安排|练什么)|(?:给出|查看|看看|显示|告诉我|列出)(?:一下)?(?:本周|这周|本星期|这星期)(?:的)?(?:训练|课程|计划|安排)|this\s+week(?:'s)?\s+(?:workout|session|plan|schedule)/iu.test(text)
+  ) {
+    return { kind: "week", date };
   }
   if (/(?:下次(?:应该)?练什么|下次(?:训练|课程|计划)|next\s+(?:workout|session))/iu.test(text)) {
     return { kind: "next", date };
@@ -1645,7 +1650,7 @@ function isQuestion(text: string): boolean {
 }
 
 function factsUsage(): string {
-  return "Usage: /stella-facts <today|next> [YYYY-MM-DD] | weight | symbol <exercise-id> <A|N>";
+  return "Usage: /stella-facts <today|next|week> [YYYY-MM-DD] | weight | symbol <exercise-id> <A|N>";
 }
 
 function formatWeightFacts(
@@ -1690,16 +1695,39 @@ function formatProgramFacts(
 ): string {
   if (result.kind === "unsupported") return result.scope;
   if (result.kind === "no-session") return `No ${result.relation} Planned Session.`;
+  if (result.kind === "planned-week-facts") {
+    return [
+      `week Planned Sessions: ${result.startDate} to ${result.endDate}`,
+      ...result.days.flatMap(({ date, day, session }) =>
+        session === null
+          ? [`${date} ${day}: No Planned Session.`]
+          : formatPlannedSession(session, `${date} ${day}`)
+      ),
+    ].join("\n");
+  }
   if (result.kind === "symbol-fact") {
     return `${result.exerciseId} ${result.symbol}: ${result.value} ${result.unit}`;
   }
   if (result.kind === "symbol-binding-pending") {
     return `${result.exerciseId} ${result.symbol}: binding pending. next: ${result.nextStep}`;
   }
-  return [
+  return formatPlannedSession(
+    result.session,
     `${result.relation} Planned Session: ${result.session.date}`,
-    `stage: ${result.session.cycle.phase}, week: ${result.session.cycle.week}, day: ${result.session.day}, type: ${result.session.type}, recovery: ${result.session.recovery}`,
-    ...result.session.exercises.map((exercise) =>
+  ).join("\n");
+}
+
+function formatPlannedSession(
+  session: Extract<
+    Awaited<ReturnType<StellaFitnessRuntime["programFacts"]>>,
+    { readonly kind: "planned-session-facts" }
+  >["session"],
+  heading: string,
+): string[] {
+  return [
+    heading,
+    `stage: ${session.cycle.phase}, week: ${session.cycle.week}, day: ${session.day}, type: ${session.type}, recovery: ${session.recovery}`,
+    ...session.exercises.map((exercise) =>
       `- ${exercise.displayName ?? exercise.exerciseId}: prescription: ${JSON.stringify(exercise.prescription)}, rest: ${formatRest(exercise)}${
         exercise.resolvedLoad === undefined
           ? exercise.unresolvedLoad === undefined
@@ -1708,10 +1736,10 @@ function formatProgramFacts(
           : `, ${exercise.resolvedLoad.symbol}=${exercise.resolvedLoad.value} ${exercise.resolvedLoad.unit}`
       }`,
     ),
-    ...result.session.tests.map((test) =>
+    ...session.tests.map((test) =>
       `- ${test.exerciseId}: test: ${test.test}, result-binding: ${test.resultBinding}`
     ),
-  ].join("\n");
+  ];
 }
 
 function formatRest(exercise: {

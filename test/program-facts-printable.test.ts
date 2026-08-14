@@ -19,6 +19,42 @@ afterEach(() => {
 });
 
 describe("Program Facts and Printable Log", () => {
+  it("returns every day of the anchored week from the canonical ProgramSpec", async () => {
+    const harness = await activeHarness();
+
+    await expect(
+      harness.programFacts({ kind: "week", date: "2026-08-14" }),
+    ).resolves.toMatchObject({
+      kind: "planned-week-facts",
+      startDate: "2026-08-10",
+      endDate: "2026-08-16",
+      days: [
+        {
+          date: "2026-08-10",
+          day: "monday",
+          session: {
+            cycle: { week: 1, phase: "phase-1" },
+            type: "full-body",
+          },
+        },
+        { date: "2026-08-11", day: "tuesday", session: null },
+        {
+          date: "2026-08-12",
+          day: "wednesday",
+          session: { type: "full-body" },
+        },
+        { date: "2026-08-13", day: "thursday", session: null },
+        {
+          date: "2026-08-14",
+          day: "friday",
+          session: { type: "full-body" },
+        },
+        { date: "2026-08-15", day: "saturday", session: null },
+        { date: "2026-08-16", day: "sunday", session: null },
+      ],
+    });
+  });
+
   it("answers today and next session from canonical program facts and refuses unsupported advice", async () => {
     const harness = await activeHarness();
 
@@ -180,6 +216,8 @@ describe("Program Facts and Printable Log", () => {
 
     await expect(harness.programFacts({ kind: "next", date: "2026-09-06" }))
       .rejects.toThrow("PHASE_CHECKPOINT_REQUIRED");
+    await expect(harness.programFacts({ kind: "week", date: "2026-09-07" }))
+      .rejects.toThrow("PHASE_CHECKPOINT_REQUIRED");
     await expect(harness.programJourneyStatus({ date: "2026-09-07" })).resolves
       .toMatchObject({
         state: "PHASE_CHECKPOINT_REQUIRED",
@@ -200,6 +238,20 @@ describe("Program Facts and Printable Log", () => {
       .resolves.toMatchObject({
         kind: "planned-session-facts",
         session: { date: "2026-09-07", cycle: { week: 5 } },
+      });
+    await expect(harness.programFacts({ kind: "week", date: "2026-09-07" }))
+      .resolves.toMatchObject({
+        kind: "planned-week-facts",
+        startDate: "2026-09-07",
+        days: [
+          { date: "2026-09-07", session: { cycle: { week: 5 } } },
+          { date: "2026-09-08", session: { cycle: { week: 5 } } },
+          { date: "2026-09-09", session: null },
+          { date: "2026-09-10", session: { cycle: { week: 5 } } },
+          { date: "2026-09-11", session: { cycle: { week: 5 } } },
+          { date: "2026-09-12", session: null },
+          { date: "2026-09-13", session: null },
+        ],
       });
     await expect(harness.programFacts({ kind: "next", date: "2026-10-04" }))
       .rejects.toThrow("PHASE_CHECKPOINT_REQUIRED");

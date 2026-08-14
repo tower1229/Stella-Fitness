@@ -420,7 +420,9 @@ export function createStellaFitnessRuntime(options: {
       await enqueueSpecialSessionStateRebuild(requiredPersonalDataDirectory(options));
       if (query.kind !== "unsupported") {
         const status = await journey().status(
-          query.kind === "today" || query.kind === "next" ? { date: query.date } : {},
+          query.kind === "today" || query.kind === "next" || query.kind === "week"
+            ? { date: query.date }
+            : {},
         );
         if (status.state !== "ACTIVE") {
           throw new Error(`Program Facts is unavailable in ${status.state}`);

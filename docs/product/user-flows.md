@@ -54,7 +54,7 @@ Recovery session 保持来源计划中的 session identity，但系统不评价�
 
 ## 5. 事实问答与打印
 
-绑定 conversation 支持 today/next Planned Session 事实问答，以及直接获取固定 digest 的完整 12 周 XLSX。`/stella-print` 不要求 Program 已激活，不接受 today/week/phase 范围，也不在运行时生成 PDF；用户在工作簿中自行选择需要打印的页面。无法识别或超出 Program Facts 范围的问题由 Plugin 明确拒绝，不传给通用 Agent 诊断或调整计划。
+绑定 conversation 支持 today/next/week Planned Session 事实问答；week 以查询日期所在的周一至周日为边界，逐日返回 ProgramSpec 中的课程，无课程日明确显示 `No Planned Session`。系统也支持直接获取固定 digest 的完整 12 周 XLSX。`/stella-print` 不要求 Program 已激活，不接受 today/week/phase 范围，也不在运行时生成 PDF；用户在工作簿中自行选择需要打印的页面。无法识别或超出 Program Facts 范围的问题由 Plugin 明确拒绝，不传给通用 Agent 诊断或调整计划。
 
 ## 6. 纠错与删除
 
