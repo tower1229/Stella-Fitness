@@ -285,7 +285,7 @@ export function registerStellaFitnessPlugin(
       return {
         text: input.kind === "weight"
           ? formatWeightFacts(await stellaRuntime.weightFacts())
-          : formatProgramFacts(await stellaRuntime.programFacts(input)),
+          : await formatAvailableProgramFacts(stellaRuntime, input),
       };
     },
   });
@@ -448,8 +448,12 @@ export function registerStellaFitnessPlugin(
           };
         }
         if (factQuery !== undefined) {
-          const result = await stellaRuntime.programFacts(factQuery);
-          return { handled: true, reply: { text: formatProgramFacts(result) } };
+          return {
+            handled: true,
+            reply: {
+              text: await formatAvailableProgramFacts(stellaRuntime, factQuery),
+            },
+          };
         }
         if (isBodyWeightInput(boundText)) {
           const receivedAt = event.timestamp === undefined
@@ -647,12 +651,24 @@ export function registerStellaFitnessPlugin(
         });
         return { text: formatJourneyStatus(status) };
       }
+      const factQuery = parseNaturalProgramFactsQuery(
+        text,
+        new Date().toISOString().slice(0, 10),
+      );
       if (isOutOfScopeProgramQuestion(text)) {
         const result = await stellaRuntime.programFacts({
           kind: "unsupported",
           question: text,
         });
         return { text: formatProgramFacts(result) };
+      }
+      if (isWeightFactsQuery(text)) {
+        return { text: formatWeightFacts(await stellaRuntime.weightFacts()) };
+      }
+      if (factQuery !== undefined) {
+        return {
+          text: await formatAvailableProgramFacts(stellaRuntime, factQuery),
+        };
       }
       if (!isBodyWeightInput(text)) {
         return;
@@ -1036,7 +1052,7 @@ async function handleBoundStellaCommand(
           ? factsUsage()
           : input.kind === "weight"
             ? formatWeightFacts(await runtime.weightFacts())
-            : formatProgramFacts(await runtime.programFacts(input)),
+            : await formatAvailableProgramFacts(runtime, input),
       },
     };
   }
@@ -1448,6 +1464,23 @@ function formatJourneyStatus(
   ].join("\n");
 }
 
+type AvailableProgramFactsQuery = Exclude<
+  Parameters<StellaFitnessRuntime["programFacts"]>[0],
+  { readonly kind: "unsupported" }
+>;
+
+async function formatAvailableProgramFacts(
+  runtime: StellaFitnessRuntime,
+  query: AvailableProgramFactsQuery,
+): Promise<string> {
+  const status = await runtime.programJourneyStatus(
+    "date" in query ? { date: query.date } : {},
+  );
+  return status.state === "ACTIVE"
+    ? formatProgramFacts(await runtime.programFacts(query))
+    : formatJourneyStatus(status);
+}
+
 function requireDedicatedAgent(
   context: Pick<PluginCommandContext, "sessionKey">,
   api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
@@ -1583,7 +1616,7 @@ function stableConfirmationId(context: {
 }
 
 function parseFactsCommand(args: string | undefined):
-  | Parameters<StellaFitnessRuntime["programFacts"]>[0]
+  | AvailableProgramFactsQuery
   | { readonly kind: "weight" }
   | undefined {
   if (/^\s*weight\s*$/iu.test(args ?? "")) return { kind: "weight" };
@@ -1608,7 +1641,7 @@ function parseFactsCommand(args: string | undefined):
 function parseNaturalProgramFactsQuery(
   text: string,
   date: string,
-): Parameters<StellaFitnessRuntime["programFacts"]>[0] | undefined {
+): AvailableProgramFactsQuery | undefined {
   const symbol = /(?:当前|current)?\s*([AN])\s*(?:是多少|是|重量|load|weight|\?|？)/iu.exec(text)?.[1]
     ?.toUpperCase() as "A" | "N" | undefined;
   const exerciseId = INITIAL_12RM_EXERCISES.find((id) =>

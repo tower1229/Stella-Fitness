@@ -98,6 +98,15 @@ describe("Plugin registration", () => {
       message: READY_FOR_SETUP_STATUS,
       category: "plugin-command",
     });
+    await expect(hooks.get("before_agent_reply")?.(
+      { cleanedBody: "给出本周训练计划" },
+      { sessionKey: "agent:fitness:webchat:week-before-activation" },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringContaining("journey: PREREQUISITES_REQUIRED"),
+      },
+    });
     expect(cliRegistrations).toEqual([
       expect.objectContaining({
         options: {
@@ -914,7 +923,7 @@ describe("Plugin registration", () => {
   it("activates with the first session and keeps all bound Program Facts deterministic after restart", async () => {
     const directories = configuredPersonalDirectory();
     const bound = { sessionKey: "agent:fitness:webchat:test" };
-    const createInbound = () => {
+    const createHooks = () => {
       const hooks = new Map<string, (...args: unknown[]) => unknown>();
       registerStellaFitnessPlugin(
         compatibleApi({
@@ -925,9 +934,10 @@ describe("Plugin registration", () => {
           openclawConfig: permittedOpenClawConfig(),
         }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
       );
-      return hooks.get("inbound_claim")!;
+      return hooks;
     };
-    let inbound = createInbound();
+    let hooks = createHooks();
+    let inbound = hooks.get("inbound_claim")!;
     for (const [index, content] of [
       "我已准备好可拆卸哑铃",
       "我已准备好引体向上杆",
@@ -1064,7 +1074,8 @@ describe("Plugin registration", () => {
       },
     });
 
-    inbound = createInbound();
+    hooks = createHooks();
+    inbound = hooks.get("inbound_claim")!;
     await expect(inbound({
       content: "下次练什么",
       channel: "test-channel",
@@ -1073,6 +1084,27 @@ describe("Plugin registration", () => {
     }, bound)).resolves.toMatchObject({
       handled: true,
       reply: { text: expect.stringContaining("next Planned Session: 2026-08-12") },
+    });
+    await expect(hooks.get("before_agent_run")?.(
+      { prompt: "给出本周训练计划" },
+      { agentId: "fitness", runId: "week-facts-run-gate" },
+    )).resolves.toMatchObject({
+      outcome: "block",
+      reason: "stella-dedicated-input-is-plugin-owned",
+      message: expect.stringMatching(
+        /week Planned Sessions:.+monday.+tuesday: No Planned Session\./su,
+      ),
+    });
+    await expect(hooks.get("before_agent_reply")?.(
+      { cleanedBody: "给出本周训练计划" },
+      { sessionKey: "agent:fitness:webchat:week-facts" },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /week Planned Sessions:.+monday.+tuesday: No Planned Session\./su,
+        ),
+      },
     });
   });
 
