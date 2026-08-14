@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdtempSync,
@@ -194,10 +195,22 @@ describe("Plugin registration", () => {
     expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
   });
 
-  it("sends the full built-in workbook from the dedicated agent without requiring Program activation", async () => {
+  it("offers the full built-in workbook as a WebChat download without requiring Program activation", async () => {
     const commands: Array<Record<string, unknown>> = [];
+    const httpRoutes: Array<Record<string, unknown>> = [];
     const personalDataDirectory = configuredPersonalDirectory();
-    const api = compatibleApi({
+    const routeApi = compatibleApi({
+      commands: [],
+      hooks: new Map(),
+      cliRegistrations: [],
+      httpRoutes,
+      pluginConfig: personalDataDirectory,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      routeApi as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const commandApi = compatibleApi({
       commands,
       hooks: new Map(),
       cliRegistrations: [],
@@ -205,7 +218,7 @@ describe("Plugin registration", () => {
       openclawConfig: permittedOpenClawConfig(),
     });
     registerStellaFitnessPlugin(
-      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+      commandApi as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
     const command = commands.find(({ name }) => name === "stella-print");
     const handler = command?.handler as (context: {
@@ -220,16 +233,65 @@ describe("Plugin registration", () => {
       acceptsArgs: false,
       requireAuth: true,
     });
-    await expect(handler({
-      channel: "test",
+    const response = await handler({
+      channel: "webchat",
       commandBody: "/stella-print",
       isAuthorizedSender: true,
       sessionKey: "agent:fitness:webchat:print",
-    })).resolves.toMatchObject({
-      text: "完整 12 周训练日志工作簿",
-      mediaUrl: expect.stringMatching(/zhuoshu-workout-log\.xlsx$/u),
-      trustedLocalMedia: true,
     });
+    expect(response).toEqual({
+      text: expect.stringMatching(
+        /^完整 12 周训练日志工作簿\n\[下载 zhuoshu-workout-log\.xlsx\]\(\/plugins\/stella-fitness\/printable-log\/[0-9a-f-]+\/zhuoshu-workout-log\.xlsx\)$/u,
+      ),
+    });
+    expect(httpRoutes).toContainEqual(expect.objectContaining({
+      path: "/plugins/stella-fitness/printable-log/",
+      auth: "plugin",
+      match: "prefix",
+    }));
+    const downloadUrl = /\]\(([^)]+)\)$/u.exec(
+      (response as { text: string }).text,
+    )?.[1];
+    expect(downloadUrl).toBeDefined();
+    const route = httpRoutes[0] as {
+      handler: (
+        request: { method: string; url: string },
+        response: {
+          statusCode?: number;
+          setHeader(name: string, value: string): void;
+          end(body?: Buffer): void;
+        },
+      ) => Promise<boolean>;
+    };
+    const headers = new Map<string, string>();
+    let body: Buffer | undefined;
+    const downloadResponse: {
+      statusCode?: number;
+      setHeader(name: string, value: string): void;
+      end(value?: Buffer): void;
+    } = {
+      setHeader(name, value) {
+        headers.set(name.toLowerCase(), value);
+      },
+      end(value) {
+        body = value;
+      },
+    };
+    await route.handler(
+      { method: "GET", url: downloadUrl! },
+      downloadResponse,
+    );
+    expect(downloadResponse.statusCode).toBe(200);
+    expect(headers.get("content-disposition")).toBe(
+      'attachment; filename="zhuoshu-workout-log.xlsx"',
+    );
+    expect(headers.get("content-type")).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    expect(body).toBeDefined();
+    expect(createHash("sha256").update(body!).digest("hex")).toBe(
+      "a113a16f9844ceb518307369bd45979af3aa703e67da8eb3bbb6b5e991aebcca",
+    );
     expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
   });
 
@@ -1633,6 +1695,7 @@ function compatibleApi(options: {
   commands: Array<Record<string, unknown>>;
   hooks: Map<string, (...args: unknown[]) => unknown>;
   cliRegistrations: Array<Record<string, unknown>>;
+  httpRoutes?: Array<Record<string, unknown>>;
   pluginConfig?: Record<string, unknown>;
   openclawConfig?: TestOpenClawConfig;
   extractStructuredWithModel?: ReturnType<typeof vi.fn>;
@@ -1663,6 +1726,9 @@ function compatibleApi(options: {
     },
     registerCommand(command: Record<string, unknown>) {
       options.commands.push(command);
+    },
+    registerHttpRoute(route: Record<string, unknown>) {
+      options.httpRoutes?.push(route);
     },
     registerCli(
       registrar: (context: unknown) => unknown,

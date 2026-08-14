@@ -33,6 +33,11 @@ import { createStatusResponse } from "./status.js";
 
 const STATUS_INPUT = "stella status";
 const PLUGIN_ID = "stella-fitness";
+const PRINTABLE_LOG_DOWNLOAD_ROUTE =
+  "/plugins/stella-fitness/printable-log/";
+const PRINTABLE_LOG_DOWNLOAD_TTL_MS = 10 * 60 * 1_000;
+const PRINTABLE_LOG_FILE_NAME = "zhuoshu-workout-log.xlsx";
+const printableLogDownloadTokens = new Map<string, number>();
 const BODY_WEIGHT_RECORDING_INPUT =
   /^\s*(?:(?:\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))?|今天|昨天|前天|today|yesterday)\s*)?(?:我\s*)?(?:记录\s*)?(?:体重|body\s*weight|weight)\s*(?:是|为|:|：)?\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?(?:\s*(?:或|还是|or)\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?)?\s*[。.!]?\s*$/iu;
 const INITIAL_12RM_ALIASES = {
@@ -76,11 +81,13 @@ export function registerStellaFitnessPlugin(
     preflight,
   });
   const pendingMediaBySession = new Map<string, PluginHookInboundClaimEvent>();
+  registerPrintableLogDownloadRoute(api, stellaRuntime);
   api.registerService({
     id: "stella-fitness-media-lifecycle",
     start() {},
     async stop() {
       pendingMediaBySession.clear();
+      printableLogDownloadTokens.clear();
       await stellaRuntime.shutdown();
     },
   });
@@ -292,6 +299,12 @@ export function registerStellaFitnessPlugin(
       const bindingReply = requireDedicatedAgent(context, api);
       if (bindingReply !== undefined) return bindingReply;
       const result = await stellaRuntime.printableLog();
+      if (context.channel === "webchat") {
+        const downloadUrl = createPrintableLogDownloadUrl();
+        return {
+          text: `完整 12 周训练日志工作簿\n[下载 ${PRINTABLE_LOG_FILE_NAME}](${downloadUrl})`,
+        };
+      }
       return {
         text: "完整 12 周训练日志工作簿",
         mediaUrl: result.path,
@@ -730,6 +743,68 @@ export function registerStellaFitnessPlugin(
     { priority: 100, timeoutMs: 1_000 },
   );
   return stellaRuntime;
+}
+
+function registerPrintableLogDownloadRoute(
+  api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
+  stellaRuntime: StellaFitnessRuntime,
+): void {
+  api.registerHttpRoute({
+    path: PRINTABLE_LOG_DOWNLOAD_ROUTE,
+    auth: "plugin",
+    match: "prefix",
+    async handler(request, response) {
+      const method = request.method ?? "GET";
+      if (method !== "GET" && method !== "HEAD") {
+        response.statusCode = 405;
+        response.setHeader("Allow", "GET, HEAD");
+        response.end();
+        return true;
+      }
+
+      const now = Date.now();
+      for (const [token, expiresAt] of printableLogDownloadTokens) {
+        if (expiresAt <= now) printableLogDownloadTokens.delete(token);
+      }
+      const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+      const match = new RegExp(
+        `^${PRINTABLE_LOG_DOWNLOAD_ROUTE}([0-9a-f-]+)/${PRINTABLE_LOG_FILE_NAME}$`,
+        "u",
+      ).exec(pathname);
+      const expiresAt = match?.[1] === undefined
+        ? undefined
+        : printableLogDownloadTokens.get(match[1]);
+      if (expiresAt === undefined || expiresAt <= now) {
+        response.statusCode = 404;
+        response.setHeader("Cache-Control", "no-store");
+        response.end();
+        return true;
+      }
+
+      const result = await stellaRuntime.printableLog();
+      const bytes = await readFile(result.path);
+      response.statusCode = 200;
+      response.setHeader("Content-Type", result.mediaType);
+      response.setHeader("Content-Length", String(bytes.byteLength));
+      response.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${result.fileName}"`,
+      );
+      response.setHeader("Cache-Control", "private, no-store");
+      response.setHeader("X-Content-Type-Options", "nosniff");
+      response.end(method === "HEAD" ? undefined : bytes);
+      return true;
+    },
+  });
+}
+
+function createPrintableLogDownloadUrl(): string {
+  const token = randomUUID();
+  printableLogDownloadTokens.set(
+    token,
+    Date.now() + PRINTABLE_LOG_DOWNLOAD_TTL_MS,
+  );
+  return `${PRINTABLE_LOG_DOWNLOAD_ROUTE}${token}/${PRINTABLE_LOG_FILE_NAME}`;
 }
 
 function isWorkoutLogImageInput(event: PluginHookInboundClaimEvent): boolean {

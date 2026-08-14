@@ -62,8 +62,8 @@ export async function verifyTelegramChannelFlow(options) {
       progress(`recovered after ${checkpoint}`);
     };
 
-    verifyWebChatStart(options);
-    progress("WebChat dedicated-agent journey verified");
+    await verifyWebChatFlow(options, gatewayPort);
+    progress("WebChat dedicated-agent journey and workbook download verified");
 
     telegram.pushText("/stella-start");
     await telegram.waitForText((text) =>
@@ -513,6 +513,7 @@ export async function verifyTelegramChannelFlow(options) {
       channel: "telegram",
       dedicatedAgentRouted: true,
       webChatStart: true,
+      webChatWorkbookDownload: true,
       builtInProgram: true,
       prerequisites: true,
       prerequisiteReplayIdempotent: true,
@@ -686,16 +687,9 @@ function configureOpenClaw(options, input) {
   });
 }
 
-function verifyWebChatStart(options) {
+async function verifyWebChatFlow(options, gatewayPort) {
   const sessionKey = "agent:fitness:stella-clean-install-webchat";
-  const params = {
-    sessionKey,
-    agentId: "fitness",
-    message: "/stella-start",
-    deliver: false,
-    idempotencyKey: "adf81630-f739-4d59-b70d-9be6b088a7de",
-  };
-  options.run(options.openclaw, [
+  const send = (message, idempotencyKey) => options.run(options.openclaw, [
     "gateway",
     "call",
     "chat.send",
@@ -706,9 +700,15 @@ function verifyWebChatStart(options) {
     "--timeout",
     String(REQUEST_TIMEOUT_MS),
     "--params",
-    JSON.stringify(params),
+    JSON.stringify({
+      sessionKey,
+      agentId: "fitness",
+      message,
+      deliver: false,
+      idempotencyKey,
+    }),
   ]);
-  const history = JSON.parse(options.run(options.openclaw, [
+  const history = () => JSON.parse(options.run(options.openclaw, [
     "gateway",
     "call",
     "chat.history",
@@ -718,16 +718,48 @@ function verifyWebChatStart(options) {
     "--params",
     JSON.stringify({ sessionKey, agentId: "fitness", limit: 10 }),
   ]));
-  const replyText = history.messages
+  const latestAssistantText = (snapshot) => snapshot.messages
     ?.filter((message) => message.role === "assistant")
     .flatMap((message) => Array.isArray(message.content) ? message.content : [])
     .findLast((content) => content.type === "text")?.text;
+
+  send(
+    "/stella-start",
+    "adf81630-f739-4d59-b70d-9be6b088a7de",
+  );
+  const replyText = latestAssistantText(history());
   if (
     typeof replyText !== "string" ||
     !replyText.includes("journey: PREREQUISITES_REQUIRED") ||
     replyText.includes("conversation-binding")
   ) {
-    throw new Error(`WebChat dedicated-agent start failed: ${JSON.stringify(history)}`);
+    throw new Error(`WebChat dedicated-agent start failed: ${replyText}`);
+  }
+
+  send(
+    "/stella-print",
+    "0149c3d7-bc18-475d-9f5d-9404acdc658e",
+  );
+  const printReplyText = latestAssistantText(history());
+  const downloadPath = typeof printReplyText === "string"
+    ? /\[下载 zhuoshu-workout-log\.xlsx\]\((\/plugins\/stella-fitness\/printable-log\/[0-9a-f-]+\/zhuoshu-workout-log\.xlsx)\)/u.exec(printReplyText)?.[1]
+    : undefined;
+  if (downloadPath === undefined) {
+    throw new Error(`WebChat workbook download link missing: ${printReplyText}`);
+  }
+  const download = await fetch(`http://127.0.0.1:${gatewayPort}${downloadPath}`);
+  const workbook = Buffer.from(await download.arrayBuffer());
+  if (
+    !download.ok ||
+    download.headers.get("content-disposition") !==
+      'attachment; filename="zhuoshu-workout-log.xlsx"' ||
+    workbook.byteLength !== 20_964 ||
+    createHash("sha256").update(workbook).digest("hex") !==
+      "a113a16f9844ceb518307369bd45979af3aa703e67da8eb3bbb6b5e991aebcca"
+  ) {
+    throw new Error(
+      `WebChat workbook download mismatch: status=${download.status} bytes=${workbook.byteLength}`,
+    );
   }
 }
 
