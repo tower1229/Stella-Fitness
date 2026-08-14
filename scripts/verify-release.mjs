@@ -190,7 +190,7 @@ function validateLiveChannelSmoke({
   }
   if (
     !isRecord(smoke.scenario) ||
-    smoke.scenario.bindingApproved !== true ||
+    smoke.scenario.dedicatedAgentRouted !== true ||
     smoke.scenario.printableWorkbookVerified !== true ||
     smoke.scenario.journeyActivated !== true ||
     smoke.scenario.checkpointRecorded !== true

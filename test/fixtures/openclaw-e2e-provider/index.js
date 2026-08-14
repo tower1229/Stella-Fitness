@@ -50,6 +50,24 @@ export default definePluginEntry({
   name: "Stella Fitness E2E Provider",
   description: "Deterministic local provider for channel E2E verification",
   register(api) {
+    api.registerProvider({
+      id: "stella-e2e",
+      label: "Stella Fitness E2E",
+      auth: [],
+      catalog: {
+        order: "simple",
+        async run() {
+          return {
+            provider: {
+              baseUrl: "http://127.0.0.1:9/v1",
+              apiKey: "fixture-only",
+              api: "openai-completions",
+              models: [{ id: "fixture-v1", name: "Fixture v1" }],
+            },
+          };
+        },
+      },
+    });
     let extractionCount = 0;
     api.registerMediaUnderstandingProvider({
       id: "stella-e2e",

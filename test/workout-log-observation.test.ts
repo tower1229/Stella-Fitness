@@ -358,7 +358,9 @@ describe("workout-log Observation recording", () => {
           },
         },
       }),
-    ).rejects.toThrow("Confirm exactly the requested workout-log fields");
+    ).rejects.toThrow(
+      "Confirm exactly the requested workout-log fields; expected: exercises[1].load.value, exercises[1].problemNote.value; received: exercises[1].load.value",
+    );
 
     const recorded = await harness.confirmWorkoutLog({
       confirmationId: pending.confirmationId,

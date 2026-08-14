@@ -202,6 +202,6 @@ ProgramSpec → printable template generator
 
 - 原始 XLSX 既是不可静默改写的审计原件，也是 v1 内置打印模板；
 - 构建只把 `sources/originals/zhuoshu-workout-log.xlsx` 按原始字节复制到固定发行路径；
-- `/stella-print` 在 conversation binding 完成后直接发送完整 12 周 XLSX，不要求 Program 已激活；
+- `/stella-print` 在 configured dedicated agent session 中直接发送完整 12 周 XLSX，不要求 Program 已激活；
 - 运行时不按 today、week 或 phase 生成 PDF，也不在 Personal Data Directory 保存派生打印文件；
 - package 与 release gate 必须校验工作簿的固定 SHA-256，并要求授权覆盖实际文件、版本和发行渠道。

@@ -1205,7 +1205,14 @@ async function recordConfirmedWorkoutLog(options: {
     Object.keys(options.values).length !== requiredPaths.length ||
     !requiredPaths.every((path) => Object.hasOwn(options.values, path))
   ) {
-    throw new Error("Confirm exactly the requested workout-log fields");
+    const receivedPaths = Object.keys(options.values).sort((left, right) =>
+      left.localeCompare(right)
+    );
+    throw new Error(
+      `Confirm exactly the requested workout-log fields; expected: ${
+        requiredPaths.length === 0 ? "none" : requiredPaths.join(", ")
+      }; received: ${receivedPaths.length === 0 ? "none" : receivedPaths.join(", ")}`,
+    );
   }
 
   const corrected = candidateExtractionShape(options.pending.candidate);

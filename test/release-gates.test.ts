@@ -375,7 +375,7 @@ async function createChannelSmoke(
   const packageArtifactSha256 =
     artifactSha256 ?? sha256(await readFile(fixture.tarball));
   const scenario = {
-    bindingApproved: true,
+    dedicatedAgentRouted: true,
     printableWorkbookVerified: true,
     journeyActivated: true,
     checkpointRecorded: true,

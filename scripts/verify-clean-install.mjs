@@ -66,6 +66,13 @@ try {
     "plugins.entries.stella-fitness.hooks.allowConversationAccess",
     "true",
   ]);
+  run(openclaw, [
+    "config",
+    "set",
+    "plugins.entries.stella-fitness.config",
+    JSON.stringify({ dedicatedAgentId: "fitness" }),
+    "--strict-json",
+  ]);
 
   const inspection = JSON.parse(
     run(openclaw, [
@@ -84,8 +91,8 @@ try {
   if (inspection.plugin.status !== "loaded") {
     throw new Error(`Plugin did not load: ${inspection.plugin.status}`);
   }
-  if (inspection.plugin.hookCount !== 3) {
-    throw new Error(`Expected 3 Plugin hooks, got ${inspection.plugin.hookCount}`);
+  if (inspection.plugin.hookCount !== 5) {
+    throw new Error(`Expected 5 Plugin hooks, got ${inspection.plugin.hookCount}`);
   }
   if (!inspection.plugin.commands.includes("stella-status")) {
     throw new Error("Plugin command stella-status was not registered");
@@ -131,7 +138,7 @@ try {
   progress("Telegram channel journey complete");
 
   process.stdout.write(
-    `${JSON.stringify({ installed: true, loaded: true, hooks: 3, commands, diagnostics: 0, recording, channel, status })}\n`,
+    `${JSON.stringify({ installed: true, loaded: true, hooks: 5, commands, diagnostics: 0, recording, channel, status })}\n`,
   );
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });

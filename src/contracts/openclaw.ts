@@ -7,8 +7,14 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/plugin-entry";
 export const OPENCLAW_CONTRACT_BASELINE = {
   developmentVersion: "2026.6.34",
   minimumVersion: "2026.6.34",
-  hooks: ["inbound_claim", "before_agent_reply", "before_agent_run"],
-  conversationBinding: "command-context.requestConversationBinding",
+  hooks: [
+    "inbound_claim",
+    "before_agent_reply",
+    "before_agent_run",
+    "message_received",
+    "reply_dispatch",
+  ],
+  dedicatedAgentScope: "agent-runtime.resolveAgentIdFromSessionKey",
   structuredMedia: "runtime.mediaUnderstanding.extractStructuredWithModel",
   modelPermission: "explicit-openclaw-model-allowlist",
   executionMetadata: ["provider", "model", "contentType"],

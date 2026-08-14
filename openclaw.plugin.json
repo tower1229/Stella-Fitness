@@ -10,6 +10,11 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "dedicatedAgentId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "OpenClaw agent id exclusively authorized to run Stella Fitness workflows"
+      },
       "personalDataDirectory": {
         "type": "string",
         "minLength": 1,

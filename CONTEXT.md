@@ -21,7 +21,7 @@ _Avoid_: 专业审核计划、监督策略
 _Avoid_: Training Progress、训练表现诊断
 
 **Technical Readiness**:
-Plugin 对 Personal Data Directory、conversation access、structured media 和 extraction model permission 的独立技术检查结果。它不包含用户的训练前准备进度。
+Plugin 对 Personal Data Directory、dedicated-agent conversation access、structured media 和 extraction model permission 的独立技术检查结果。它不包含用户的训练前准备进度。
 _Avoid_: Program Journey Status、训练适用性检查
 
 **Program Journey Status**:

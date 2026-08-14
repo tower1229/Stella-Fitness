@@ -41,8 +41,15 @@ describe("installable Plugin package contract", () => {
       configSchema: {
         type: "object",
         additionalProperties: false,
+        properties: {
+          dedicatedAgentId: {
+            type: "string",
+            minLength: 1,
+          },
+        },
       },
     });
+    expect(manifest.configSchema.required ?? []).not.toContain("dedicatedAgentId");
     expect(manifest.configSchema.properties).not.toHaveProperty("diagnosis");
     expect(manifest.configSchema.properties).not.toHaveProperty("nutrition");
     expect(manifest.configSchema.properties).not.toHaveProperty("safety");

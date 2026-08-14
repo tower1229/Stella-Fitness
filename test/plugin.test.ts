@@ -78,13 +78,19 @@ describe("Plugin registration", () => {
     expect(hooks.has("before_agent_reply")).toBe(true);
     expect(hooks.has("before_agent_run")).toBe(true);
     await expect(
-      hooks.get("before_agent_reply")?.({ cleanedBody: "stella status" }),
+      hooks.get("before_agent_reply")?.(
+        { cleanedBody: "stella status" },
+        { sessionKey: "agent:fitness:webchat:status" },
+      ),
     ).resolves.toEqual({
       handled: true,
       reply: { text: READY_FOR_SETUP_STATUS },
     });
     await expect(
-      hooks.get("before_agent_run")?.({ prompt: "stella status" }),
+      hooks.get("before_agent_run")?.(
+        { prompt: "stella status" },
+        { sessionKey: "agent:fitness:webchat:status" },
+      ),
     ).resolves.toEqual({
       outcome: "block",
       reason: "stella-status-is-plugin-owned",
@@ -106,7 +112,7 @@ describe("Plugin registration", () => {
     ]);
   });
 
-  it("runs the Built-in Program journey without a ProgramSpec path or plan selector", async () => {
+  it("starts the Built-in Program journey from the configured dedicated agent without conversation binding", async () => {
     const commands: Array<Record<string, unknown>> = [];
     const personalDataDirectory = configuredPersonalDirectory();
     const api = compatibleApi({
@@ -122,48 +128,23 @@ describe("Plugin registration", () => {
     const startCommand = commands.find(
       (candidate) => candidate.name === "stella-start",
     );
-    const requestConversationBinding = vi.fn()
-      .mockResolvedValueOnce({
-        status: "pending",
-        reply: { text: "Approve binding", body: "approval-card" },
-      })
-      .mockResolvedValueOnce({
-        status: "bound",
-        binding: { bindingId: "stella-binding-1" },
-      });
     const handler = startCommand?.handler as (context: {
       args?: string;
       channel: string;
       commandBody: string;
       isAuthorizedSender: boolean;
-      requestConversationBinding: typeof requestConversationBinding;
+      sessionKey: string;
     }) => Promise<{ text: string }>;
 
     await expect(
       handler({
-        channel: "test",
+        channel: "webchat",
         commandBody: "/stella-start",
         isAuthorizedSender: true,
-        requestConversationBinding,
-      }),
-    ).resolves.toEqual({ text: "Approve binding", body: "approval-card" });
-    expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
-
-    await expect(
-      handler({
-        channel: "test",
-        commandBody: "/stella-start",
-        isAuthorizedSender: true,
-        requestConversationBinding,
+        sessionKey: "agent:fitness:webchat:test-start",
       }),
     ).resolves.toMatchObject({
       text: expect.stringMatching(/zhuoshu-12-week@0\.2\.0.+PREREQUISITES_REQUIRED/su),
-    });
-    expect(requestConversationBinding).toHaveBeenCalledWith({
-      summary: "Stella Fitness workout recording",
-      detachHint:
-        "Detach the Stella Fitness conversation binding to stop recording here.",
-      data: { workflow: "program-journey" },
     });
 
     const setup = JSON.parse(
@@ -179,7 +160,7 @@ describe("Plugin registration", () => {
     expect(commands.map(({ name }) => name)).not.toContain("stella-setup");
   });
 
-  it("does not let a global Journey command write before conversation binding approval", async () => {
+  it("does not let a Journey command write outside the configured dedicated agent", async () => {
     const commands: Array<Record<string, unknown>> = [];
     const personalDataDirectory = configuredPersonalDirectory();
     const api = compatibleApi({
@@ -193,16 +174,12 @@ describe("Plugin registration", () => {
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
     const command = commands.find(({ name }) => name === "stella-prerequisite");
-    const requestConversationBinding = vi.fn().mockResolvedValue({
-      status: "pending",
-      reply: { text: "Approve binding", body: "approval-card" },
-    });
     const handler = command?.handler as (context: {
       args: string;
       channel: string;
       commandBody: string;
       isAuthorizedSender: boolean;
-      requestConversationBinding: typeof requestConversationBinding;
+      sessionKey: string;
     }) => Promise<unknown>;
 
     await expect(handler({
@@ -210,12 +187,14 @@ describe("Plugin registration", () => {
       channel: "test",
       commandBody: "/stella-prerequisite adjustable-dumbbells",
       isAuthorizedSender: true,
-      requestConversationBinding,
-    })).resolves.toEqual({ text: "Approve binding", body: "approval-card" });
+      sessionKey: "agent:main:webchat:wrong-agent",
+    })).resolves.toEqual({
+      text: "agent-scope: unavailable (Use Stella Fitness from its configured dedicated agent.)",
+    });
     expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
   });
 
-  it("sends the full built-in workbook after binding without requiring Program activation", async () => {
+  it("sends the full built-in workbook from the dedicated agent without requiring Program activation", async () => {
     const commands: Array<Record<string, unknown>> = [];
     const personalDataDirectory = configuredPersonalDirectory();
     const api = compatibleApi({
@@ -229,15 +208,11 @@ describe("Plugin registration", () => {
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
     const command = commands.find(({ name }) => name === "stella-print");
-    const requestConversationBinding = vi.fn().mockResolvedValue({
-      status: "bound",
-      binding: { bindingId: "stella-binding-print" },
-    });
     const handler = command?.handler as (context: {
       channel: string;
       commandBody: string;
       isAuthorizedSender: boolean;
-      requestConversationBinding: typeof requestConversationBinding;
+      sessionKey: string;
     }) => Promise<unknown>;
 
     expect(command).toMatchObject({
@@ -249,7 +224,7 @@ describe("Plugin registration", () => {
       channel: "test",
       commandBody: "/stella-print",
       isAuthorizedSender: true,
-      requestConversationBinding,
+      sessionKey: "agent:fitness:webchat:print",
     })).resolves.toMatchObject({
       text: "完整 12 周训练日志工作簿",
       mediaUrl: expect.stringMatching(/zhuoshu-workout-log\.xlsx$/u),
@@ -272,9 +247,18 @@ describe("Plugin registration", () => {
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
 
+    await expect(hooks.get("before_agent_reply")?.(
+      { cleanedBody: "今天体重 68.4 kg" },
+      { sessionKey: "agent:main:webchat:wrong-agent" },
+    )).resolves.toBeUndefined();
+    expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
+
     const handled = await hooks.get("before_agent_reply")?.(
       { cleanedBody: "今天体重 68.4 kg" },
-      { messageProvider: "test-channel" },
+      {
+        messageProvider: "test-channel",
+        sessionKey: "agent:fitness:webchat:body-weight",
+      },
     );
 
     expect(handled).toMatchObject({
@@ -299,15 +283,7 @@ describe("Plugin registration", () => {
     ).toHaveLength(1);
     expect(
       readdirSync(personalDataDirectory.personalDataDirectory),
-    ).not.toContain("program");
-    await expect(
-      hooks.get("before_agent_run")?.({ prompt: "今天体重 68.4 kg" }),
-    ).resolves.toEqual({
-      outcome: "block",
-      reason: "stella-body-weight-is-plugin-owned",
-      message: "Body-weight recording is handled by Stella Fitness.",
-      category: "plugin-command",
-    });
+    ).toContain("program");
   });
 
   it("claims an explicit body-weight correction and preserves lineage", async () => {
@@ -324,7 +300,10 @@ describe("Plugin registration", () => {
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
     const replyHook = hooks.get("before_agent_reply")!;
-    await replyHook({ cleanedBody: "今天体重 68.4 kg" }, {});
+    await replyHook(
+      { cleanedBody: "今天体重 68.4 kg" },
+      { sessionKey: "agent:fitness:webchat:correction" },
+    );
     const directory = join(
       personalDataDirectory.personalDataDirectory,
       "observations",
@@ -336,7 +315,7 @@ describe("Plugin registration", () => {
       {
         cleanedBody: `2026-08-09T07:00:00+08:00 纠正体重 ${originalId} 为 67.9 kg`,
       },
-      {},
+      { sessionKey: "agent:fitness:webchat:correction" },
     );
 
     expect(handled).toMatchObject({
@@ -363,7 +342,7 @@ describe("Plugin registration", () => {
     );
   });
 
-  it("does not claim or persist a body-weight evaluation question", async () => {
+  it("refuses a body-weight evaluation question without persisting it", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const personalDataDirectory = configuredPersonalDirectory();
     const api = compatibleApi({
@@ -382,12 +361,208 @@ describe("Plugin registration", () => {
       hooks.get("before_agent_reply")?.({ cleanedBody: input }, {}),
     ).resolves.toBeUndefined();
     await expect(
-      hooks.get("before_agent_run")?.({ prompt: input }),
-    ).resolves.toEqual({ outcome: "pass" });
-    expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
+      hooks.get("before_agent_run")?.(
+        { prompt: input },
+        { sessionKey: "agent:fitness:webchat:evaluation" },
+      ),
+    ).resolves.toMatchObject({
+      outcome: "block",
+      reason: "stella-dedicated-input-is-plugin-owned",
+      message: expect.stringContaining("does not diagnose, advise or adjust"),
+    });
+    expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([
+      "program",
+    ]);
   });
 
-  it("refuses diagnosis and plan-adjustment questions in a Plugin-bound conversation", async () => {
+  it("claims Journey input only from the configured dedicated agent without plugin binding", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: directories,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const event = {
+      content: "/stella-prerequisite adjustable-dumbbells",
+      channel: "webchat",
+      messageId: "dedicated-agent-command",
+      timestamp: "2026-08-14T03:00:00.000Z",
+      isGroup: false,
+    };
+
+    await expect(hooks.get("inbound_claim")?.(
+      event,
+      { sessionKey: "agent:main:webchat:wrong-agent" },
+    )).resolves.toBeUndefined();
+    await expect(hooks.get("inbound_claim")?.(
+      event,
+      { sessionKey: "agent:fitness:webchat:dedicated-agent" },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("pull-up-bar") },
+    });
+  });
+
+  it("claims pre-routing Telegram input only when the channel routes to the dedicated agent", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    const openclawConfig = permittedOpenClawConfig();
+    openclawConfig.bindings = [{
+      agentId: "fitness",
+      match: { channel: "telegram", accountId: "default" },
+    }];
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: directories,
+      openclawConfig,
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(hooks.get("inbound_claim")?.(
+      {
+        content: "我已准备好可拆卸哑铃",
+        channel: "telegram",
+        accountId: "default",
+        messageId: "pre-routing-prerequisite",
+        timestamp: "2026-08-14T03:00:00.000Z",
+      },
+      { channelId: "515151" },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("pull-up-bar") },
+    });
+  });
+
+  it("claims dedicated-agent natural-language Journey input before model execution", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: directories,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(hooks.get("before_agent_reply")?.(
+      { cleanedBody: "我已准备好可拆卸哑铃" },
+      {
+        agentId: "fitness",
+        messageProvider: "telegram",
+        runId: "natural-prerequisite-run",
+      },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("pull-up-bar") },
+    });
+  });
+
+  it("handles dedicated-agent Journey input at the run gate when the reply hook is skipped", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: directories,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(hooks.get("before_agent_run")?.(
+      { prompt: "我已准备好可拆卸哑铃" },
+      {
+        agentId: "fitness",
+        messageProvider: "telegram",
+        runId: "run-gate-prerequisite",
+      },
+    )).resolves.toMatchObject({
+      outcome: "block",
+      reason: "stella-dedicated-input-is-plugin-owned",
+      message: expect.stringContaining("pull-up-bar"),
+    });
+  });
+
+  it("does not classify Host media markers or paths as dedicated-agent text", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: configuredPersonalDirectory(),
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(hooks.get("before_agent_run")?.(
+      {
+        prompt: "[media attached: /tmp/training-adjustment.png (image/png)]\n训练日志",
+      },
+      { agentId: "fitness", messageProvider: "telegram" },
+    )).resolves.toEqual({ outcome: "pass" });
+  });
+
+  it("routes a dedicated-agent baseline fact through Program Journey confirmation", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: directories,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const replyHook = hooks.get("before_agent_reply")!;
+    const context = {
+      sessionKey: "agent:fitness:main",
+      messageProvider: "telegram",
+    };
+    for (const [index, cleanedBody] of [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+    ].entries()) {
+      await replyHook(
+        { cleanedBody },
+        { ...context, runId: `baseline-prerequisite-${index}` },
+      );
+    }
+
+    await expect(replyHook(
+      { cleanedBody: "体重 68.4" },
+      { ...context, runId: "baseline-weight" },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /^Program Journey needs confirmation: [0-9a-f-]{36}\n- unit: 请确认体重单位：kg 还是 lb？/u,
+        ),
+      },
+    });
+  });
+
+  it("refuses diagnosis and plan-adjustment questions in the dedicated agent", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const api = compatibleApi({
       commands: [],
@@ -407,7 +582,7 @@ describe("Plugin registration", () => {
           channel: "test",
           isGroup: false,
         },
-        { pluginBinding: { pluginId: "stella-fitness" } },
+        { sessionKey: "agent:fitness:webchat:test" },
       ),
     ).resolves.toEqual({
       handled: true,
@@ -423,7 +598,7 @@ describe("Plugin registration", () => {
           channel: "test",
           isGroup: false,
         },
-        { pluginBinding: { pluginId: "stella-fitness" } },
+        { sessionKey: "agent:fitness:webchat:test" },
       ),
     ).resolves.toEqual({
       handled: true,
@@ -439,7 +614,7 @@ describe("Plugin registration", () => {
           channel: "test",
           isGroup: false,
         },
-        { pluginBinding: { pluginId: "stella-fitness" } },
+        { sessionKey: "agent:fitness:webchat:test" },
       ),
     ).resolves.toBeUndefined();
     for (const content of [
@@ -451,7 +626,7 @@ describe("Plugin registration", () => {
       await expect(
         hooks.get("inbound_claim")?.(
           { content, channel: "test", isGroup: false },
-          { pluginBinding: { pluginId: "stella-fitness" } },
+          { sessionKey: "agent:fitness:webchat:test" },
         ),
       ).resolves.toEqual({
         handled: true,
@@ -468,7 +643,7 @@ describe("Plugin registration", () => {
           channel: "test",
           isGroup: false,
         },
-        { pluginBinding: { pluginId: "stella-fitness" } },
+        { sessionKey: "agent:fitness:webchat:test" },
       ),
     ).resolves.toEqual({
       handled: true,
@@ -484,7 +659,7 @@ describe("Plugin registration", () => {
           channel: "test",
           isGroup: false,
         },
-        { pluginBinding: { pluginId: "stella-fitness" } },
+        { sessionKey: "agent:fitness:webchat:test" },
       ),
     ).resolves.toEqual({
       handled: true,
@@ -500,7 +675,7 @@ describe("Plugin registration", () => {
           channel: "test",
           isGroup: false,
         },
-        { pluginBinding: { pluginId: "stella-fitness" } },
+        { sessionKey: "agent:fitness:webchat:test" },
       ),
     ).resolves.toMatchObject({
       handled: true,
@@ -508,7 +683,31 @@ describe("Plugin registration", () => {
     });
   });
 
-  it("advances prerequisite acknowledgements from controlled natural language in a bound conversation", async () => {
+  it("claims dedicated-agent advice questions before model execution", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: configuredPersonalDirectory(),
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(hooks.get("before_agent_reply")?.(
+      { cleanedBody: "我应该怎么调整训练和饮食？" },
+      { sessionKey: "agent:fitness:main", messageProvider: "telegram" },
+    )).resolves.toEqual({
+      handled: true,
+      reply: {
+        text: "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+      },
+    });
+  });
+
+  it("advances prerequisite acknowledgements from controlled natural language in the dedicated agent", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const directories = configuredPersonalDirectory();
     const api = compatibleApi({
@@ -538,7 +737,7 @@ describe("Plugin registration", () => {
           timestamp: `2026-08-12T0${index}:00:00.000Z`,
           isGroup: false,
         },
-        { pluginBinding: { pluginId: "stella-fitness" } },
+        { sessionKey: "agent:fitness:webchat:test" },
       )).resolves.toMatchObject({ handled: true });
     }
 
@@ -564,11 +763,11 @@ describe("Plugin registration", () => {
         timestamp: "2026-08-12T04:00:00.000Z",
         isGroup: false,
       },
-      { pluginBinding: { pluginId: "stella-fitness" } },
+      { sessionKey: "agent:fitness:webchat:test" },
     )).resolves.toMatchObject({ handled: true });
   });
 
-  it("reaches READY_TO_ACTIVATE through baseline and three text 12RM facts in a bound OpenClaw conversation", async () => {
+  it("reaches READY_TO_ACTIVATE through baseline and three text 12RM facts in the dedicated agent", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const directories = configuredPersonalDirectory();
     const api = compatibleApi({
@@ -582,7 +781,7 @@ describe("Plugin registration", () => {
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
     const inbound = hooks.get("inbound_claim")!;
-    const bound = { pluginBinding: { pluginId: "stella-fitness" } };
+    const bound = { sessionKey: "agent:fitness:webchat:test" };
     const messages = [
       "我已准备好可拆卸哑铃",
       "我已准备好引体向上杆",
@@ -652,7 +851,7 @@ describe("Plugin registration", () => {
 
   it("activates with the first session and keeps all bound Program Facts deterministic after restart", async () => {
     const directories = configuredPersonalDirectory();
-    const bound = { pluginBinding: { pluginId: "stella-fitness" } };
+    const bound = { sessionKey: "agent:fitness:webchat:test" };
     const createInbound = () => {
       const hooks = new Map<string, (...args: unknown[]) => unknown>();
       registerStellaFitnessPlugin(
@@ -789,7 +988,7 @@ describe("Plugin registration", () => {
     });
   });
 
-  it("does not resolve a persisted Journey confirmation outside its bound conversation", async () => {
+  it("does not resolve a persisted Journey confirmation outside the dedicated agent", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const directories = configuredPersonalDirectory();
     const api = compatibleApi({
@@ -803,7 +1002,7 @@ describe("Plugin registration", () => {
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
     const inbound = hooks.get("inbound_claim")!;
-    const bound = { pluginBinding: { pluginId: "stella-fitness" } };
+    const bound = { sessionKey: "agent:fitness:webchat:test" };
     for (const [index, content] of [
       "我已准备好可拆卸哑铃",
       "我已准备好引体向上杆",
@@ -932,7 +1131,7 @@ describe("Plugin registration", () => {
           messageId: "ordinary-image-message",
           metadata: { mediaPath, mediaType: "image/png" },
         },
-        {},
+        { sessionKey: "agent:fitness:webchat:test" },
       ),
     ).resolves.toBeUndefined();
     expect(extractStructuredWithModel).not.toHaveBeenCalled();
@@ -946,7 +1145,7 @@ describe("Plugin registration", () => {
         runId: "workout-hook-run-1",
         metadata: { mediaPath, mediaType: "image/png" },
       },
-      {},
+      { sessionKey: "agent:fitness:webchat:test" },
     );
 
     expect(result).toMatchObject({
@@ -967,6 +1166,70 @@ describe("Plugin registration", () => {
         ),
       ),
     ).toHaveLength(1);
+  });
+
+  it("handles a routed workout-log image at reply_dispatch without Plugin binding", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const personalDataDirectory = configuredPersonalDirectory();
+    const mediaPath = join(
+      personalDataDirectory.personalDataDirectory,
+      "routed-workout.png",
+    );
+    writeFileSync(mediaPath, rawMediaUploadFixture().bytes);
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: {
+        ...personalDataDirectory,
+        extraction: { provider: "operator-provider", model: "operator-model" },
+      },
+      openclawConfig: permittedOpenClawConfig({ allowModel: true }),
+      extractStructuredWithModel: vi.fn().mockResolvedValue({
+        parsed: workoutLogCandidate(),
+        provider: "operator-provider",
+        model: "operator-model",
+        contentType: "json",
+      }),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await hooks.get("message_received")?.(
+      {
+        content: "训练日志",
+        timestamp: Date.parse("2026-08-10T08:00:00.000Z"),
+        messageId: "routed-workout",
+        metadata: { mediaPath, mediaType: "image/png" },
+      },
+      {
+        channelId: "telegram",
+        sessionKey: "agent:fitness:telegram:direct:515151",
+      },
+    );
+    const sendFinalReply = vi.fn().mockReturnValue(true);
+    await expect(hooks.get("reply_dispatch")?.(
+      {
+        ctx: { BodyForAgent: "训练日志", Provider: "telegram" },
+        sessionKey: "agent:fitness:telegram:direct:515151",
+      },
+      {
+        dispatcher: {
+          sendFinalReply,
+          markComplete: vi.fn(),
+          getQueuedCounts: () => ({ tool: 0, block: 0, final: 1 }),
+        },
+        recordProcessed: vi.fn(),
+        markIdle: vi.fn(),
+      },
+    )).resolves.toMatchObject({
+      handled: true,
+      queuedFinal: true,
+    });
+    expect(sendFinalReply).toHaveBeenCalledWith({
+      text: expect.stringMatching(/^Workout recorded:/u),
+    });
   });
 
   it("asks the user to crop a multi-session workout-log page", async () => {
@@ -1008,7 +1271,7 @@ describe("Plugin registration", () => {
       channel: "test-channel",
       messageId: "multi-session-message",
       metadata: { mediaPath, mediaType: "image/png" },
-    }, {})).resolves.toMatchObject({
+    }, { sessionKey: "agent:fitness:webchat:test" })).resolves.toMatchObject({
       handled: true,
       reply: {
         text: expect.stringContaining("crop the photo to exactly one session"),
@@ -1016,7 +1279,7 @@ describe("Plugin registration", () => {
     });
   });
 
-  it("confirms uncertain image fields through a bound conversation", async () => {
+  it("confirms uncertain image fields through the dedicated agent", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const commands: Array<Record<string, unknown>> = [];
     const personalDataDirectory = configuredPersonalDirectory();
@@ -1074,31 +1337,35 @@ describe("Plugin registration", () => {
         runId: "workout-hook-run-2",
         metadata: { mediaPath, mediaType: "image/png" },
       },
-      {},
+      { sessionKey: "agent:fitness:webchat:test" },
     );
     const pendingText = (pending as { reply: { text: string } }).reply.text;
     expect(pendingText).toContain(
-      "- exercises[0].load.value (conflict): 20 kg / 25 kg",
+      "- exercises.0.load.value (conflict): 20 kg / 25 kg",
     );
     const confirmationId = /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(
       pendingText,
     )?.[1];
-    await expect(
-      hooks.get("inbound_claim")?.(
-        {
-          content: `/stella-confirm ${confirmationId} {"exercises[0].load.value":{"kind":"kg","value":25,"unit":"kg","raw":"25"}}`,
-          channel: "test-channel",
-          messageId: "workout-confirmation-2",
-        },
-        { pluginBinding: { pluginId: "stella-fitness" } },
+    const command = commands.find(({ name }) => name === "stella-confirm");
+    const handler = command?.handler as (context: {
+      args: string;
+      channel: string;
+      commandBody: string;
+      isAuthorizedSender: boolean;
+      sessionKey: string;
+    }) => Promise<unknown>;
+    const rawValues =
+      '{"exercises.0.load.value":{"kind":"kg","value":25,"unit":"kg","raw":"25"}}';
+    await expect(handler({
+      args: `${confirmationId} ${rawValues}`,
+      channel: "test-channel",
+      commandBody: `/stella-confirm ${confirmationId} ${rawValues}`,
+      isAuthorizedSender: true,
+      sessionKey: "agent:fitness:webchat:test",
+    })).resolves.toMatchObject({
+      text: expect.stringMatching(
+        /^Workout recorded: stage 1, week 1, monday, full-body\nobservation: [0-9a-f-]{36}$/u,
       ),
-    ).resolves.toMatchObject({
-      handled: true,
-      reply: {
-        text: expect.stringMatching(
-          /^Workout recorded: stage 1, week 1, monday, full-body\nobservation: [0-9a-f-]{36}$/u,
-        ),
-      },
     });
   });
 
@@ -1145,7 +1412,7 @@ describe("Plugin registration", () => {
         runId: "workout-correction-original",
         metadata: { mediaPath, mediaType: "image/png" },
       },
-        { pluginBinding: { pluginId: "stella-fitness" } },
+        { sessionKey: "agent:fitness:webchat:test" },
     ) as { reply: { text: string } };
     const originalId = /observation: ([0-9a-f-]{36})/u.exec(
       original.reply.text,
@@ -1158,7 +1425,7 @@ describe("Plugin registration", () => {
         runId: "workout-correction-reupload",
         metadata: { mediaPath, mediaType: "image/png" },
       },
-      {},
+      { sessionKey: "agent:fitness:webchat:test" },
     );
 
     expect(correction).toMatchObject({
@@ -1425,6 +1692,10 @@ function allowedModelConfig() {
 
 type TestOpenClawConfig = {
   agents?: ReturnType<typeof allowedModelConfig>["agents"];
+  bindings?: Array<{
+    agentId: string;
+    match: { channel: string; accountId?: string };
+  }>;
   plugins: {
     entries: {
       "stella-fitness": {
@@ -1451,10 +1722,13 @@ function permittedOpenClawConfig(options?: {
   };
 }
 
-function configuredPersonalDirectory(): { personalDataDirectory: string } {
+function configuredPersonalDirectory(): {
+  personalDataDirectory: string;
+  dedicatedAgentId: string;
+} {
   const personalDataDirectory = join(temporaryRoot(), "personal");
   mkdirSync(personalDataDirectory);
-  return { personalDataDirectory };
+  return { personalDataDirectory, dedicatedAgentId: "fitness" };
 }
 
 function programFixturePath(): string {

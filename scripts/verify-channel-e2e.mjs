@@ -17,6 +17,7 @@ const USER_ID = 424242;
 const CHAT_ID = 515151;
 const BOT_ID = 616161;
 const REQUEST_TIMEOUT_MS = 20_000;
+const GATEWAY_TOKEN = "stella-fitness-clean-install-gateway-token";
 
 export async function verifyTelegramChannelFlow(options) {
   const personalDataDirectory = join(options.temporaryRoot, "personal-data");
@@ -61,21 +62,21 @@ export async function verifyTelegramChannelFlow(options) {
       progress(`recovered after ${checkpoint}`);
     };
 
+    verifyWebChatStart(options);
+    progress("WebChat dedicated-agent journey verified");
+
     telegram.pushText("/stella-start");
-    const approval = await telegram.waitForMessage((message) =>
-      message.text.includes("Plugin bind approval required"),
+    await telegram.waitForText((text) =>
+      text.includes("journey: PREREQUISITES_REQUIRED"),
     );
-    const approvalData = await telegram.waitForCallbackData("Always allow");
-    telegram.pushCallback(approvalData, approval.platformMessage);
-    await telegram.waitForCall(({ method }) => method === "answercallbackquery");
-    await restartGateway("conversation binding approval");
 
     telegram.pushText("/stella-print");
     const workbookCall = await telegram.waitForCall(
       ({ method }) => method === "senddocument",
     );
     if (
-      workbookCall.body.fileName !== "zhuoshu-workout-log.xlsx" ||
+      restoreStagedFileName(workbookCall.body.fileName) !==
+        "zhuoshu-workout-log.xlsx" ||
       workbookCall.body.mimeType !== "application/octet-stream" ||
       workbookCall.body.bytes !== 20_964 ||
       workbookCall.body.sha256 !==
@@ -118,8 +119,9 @@ export async function verifyTelegramChannelFlow(options) {
       acknowledgements.length !== 4 ||
       acknowledgements.some((acknowledgement) =>
         typeof acknowledgement.acknowledgedAt !== "string" ||
+        acknowledgement.source?.kind !== "user-text" ||
         acknowledgement.source?.channel !== "telegram" ||
-        typeof acknowledgement.source?.messageId !== "string" ||
+        typeof acknowledgement.source?.text !== "string" ||
         !/^sha256:[0-9a-f]{64}$/u.test(acknowledgement.idempotencyKey)
       )
     ) {
@@ -239,10 +241,17 @@ export async function verifyTelegramChannelFlow(options) {
       throw new Error("Program Facts changed after Gateway restart");
     }
     telegram.pushPhoto("训练日志");
-    const pendingStrength = await telegram.waitForText((text) =>
-      text.includes("Workout log needs confirmation:") &&
-      text.includes("testResults[3].result.value"),
-    );
+    let pendingStrength;
+    try {
+      pendingStrength = await telegram.waitForText((text) =>
+        text.includes("Workout log needs confirmation:") &&
+        text.includes("testResults.3.result.value"),
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\nStrength photo: ${JSON.stringify(telegram.snapshot())}\nGateway tail: ${gateway.logs().slice(-12_000)}`,
+      );
+    }
     const strengthConfirmationId =
       /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(pendingStrength)?.[1];
     if (strengthConfirmationId === undefined) {
@@ -254,20 +263,27 @@ export async function verifyTelegramChannelFlow(options) {
       ordinaryPendingCursor,
       (text) =>
         text.includes("Workout log needs confirmation:") &&
-        text.includes("exercises[0].load.value"),
+        text.includes("exercises.0.load.value"),
     );
     const ordinaryConfirmationId =
       /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(pendingOrdinary)?.[1];
     if (ordinaryConfirmationId === undefined) {
       throw new Error(`Ordinary confirmation ID was missing: ${pendingOrdinary}`);
     }
-    await restartGateway("pending strength-test confirmation");
     telegram.pushText(
-      `/stella-confirm ${strengthConfirmationId} {"testResults[0].result.value":{"kind":"kg","value":34,"unit":"kg","raw":"34"},"testResults[1].result.value":{"kind":"kg","value":26,"unit":"kg","raw":"26"},"testResults[2].result.value":{"kind":"kg","value":42,"unit":"kg","raw":"42"},"testResults[3].result.value":{"kind":"repetitions","value":9,"raw":"9"}}`,
+      `/stella-confirm ${strengthConfirmationId} {"testResults.0.result.value":{"kind":"kg","value":34,"unit":"kg","raw":"34"},"testResults.1.result.value":{"kind":"kg","value":26,"unit":"kg","raw":"26"},"testResults.2.result.value":{"kind":"kg","value":42,"unit":"kg","raw":"42"},"testResults.3.result.value":{"kind":"repetitions","value":9,"raw":"9"}}`,
     );
-    const recorded = await telegram.waitForText((text) =>
-      text.startsWith("Workout recorded: stage 1, week 4, friday, strength_test"),
-    );
+    let recorded;
+    try {
+      recorded = await telegram.waitForText((text) =>
+        text.startsWith("Workout recorded: stage 1, week 4, friday, strength_test"),
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\nStrength confirmation: ${JSON.stringify(telegram.snapshot())}\nGateway tail: ${gateway.logs().slice(-12_000)}`,
+      );
+    }
+    await restartGateway("pending ordinary workout confirmation");
     telegram.pushText("/stella-facts symbol goblet-squat N");
     await telegram.waitForText((text) => text === "goblet-squat N: 34 kg");
     const observationId = /observation: ([0-9a-f-]{36})/u.exec(recorded)?.[1];
@@ -413,7 +429,7 @@ export async function verifyTelegramChannelFlow(options) {
 
     const ordinaryConfirmationCursor = telegram.messageCount();
     telegram.pushText(
-      `/stella-confirm ${ordinaryConfirmationId} {"exercises[0].load.value":{"kind":"kg","value":20,"unit":"kg","raw":"20"}}`,
+      `/stella-confirm ${ordinaryConfirmationId} {"exercises.0.load.value":{"kind":"kg","value":20,"unit":"kg","raw":"20"}}`,
     );
     await telegram.waitForTextAfter(
       ordinaryConfirmationCursor,
@@ -495,7 +511,8 @@ export async function verifyTelegramChannelFlow(options) {
 
     return {
       channel: "telegram",
-      bindingApproved: true,
+      dedicatedAgentRouted: true,
+      webChatStart: true,
       builtInProgram: true,
       prerequisites: true,
       prerequisiteReplayIdempotent: true,
@@ -532,36 +549,22 @@ export async function verifyTelegramChannelFlow(options) {
   }
 }
 
+function restoreStagedFileName(fileName) {
+  return typeof fileName === "string"
+    ? fileName.replace(
+        /---[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?=\.[^.]+$)/iu,
+        "",
+      )
+    : fileName;
+}
+
 async function assertRecoveredJourney(input) {
   const cursor = input.telegram.messageCount();
   input.telegram.pushText("/stella-start");
-  const response = await input.telegram.waitForMessageAfter(
+  await input.telegram.waitForMessageAfter(
     cursor,
-    (message) =>
-      message.text.includes("journey: ACTIVE") ||
-      message.text.includes("Plugin bind approval required"),
+    (message) => message.text.includes("journey: ACTIVE"),
   );
-  if (response.text.includes("Plugin bind approval required")) {
-    const approvalData = response.replyMarkup?.inline_keyboard
-      ?.flat()
-      .find((candidate) => candidate.text === "Always allow")
-      ?.callback_data;
-    if (typeof approvalData !== "string") {
-      throw new Error(`${input.checkpoint} binding approval was unavailable`);
-    }
-    const callCursor = input.telegram.callCount();
-    input.telegram.pushCallback(approvalData, response.platformMessage);
-    await input.telegram.waitForCallAfter(
-      callCursor,
-      ({ method }) => method === "answercallbackquery",
-    );
-    const reboundCursor = input.telegram.messageCount();
-    input.telegram.pushText("/stella-start");
-    await input.telegram.waitForTextAfter(
-      reboundCursor,
-      (text) => text.includes("journey: ACTIVE"),
-    );
-  }
   const state = JSON.parse(readFileSync(
     join(input.personalDataDirectory, "program", "state.json"),
     "utf8",
@@ -639,6 +642,7 @@ function configureOpenClaw(options, input) {
     ]);
   set("gateway.mode", "local");
   set("gateway.port", input.gatewayPort);
+  set("gateway.auth", { mode: "token", token: GATEWAY_TOKEN });
   set(
     "plugins.allow",
     ["telegram", "stella-fitness", "stella-fitness-e2e-provider"],
@@ -646,8 +650,28 @@ function configureOpenClaw(options, input) {
   );
   set("plugins.entries.stella-fitness.hooks.allowConversationAccess", true);
   set("plugins.entries.stella-fitness.config", {
+    dedicatedAgentId: "fitness",
     personalDataDirectory: input.personalDataDirectory,
     extraction: { provider: "stella-e2e", model: "fixture-v1" },
+  });
+  set("agents.list", [
+    { id: "main" },
+    {
+      id: "fitness",
+      workspace: join(input.personalDataDirectory, "..", "workspace-fitness"),
+      model: "stella-e2e/fixture-v1",
+    },
+  ], ["--replace"]);
+  set("bindings", [
+    {
+      agentId: "fitness",
+      match: { channel: "telegram", accountId: "default" },
+    },
+  ], ["--replace"]);
+  set("models.providers.stella-e2e", {
+    baseUrl: "http://127.0.0.1:9/v1",
+    api: "openai-completions",
+    models: [{ id: "fixture-v1", name: "Fixture v1" }],
   });
   set("agents.defaults.models", { "stella-e2e/fixture-v1": {} }, ["--replace"]);
   set("channels.telegram", {
@@ -660,6 +684,51 @@ function configureOpenClaw(options, input) {
     capabilities: { inlineButtons: "all" },
     pollingStallThresholdMs: 30_000,
   });
+}
+
+function verifyWebChatStart(options) {
+  const sessionKey = "agent:fitness:stella-clean-install-webchat";
+  const params = {
+    sessionKey,
+    agentId: "fitness",
+    message: "/stella-start",
+    deliver: false,
+    idempotencyKey: "adf81630-f739-4d59-b70d-9be6b088a7de",
+  };
+  options.run(options.openclaw, [
+    "gateway",
+    "call",
+    "chat.send",
+    "--expect-final",
+    "--json",
+    "--token",
+    GATEWAY_TOKEN,
+    "--timeout",
+    String(REQUEST_TIMEOUT_MS),
+    "--params",
+    JSON.stringify(params),
+  ]);
+  const history = JSON.parse(options.run(options.openclaw, [
+    "gateway",
+    "call",
+    "chat.history",
+    "--json",
+    "--token",
+    GATEWAY_TOKEN,
+    "--params",
+    JSON.stringify({ sessionKey, agentId: "fitness", limit: 10 }),
+  ]));
+  const replyText = history.messages
+    ?.filter((message) => message.role === "assistant")
+    .flatMap((message) => Array.isArray(message.content) ? message.content : [])
+    .findLast((content) => content.type === "text")?.text;
+  if (
+    typeof replyText !== "string" ||
+    !replyText.includes("journey: PREREQUISITES_REQUIRED") ||
+    replyText.includes("conversation-binding")
+  ) {
+    throw new Error(`WebChat dedicated-agent start failed: ${JSON.stringify(history)}`);
+  }
 }
 
 function startGateway(options, port) {
@@ -675,7 +744,7 @@ function startGateway(options, port) {
       "--port",
       String(port),
       "--auth",
-      "none",
+      "token",
     ],
     {
       cwd: options.workspace,

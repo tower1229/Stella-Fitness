@@ -5,7 +5,9 @@
 ## 1. 总体结构
 
 ```text
-OpenClaw channel / dedicated Agent
+OpenClaw WebChat / channel
+              │
+      route to configured dedicated Agent
               │
               ▼
        Stella Fitness Plugin
@@ -53,19 +55,22 @@ OpenClaw channel / dedicated Agent
 
 ## 3. 输入路由
 
-对于 Stella Fitness 明确认领的记录型输入：
+Stella Fitness 只处理 Host `agentId`、session key 或顶层 Channel routing binding 归属于 manifest 配置 `dedicatedAgentId` 的输入。WebChat 选择该 agent 后可直接使用；Telegram 等 Channel 必须通过 OpenClaw 顶层 routing binding 路由到该 agent。Plugin 不再创建或要求 conversation binding。
+
+对于 dedicated agent 中 Stella Fitness 明确认领的记录型输入：
 
 ```text
 inbound message
-  → before_agent_reply
+  → routed text: before_agent_reply / before_agent_run
+  → routed media: message_received → reply_dispatch
   → Plugin claims recording workflow
   → extract / confirm / persist / rebuild
   → synthetic reply
 ```
 
-`before_agent_run` 作为路由保险，防止已认领输入重复进入普通 Agent。Plugin 不接管普通健身聊天，也不把普通聊天内容保存为训练事实。
+`before_agent_run` 是文本路由保险；`message_received` 在 agent routing 后按 session 暂存 Host media metadata，`reply_dispatch` 在模型调用前消费它，使未使用 Plugin conversation binding 的图片仍能进入净化与结构化抽取。暂存项只含当前 Host 媒体引用，在消费、Plugin stop 或 shutdown 时移除。Plugin 不接管普通健身聊天，也不把普通聊天内容保存为训练事实。
 
-non-bundled Plugin 所需 conversation-access 权限必须由 operator 显式启用，不得绕过。
+non-bundled Plugin 所需 conversation-access 权限必须由 operator 显式启用，不得绕过。`dedicatedAgentId` 缺失、session key 缺失或 agent 不匹配时，所有写入口 fail closed；旧 Plugin conversation binding 记录不参与授权判断。
 
 ## 4. 媒体处理
 

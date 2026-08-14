@@ -8,7 +8,7 @@
 
 ## Conversation hooks
 
-Plugin 需要在默认 Agent 回复前认领训练记录输入并返回 synthetic status、confirmation 或 recording reply。non-bundled Plugin 的 conversation access 必须由 operator 显式允许。
+Plugin 需要在 configured dedicated Agent 回复前认领训练记录输入并返回 synthetic status、confirmation 或 recording reply。non-bundled Plugin 的 conversation access 必须由 operator 显式允许；写入授权由 dedicated agent session scope 决定，不使用 Plugin conversation binding。
 
 ## Structured media extraction
 

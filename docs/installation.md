@@ -5,16 +5,19 @@
 ## 首次使用
 
 1. 安装并启用 Plugin；
-2. 显式启用所需 conversation/media 权限；
-3. 选择 operator 允许的训练日志 extraction model；
-4. 显式配置 Personal Data Directory；
-5. 运行 `/stella-start` 并批准当前 conversation binding；
-6. Plugin 自动验证并使用唯一的卓叔 12 周 Built-in Program；
-7. 运行 `/stella-print` 获取完整 12 周内置 XLSX 并打印所需页面；
-8. 逐项确认可拆卸哑铃、引体向上杆、打印训练日志和训练记录协议；
-9. 按唯一下一步记录 baseline、三个初始 12RM，并确认星期一 cycle start。
+2. 新增一个 Stella Fitness 专属 OpenClaw agent，并将其 id 配置为 Plugin 必填项 `dedicatedAgentId`；
+3. 显式启用所需 conversation/media 权限；
+4. 选择 operator 允许的训练日志 extraction model；
+5. 显式配置 Personal Data Directory；
+6. 在 WebChat 中选择该专属 agent 后运行 `/stella-start`；如使用 Telegram 等 Channel，先用 OpenClaw 顶层 routing binding 将对应账号路由到该 agent；
+7. Plugin 自动验证并使用唯一的卓叔 12 周 Built-in Program；
+8. 运行 `/stella-print` 获取完整 12 周内置 XLSX 并打印所需页面；
+9. 逐项确认可拆卸哑铃、引体向上杆、打印训练日志和训练记录协议；
+10. 按唯一下一步记录 baseline、三个初始 12RM，并确认星期一 cycle start。
 
-首次使用不提供计划选择器、ProgramSpec 导入或文件路径输入。`/stella-status` 独立报告 Personal Data Directory、conversation、media 和 model permission；Program Journey Status 只报告训练前准备与当前唯一下一步。
+首次使用不提供计划选择器、ProgramSpec 导入或文件路径输入。`/stella-status` 独立报告 Personal Data Directory、conversation hook access、media 和 model permission；Program Journey Status 只报告训练前准备与当前唯一下一步。Plugin 命令虽然由 Host 全局注册，但任何写命令在非 dedicated agent session 中都会拒绝执行。
+
+训练日志需要确认时，按回复中展示的点号数字路径提交 JSON，例如 `exercises.0.load.value` 或 `testResults.3.result.value`。Plugin 仍接受旧的方括号路径，但不依赖 Channel 保留 `[]` 字符。
 
 onboarding 不要求健康档案、营养目标或监督策略配置。
 

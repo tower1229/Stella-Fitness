@@ -5,7 +5,7 @@
 
 用户已明确确认：该 XLSX 是原课程配套资料，来自原作者或其他可靠同源版本；其中第 4 周周五的力量测试就是训练计划正式内容。
 
-用户已明确允许使用原始 XLSX。原件归档于 `sources/originals/zhuoshu-workout-log.xlsx`，并由构建按原始字节复制为 v1 内置打印模板；Plugin 在 binding 完成后直接发送完整工作簿，不生成替代 PDF。
+用户已明确允许使用原始 XLSX。原件归档于 `sources/originals/zhuoshu-workout-log.xlsx`，并由构建按原始字节复制为 v1 内置打印模板；Plugin 在 configured dedicated agent session 中直接发送完整工作簿，不生成替代 PDF。
 
 ## 1. Workbook 结构
 

@@ -10,6 +10,7 @@ import {
   type PluginHookInboundClaimEvent,
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
+import { resolveAgentIdFromSessionKey } from "openclaw/plugin-sdk/agent-runtime";
 import { assertOperatorModelPermission } from "./contracts/openclaw.js";
 import { MultiSessionWorkoutLogPageError } from "./extraction/candidate.js";
 import { createOpenClawExtractionRuntime } from "./extraction/openclaw.js";
@@ -74,10 +75,12 @@ export function registerStellaFitnessPlugin(
       join(api.runtime.state.resolveStateDir(process.env), PLUGIN_ID),
     preflight,
   });
+  const pendingMediaBySession = new Map<string, PluginHookInboundClaimEvent>();
   api.registerService({
     id: "stella-fitness-media-lifecycle",
     start() {},
     async stop() {
+      pendingMediaBySession.clear();
       await stellaRuntime.shutdown();
     },
   });
@@ -98,26 +101,10 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: false,
     requireAuth: true,
     async handler(context) {
-      const binding = await context.requestConversationBinding({
-        summary: "Stella Fitness workout recording",
-        detachHint: "Detach the Stella Fitness conversation binding to stop recording here.",
-        data: { workflow: "program-journey" },
-      });
-      if (binding.status === "pending") {
-        return binding.reply;
-      }
-      if (binding.status !== "bound") {
-        return {
-          text: `conversation-binding: unavailable (${binding.message})`,
-        };
-      }
+      const agentReply = requireDedicatedAgent(context, api);
+      if (agentReply !== undefined) return agentReply;
       const statusText = formatJourneyStatus(await stellaRuntime.programJourneyStatus());
-      return {
-        text: [
-          statusText,
-          "conversation-binding: active",
-        ].join("\n"),
-      };
+      return { text: statusText };
     },
   });
 
@@ -127,7 +114,7 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
-      const bindingReply = await requireProgramJourneyBinding(context);
+      const bindingReply = requireDedicatedAgent(context, api);
       if (bindingReply !== undefined) return bindingReply;
       const prerequisiteId = context.args?.trim();
       if (prerequisiteId === undefined || prerequisiteId.length === 0) {
@@ -155,7 +142,7 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
-      const bindingReply = await requireProgramJourneyBinding(context);
+      const bindingReply = requireDedicatedAgent(context, api);
       if (bindingReply !== undefined) return bindingReply;
       const text = context.args?.trim();
       if (text === undefined || text.length === 0) {
@@ -200,7 +187,7 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
-      const bindingReply = await requireProgramJourneyBinding(context);
+      const bindingReply = requireDedicatedAgent(context, api);
       if (bindingReply !== undefined) return bindingReply;
       const correction = parse12RMCorrectionCommand(context.args);
       const deletionId = parseDeletionCommand(context.args ?? "");
@@ -269,7 +256,7 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
-      const bindingReply = await requireProgramJourneyBinding(context);
+      const bindingReply = requireDedicatedAgent(context, api);
       if (bindingReply !== undefined) return bindingReply;
       const cycleStart = context.args?.trim() ?? "";
       return { text: await activateProgramReply(stellaRuntime, cycleStart) };
@@ -282,7 +269,7 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
-      const bindingReply = await requireProgramJourneyBinding(context);
+      const bindingReply = requireDedicatedAgent(context, api);
       if (bindingReply !== undefined) return bindingReply;
       const input = parseFactsCommand(context.args);
       if (input === undefined) {
@@ -302,7 +289,7 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: false,
     requireAuth: true,
     async handler(context) {
-      const bindingReply = await requireProgramJourneyBinding(context);
+      const bindingReply = requireDedicatedAgent(context, api);
       if (bindingReply !== undefined) return bindingReply;
       const result = await stellaRuntime.printableLog();
       return {
@@ -319,7 +306,7 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
-      const bindingReply = await requireProgramJourneyBinding(context);
+      const bindingReply = requireDedicatedAgent(context, api);
       if (bindingReply !== undefined) return bindingReply;
       const confirmation = parseWorkoutConfirmationCommand(context.args);
       try {
@@ -335,19 +322,55 @@ export function registerStellaFitnessPlugin(
         });
         return { text: await formatProgramJourneyTextResult(stellaRuntime, result) };
       } catch (error) {
-        if (!isUnavailableJourneyConfirmation(error)) throw error;
-        const result = await stellaRuntime.confirmWorkoutLog(confirmation);
-        return { text: formatWorkoutLogRecording(result) };
+        if (!isUnavailableJourneyConfirmation(error)) {
+          api.logger?.error(`stella-confirm journey routing failed: ${String(error)}`);
+          throw error;
+        }
+        try {
+          const result = await stellaRuntime.confirmWorkoutLog(confirmation);
+          return { text: formatWorkoutLogRecording(result) };
+        } catch (workoutError) {
+          api.logger?.error(`stella-confirm workout failed: ${String(workoutError)}`);
+          throw workoutError;
+        }
       }
     },
   });
 
   api.on(
+    "message_received",
+    (event, context) => {
+      const sessionKey = context.sessionKey;
+      if (
+        sessionKey === undefined ||
+        !isDedicatedAgentContext(context, api) ||
+        !/(?:训练(?:日志|记录)|记录训练|workout\s*log)/iu.test(event.content)
+      ) return;
+      const metadata = event.metadata;
+      if (
+        metadata === undefined ||
+        (nonBlankString(metadata.mediaPath) === undefined &&
+          firstNonBlankString(metadata.mediaPaths) === undefined)
+      ) return;
+      pendingMediaBySession.set(sessionKey, {
+        content: event.content,
+        channel: context.channelId,
+        isGroup: false,
+        ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
+        ...(event.runId === undefined ? {} : { runId: event.runId }),
+        ...(event.timestamp === undefined ? {} : { timestamp: event.timestamp }),
+        metadata,
+      });
+    },
+    { priority: 100 },
+  );
+
+  api.on(
     "inbound_claim",
     async (event, context) => {
+      if (!isDedicatedInboundContext(event, context, api)) return;
       const confirmationInput = workoutLogConfirmationInput(event);
       if (confirmationInput !== undefined) {
-        if (context?.pluginBinding?.pluginId !== PLUGIN_ID) return;
         const confirmation = parseWorkoutConfirmationCommand(confirmationInput);
         const { receivedAt, source } = inboundSource(event);
         try {
@@ -371,14 +394,13 @@ export function registerStellaFitnessPlugin(
       }
       const boundCommand = parseBoundStellaCommand(event);
       if (boundCommand !== undefined) {
-        if (context?.pluginBinding?.pluginId !== PLUGIN_ID) return;
         return await handleBoundStellaCommand(
           stellaRuntime,
           event,
           boundCommand,
         );
       }
-      if (context?.pluginBinding?.pluginId === PLUGIN_ID) {
+      {
         const boundText = [event.content, event.body, event.bodyForAgent]
           .find((value): value is string => typeof value === "string") ?? "";
         const prerequisiteId = parseNaturalPrerequisiteAcknowledgement(boundText);
@@ -542,12 +564,84 @@ export function registerStellaFitnessPlugin(
   );
 
   api.on(
-    "before_agent_reply",
+    "reply_dispatch",
     async (event, context) => {
-      if (normalizeStatusInput(event.cleanedBody) === STATUS_INPUT) {
-        return { handled: true, reply: createStatusResponse(preflight()) };
+      if (!isDedicatedAgentContext(event, api)) return;
+      const sessionKey = event.sessionKey;
+      if (sessionKey === undefined) return;
+      const pendingMedia = pendingMediaBySession.get(sessionKey);
+      if (pendingMedia === undefined) return;
+      pendingMediaBySession.delete(sessionKey);
+      const upload = await workoutLogUpload(pendingMedia);
+      if (upload === undefined) return;
+      let replyText: string;
+      try {
+        const result = await stellaRuntime.ingestWorkoutLog({
+          runId: event.runId ?? `workout-log-${randomUUID()}`,
+          upload,
+          timeoutMs: 60_000,
+          signal: new AbortController().signal,
+        });
+        replyText = formatWorkoutLogResult(result);
+      } catch (error) {
+        if (error instanceof MultiSessionWorkoutLogPageError) {
+          replyText = "Please crop the photo to exactly one session block and send it again.";
+        } else {
+          throw error;
+        }
       }
-      if (!isBodyWeightInput(event.cleanedBody)) {
+      const queuedFinal = context.dispatcher.sendFinalReply({ text: replyText });
+      context.dispatcher.markComplete();
+      context.recordProcessed("completed", { reason: "stella-fitness-media" });
+      context.markIdle("stella-fitness-media");
+      return {
+        handled: true,
+        queuedFinal,
+        counts: context.dispatcher.getQueuedCounts(),
+      };
+    },
+    { priority: 100, timeoutMs: 65_000 },
+  );
+
+  const handleDedicatedTextInput = async (
+    text: string,
+    context: {
+      readonly agentId?: string;
+      readonly sessionKey?: string;
+      readonly messageProvider?: string;
+      readonly runId?: string;
+    },
+  ): Promise<{ readonly text: string } | undefined> => {
+      if (!isDedicatedAgentContext(context, api)) return;
+      if (normalizeStatusInput(text) === STATUS_INPUT) {
+        return createStatusResponse(preflight());
+      }
+      const prerequisiteId = parseNaturalPrerequisiteAcknowledgement(
+        text,
+      );
+      if (prerequisiteId !== undefined) {
+        const status = await stellaRuntime.acknowledgePrerequisite({
+          prerequisiteId,
+          acknowledgedAt: new Date().toISOString(),
+          source: {
+            kind: "user-text",
+            text,
+            ...(context.messageProvider === undefined
+              ? {}
+              : { channel: context.messageProvider }),
+            ...(context.runId === undefined ? {} : { runId: context.runId }),
+          },
+        });
+        return { text: formatJourneyStatus(status) };
+      }
+      if (isOutOfScopeProgramQuestion(text)) {
+        const result = await stellaRuntime.programFacts({
+          kind: "unsupported",
+          question: text,
+        });
+        return { text: formatProgramFacts(result) };
+      }
+      if (!isBodyWeightInput(text)) {
         return;
       }
       const receivedAt = new Date().toISOString();
@@ -561,60 +655,77 @@ export function registerStellaFitnessPlugin(
         Object.keys(sourceIdentity).length === 0
           ? {}
           : { source: sourceIdentity };
-      const correctionId = bodyWeightCorrectionId(event.cleanedBody);
+      const correctionId = bodyWeightCorrectionId(text);
       if (correctionId === undefined) {
+        const journeyStatus = await stellaRuntime.programJourneyStatus({
+          date: receivedAt.slice(0, 10),
+        });
+        if (journeyStatus.state === "BASELINE_WEIGHT_REQUIRED") {
+          const result = await stellaRuntime.submitProgramJourneyText({
+            text,
+            receivedAt,
+            source: sourceIdentity,
+          });
+          return {
+            text: await formatProgramJourneyTextResult(stellaRuntime, result),
+          };
+        }
         const result = await stellaRuntime.recordBodyWeight({
-          text: event.cleanedBody,
+          text,
           receivedAt,
           ...source,
         });
         return {
-          handled: true,
-          reply: {
-            text: result.status === "clarification"
-              ? result.question
-              : formatBodyWeightRecording(result),
-          },
+          text: result.status === "clarification"
+            ? result.question
+            : formatBodyWeightRecording(result),
         };
       }
       const result = await stellaRuntime.correctBodyWeight({
         replacesObservationId: correctionId,
-        text: event.cleanedBody,
+        text,
         receivedAt,
         ...source,
       });
       return {
-        handled: true,
-        reply: {
-          text: result.status === "clarification"
-            ? result.question
-            : formatBodyWeightCorrection(result),
-        },
+        text: result.status === "clarification"
+          ? result.question
+          : formatBodyWeightCorrection(result),
       };
+  };
+
+  api.on(
+    "before_agent_reply",
+    async (event, context) => {
+      const reply = await handleDedicatedTextInput(event.cleanedBody, context);
+      return reply === undefined ? undefined : { handled: true, reply };
     },
     { priority: 100, timeoutMs: 1_000 },
   );
 
   api.on(
     "before_agent_run",
-    async (event) => {
-      if (normalizeStatusInput(event.prompt) === STATUS_INPUT) {
-        return {
-          outcome: "block" as const,
-          reason: "stella-status-is-plugin-owned",
-          message: createStatusResponse(preflight()).text,
-          category: "plugin-command",
-        };
+    async (event, context) => {
+      if (!isDedicatedAgentContext(context, api)) {
+        return { outcome: "pass" as const };
       }
-      if (isBodyWeightInput(event.prompt)) {
-        return {
-          outcome: "block" as const,
-          reason: "stella-body-weight-is-plugin-owned",
-          message: "Body-weight recording is handled by Stella Fitness.",
-          category: "plugin-command",
-        };
+      if (hasHostMediaMarker(event.prompt)) {
+        return { outcome: "pass" as const };
       }
-      return { outcome: "pass" as const };
+      const reply = await handleDedicatedTextInput(event.prompt, context);
+      const reason = normalizeStatusInput(event.prompt) === STATUS_INPUT
+        ? "stella-status-is-plugin-owned"
+        : isBodyWeightInput(event.prompt)
+        ? "stella-body-weight-is-plugin-owned"
+        : "stella-dedicated-input-is-plugin-owned";
+      return reply === undefined
+        ? { outcome: "pass" as const }
+        : {
+            outcome: "block" as const,
+            reason,
+            message: reply.text,
+            category: "plugin-command",
+          };
     },
     { priority: 100, timeoutMs: 1_000 },
   );
@@ -626,6 +737,12 @@ function isWorkoutLogImageInput(event: PluginHookInboundClaimEvent): boolean {
     .filter((value): value is string => typeof value === "string")
     .join(" ");
   return /(?:训练(?:日志|记录)|记录训练|workout\s*log)/iu.test(text);
+}
+
+function hasHostMediaMarker(text: string): boolean {
+  return /(?:\[media attached(?:\s+\d+\/\d+)?:|<media:[^>]+>|(?:^|\n)\s*MEDIA:)/iu.test(
+    text,
+  );
 }
 
 function workoutLogConfirmationInput(
@@ -936,7 +1053,23 @@ function parseWorkoutConfirmationCommand(args: string | undefined): {
   if (record === undefined) {
     throw new Error("Workout-log confirmation values must be a JSON object");
   }
-  return { confirmationId: match[1]!, values: record };
+  const canonicalValues: Record<string, unknown> = {};
+  for (const [path, value] of Object.entries(record)) {
+    const canonicalPath = canonicalConfirmationPath(path);
+    if (Object.hasOwn(canonicalValues, canonicalPath)) {
+      throw new Error(`Duplicate workout-log confirmation field: ${canonicalPath}`);
+    }
+    canonicalValues[canonicalPath] = value;
+  }
+  return { confirmationId: match[1]!, values: canonicalValues };
+}
+
+function canonicalConfirmationPath(path: string): string {
+  return path.replace(/^(exercises|testResults)\.(\d+)(?=\.)/u, "$1[$2]");
+}
+
+function commandConfirmationPath(path: string): string {
+  return path.replace(/^(exercises|testResults)\[(\d+)\](?=\.)/u, "$1.$2");
 }
 
 function formatWorkoutLogResult(
@@ -948,7 +1081,7 @@ function formatWorkoutLogResult(
   return [
     `Workout log needs confirmation: ${result.confirmationId}`,
     ...result.fields.map(({ path, kind, candidates }) =>
-      `- ${path} (${kind})${
+      `- ${commandConfirmationPath(path)} (${kind})${
         candidates === undefined ? "" : `: ${candidates.join(" / ")}`
       }`,
     ),
@@ -1240,19 +1373,64 @@ function formatJourneyStatus(
   ].join("\n");
 }
 
-async function requireProgramJourneyBinding(
-  context: PluginCommandContext,
-): Promise<PluginCommandResult | undefined> {
-  const binding = await context.requestConversationBinding({
-    summary: "Stella Fitness workout recording",
-    detachHint: "Detach the Stella Fitness conversation binding to stop recording here.",
-    data: { workflow: "program-journey" },
-  });
-  if (binding.status === "bound") return undefined;
-  if (binding.status === "pending") return binding.reply;
+function requireDedicatedAgent(
+  context: Pick<PluginCommandContext, "sessionKey">,
+  api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
+): PluginCommandResult | undefined {
+  if (isDedicatedAgentContext(context, api)) {
+    return undefined;
+  }
   return {
-    text: `conversation-binding: unavailable (${binding.message})`,
+    text: "agent-scope: unavailable (Use Stella Fitness from its configured dedicated agent.)",
   };
+}
+
+function isDedicatedAgentContext(
+  context: { readonly agentId?: string; readonly sessionKey?: string } | undefined,
+  api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
+): boolean {
+  const dedicatedAgentId = resolveDedicatedAgentId(
+    currentPluginConfig(currentOpenClawConfig(api)),
+  );
+  if (dedicatedAgentId === undefined) return false;
+  return context?.agentId === dedicatedAgentId ||
+    resolveAgentIdFromSessionKey(context?.sessionKey) === dedicatedAgentId;
+}
+
+function isDedicatedInboundContext(
+  event: Pick<PluginHookInboundClaimEvent, "accountId" | "channel">,
+  context: { readonly agentId?: string; readonly sessionKey?: string } | undefined,
+  api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
+): boolean {
+  if (isDedicatedAgentContext(context, api)) return true;
+  const openclawConfig = currentOpenClawConfig(api);
+  const dedicatedAgentId = resolveDedicatedAgentId(
+    currentPluginConfig(openclawConfig),
+  );
+  if (dedicatedAgentId === undefined || !Array.isArray(openclawConfig.bindings)) {
+    return false;
+  }
+  const accountId = event.accountId ?? "default";
+  return openclawConfig.bindings.some((value) => {
+    const binding = asRecord(value);
+    const match = asRecord(binding?.match);
+    if (binding?.agentId !== dedicatedAgentId || match?.channel !== event.channel) {
+      return false;
+    }
+    if (Object.keys(match).some((key) => key !== "channel" && key !== "accountId")) {
+      return false;
+    }
+    return match.accountId === undefined || match.accountId === accountId;
+  });
+}
+
+function resolveDedicatedAgentId(
+  pluginConfig: Record<string, unknown> | undefined,
+): string | undefined {
+  const value = pluginConfig?.dedicatedAgentId;
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }
 
 function parseInitial12RMCommand(args: string | undefined): {
