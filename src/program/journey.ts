@@ -54,6 +54,10 @@ const RUNTIME_LOCK_DATABASE = "program-setup-lock.sqlite";
 
 export type RequiredPrerequisiteId = (typeof REQUIRED_PREREQUISITES)[number];
 export type Initial12RMExerciseId = (typeof INITIAL_12RM_EXERCISES)[number];
+export type Initial12RMFact = {
+  readonly exerciseId: Initial12RMExerciseId;
+  readonly valueKg: number;
+};
 export type ProgramJourneyState =
   | "PREREQUISITES_REQUIRED"
   | "BASELINE_WEIGHT_REQUIRED"
@@ -635,48 +639,144 @@ export function createProgramJourney(options: {
       readonly recordedAt: string;
       readonly source: ObservationSource;
     }): Promise<CourseStart12RMObservation> {
+      const [observation] = await this.recordInitial12RMBatch({
+        facts: [{
+          exerciseId: input.exerciseId,
+          valueKg: input.valueKg,
+          confirmationId: input.confirmationId,
+        }],
+        occurredAt: input.occurredAt,
+        recordedAt: input.recordedAt,
+        source: input.source,
+      });
+      return observation!;
+    },
+
+    async recordInitial12RMBatch(input: {
+      readonly facts: readonly (Initial12RMFact & { readonly confirmationId?: string })[];
+      readonly occurredAt: string;
+      readonly recordedAt: string;
+      readonly source: ObservationSource;
+    }): Promise<readonly CourseStart12RMObservation[]> {
       assertJourneyPreflight(options.preflight());
       await ensureSetup(personalDataDirectory);
+      if (input.facts.length < 1 || input.facts.length > INITIAL_12RM_EXERCISES.length) {
+        throw new Error("Initial 12RM batch must contain between one and three facts");
+      }
+      const exerciseIds = input.facts.map(({ exerciseId }) => exerciseId);
+      if (new Set(exerciseIds).size !== exerciseIds.length) {
+        throw new Error("Initial 12RM batch contains a duplicate exercise");
+      }
+      const identifiedFacts = input.facts.map((fact) => ({
+        ...fact,
+        confirmationId: fact.confirmationId ??
+          stableInitial12RMBatchConfirmationId(input.source, fact.exerciseId),
+      }));
+      for (const fact of identifiedFacts) {
+        if (!INITIAL_12RM_EXERCISES.includes(fact.exerciseId)) {
+          throw new Error(`Unsupported course-start 12RM exercise: ${fact.exerciseId}`);
+        }
+        if (!Number.isFinite(fact.valueKg) || fact.valueKg <= 0) {
+          throw new Error("Initial 12RM value must be a positive kg value");
+        }
+        if (!isUuid(fact.confirmationId)) {
+          throw new Error("Initial 12RM confirmation ID must be a UUID");
+        }
+      }
+      assertTimestamp(input.occurredAt, "occurredAt");
+      assertTimestamp(input.recordedAt, "recordedAt");
       if ((await readActiveProgramIfPresent({ personalDataDirectory })) !== undefined) {
         throw new Error("Course-start 12RM cannot change after activation");
       }
       const journeyStatus = await this.status();
-      if (journeyStatus.state !== "INITIAL_12RM_REQUIRED") {
-        const existing = await findInitial12RMByConfirmation(
-          personalDataDirectory,
-          input.confirmationId,
-        );
-        if (existing !== undefined) {
-          assertSameInitial12RM(existing, input);
-          return existing;
-        }
+      if (
+        journeyStatus.state !== "INITIAL_12RM_REQUIRED" &&
+        journeyStatus.state !== "READY_TO_ACTIVATE"
+      ) {
         throw new Error(`Course-start 12RM is unavailable in ${journeyStatus.state}`);
       }
+
       return await withProgramJourneyLock(runtimeDirectory, async () => {
-        const setup = await readSetup(personalDataDirectory);
-        const existingObservationId = setup.initial12RMObservationIds[input.exerciseId];
-        if (existingObservationId !== undefined) {
-          const existing = resolveInitial12RMReference(
-            (await readInitial12RMObservations(personalDataDirectory)).observations,
-            existingObservationId,
-          );
-          if (existing !== undefined) {
-            if (existing.provenance.confirmationId === input.confirmationId) {
-              assertSameInitial12RM(existing, input);
-              return existing;
-            }
-            throw new Error(`Course-start 12RM is already recorded for ${input.exerciseId}`);
-          }
+        if ((await readActiveProgramIfPresent({ personalDataDirectory })) !== undefined) {
+          throw new Error("Course-start 12RM cannot change after activation");
         }
-        const observation = await persistInitial12RM(personalDataDirectory, input);
-        await writeUpdatedSetup(personalDataDirectory, (setup) => ({
-          ...setup,
-          initial12RMObservationIds: {
-            ...setup.initial12RMObservationIds,
-            [input.exerciseId]: observation.id,
-          },
-        }));
-        return observation;
+        const setup = await readSetup(personalDataDirectory);
+        const records = (await readInitial12RMObservations(personalDataDirectory)).observations;
+        const prepared = identifiedFacts.map((fact) => {
+          const existingReference = setup.initial12RMObservationIds[fact.exerciseId];
+          const existing = existingReference === undefined
+            ? undefined
+            : resolveInitial12RMReference(records, existingReference);
+          const byConfirmation = records.find(
+            ({ provenance }) => provenance.confirmationId === fact.confirmationId,
+          );
+          if (existing !== undefined && existing.id !== byConfirmation?.id) {
+            throw new Error(`Course-start 12RM is already recorded for ${fact.exerciseId}`);
+          }
+          if (byConfirmation !== undefined) {
+            assertSameInitial12RM(byConfirmation, {
+              ...fact,
+              source: input.source,
+            });
+            if (byConfirmation.exerciseId !== fact.exerciseId) {
+              throw new Error("Initial 12RM confirmation ID was reused for different facts");
+            }
+          }
+          return { fact, existing: byConfirmation };
+        });
+        const createdPaths: string[] = [];
+        let setupCommitted = false;
+        try {
+          const observations: CourseStart12RMObservation[] = [];
+          for (const { fact, existing } of prepared) {
+            if (existing !== undefined) {
+              observations.push(existing);
+              continue;
+            }
+            const observation = await persistInitial12RM(personalDataDirectory, {
+              ...fact,
+              occurredAt: input.occurredAt,
+              recordedAt: input.recordedAt,
+              source: input.source,
+            });
+            observations.push(observation);
+            createdPaths.push(join(
+              personalDataDirectory,
+              INITIAL_12RM_DIRECTORY,
+              `${observation.id}.json`,
+            ));
+          }
+          await writeUpdatedSetup(personalDataDirectory, (current) => ({
+            ...current,
+            initial12RMObservationIds: {
+              ...current.initial12RMObservationIds,
+              ...Object.fromEntries(
+                observations.map((observation) => [observation.exerciseId, observation.id]),
+              ),
+            },
+          }));
+          setupCommitted = true;
+
+          const persistedSetup = await readSetup(personalDataDirectory);
+          const persistedRecords = (
+            await readInitial12RMObservations(personalDataDirectory)
+          ).observations;
+          for (const observation of observations) {
+            const reference = persistedSetup.initial12RMObservationIds[observation.exerciseId];
+            if (
+              reference === undefined ||
+              resolveInitial12RMReference(persistedRecords, reference)?.id !== observation.id
+            ) {
+              throw new Error(`Initial 12RM batch verification failed for ${observation.exerciseId}`);
+            }
+          }
+          return observations;
+        } catch (error) {
+          if (!setupCommitted) {
+            await Promise.all(createdPaths.map((path) => unlink(path).catch(() => undefined)));
+          }
+          throw error;
+        }
       });
     },
 
@@ -782,6 +882,30 @@ export function createProgramJourney(options: {
         ...input.source,
       };
       const status = await this.status({ date: receivedAt.slice(0, 10) });
+      const initial12RMBatch = parseInitial12RMBatchText(input.text, receivedAt);
+      if (
+        initial12RMBatch !== undefined &&
+        (status.state === "INITIAL_12RM_REQUIRED" || status.state === "READY_TO_ACTIVATE")
+      ) {
+        if (initial12RMBatch.fields.length > 0) {
+          return {
+            status: "clarification" as const,
+            kind: "course-start-12rm-batch" as const,
+            fields: initial12RMBatch.fields,
+          };
+        }
+        const observations = await this.recordInitial12RMBatch({
+          facts: initial12RMBatch.facts,
+          occurredAt: receivedAt,
+          recordedAt: receivedAt,
+          source,
+        });
+        return {
+          status: "recorded" as const,
+          kind: "course-start-12rm-batch" as const,
+          observations,
+        };
+      }
       if (status.state === "BASELINE_WEIGHT_REQUIRED") {
         const parsed = parseBodyWeightInput(input);
         if (!("status" in parsed)) {
@@ -1042,39 +1166,41 @@ export function createProgramJourney(options: {
 
     async activate(cycleStart: string): Promise<ProgramState> {
       assertJourneyPreflight(options.preflight());
-      const active = await readActiveProgramIfPresent({ personalDataDirectory });
-      if (active !== undefined) {
-        if (active.state.cycle.startDate !== cycleStart) {
-          throw new Error("Program State already has a different cycle start date");
+      return await withProgramJourneyLock(runtimeDirectory, async () => {
+        const active = await readActiveProgramIfPresent({ personalDataDirectory });
+        if (active !== undefined) {
+          if (active.state.cycle.startDate !== cycleStart) {
+            throw new Error("Program State already has a different cycle start date");
+          }
+          return active.state;
         }
-        return active.state;
-      }
-      const status = await this.status();
-      if (status.state !== "READY_TO_ACTIVATE") {
-        throw new Error(`Program Journey cannot activate in ${status.state}`);
-      }
-      const setup = await readSetup(personalDataDirectory);
-      const observations = await readInitial12RMObservations(personalDataDirectory);
-      const bindings: Record<string, Readonly<Record<"A", SymbolicLoadBinding>>> = {};
-      for (const exerciseId of INITIAL_12RM_EXERCISES) {
-        const observationId = setup.initial12RMObservationIds[exerciseId]!;
-        const observation = resolveInitial12RMReference(
-          observations.observations,
-          observationId,
-        );
-        if (observation === undefined) {
-          throw new Error(`Initial 12RM Observation is missing for ${exerciseId}`);
+        const status = await this.status();
+        if (status.state !== "READY_TO_ACTIVATE") {
+          throw new Error(`Program Journey cannot activate in ${status.state}`);
         }
-        if (observation.exerciseId !== exerciseId) {
-          throw new Error(`Initial 12RM Observation is mapped to the wrong exercise: ${exerciseId}`);
+        const setup = await readSetup(personalDataDirectory);
+        const observations = await readInitial12RMObservations(personalDataDirectory);
+        const bindings: Record<string, Readonly<Record<"A", SymbolicLoadBinding>>> = {};
+        for (const exerciseId of INITIAL_12RM_EXERCISES) {
+          const observationId = setup.initial12RMObservationIds[exerciseId]!;
+          const observation = resolveInitial12RMReference(
+            observations.observations,
+            observationId,
+          );
+          if (observation === undefined) {
+            throw new Error(`Initial 12RM Observation is missing for ${exerciseId}`);
+          }
+          if (observation.exerciseId !== exerciseId) {
+            throw new Error(`Initial 12RM Observation is mapped to the wrong exercise: ${exerciseId}`);
+          }
+          bindings[exerciseId] = { A: initial12RMBinding(observation) };
         }
-        bindings[exerciseId] = { A: initial12RMBinding(observation) };
-      }
-      return await confirmProgramSetup({
-        personalDataDirectory,
-        cycleStart,
-        symbolicLoadBindings: bindings,
-        baselineObservationId: setup.baselineObservationId!,
+        return await confirmProgramSetup({
+          personalDataDirectory,
+          cycleStart,
+          symbolicLoadBindings: bindings,
+          baselineObservationId: setup.baselineObservationId!,
+        });
       });
     },
 
@@ -1431,12 +1557,38 @@ function parseJourneyConfirmation(source: string): PendingJourneyConfirmation {
 function stableJourneyConfirmationId(
   kind: PendingJourneyConfirmation["kind"],
   source: ObservationSource,
+  scope = "",
 ): string {
   if (source.messageId === undefined && source.runId === undefined) {
     return randomUUID();
   }
+  return stableUuid([
+    kind,
+    scope,
+    source.channel ?? "",
+    source.messageId ?? "",
+    source.runId ?? "",
+  ]);
+}
+
+function stableInitial12RMBatchConfirmationId(
+  source: ObservationSource,
+  exerciseId: Initial12RMExerciseId,
+): string {
+  if (source.messageId !== undefined || source.runId !== undefined) {
+    return stableJourneyConfirmationId("course-start-12rm", source, exerciseId);
+  }
+  return stableUuid([
+    "course-start-12rm",
+    exerciseId,
+    source.channel ?? "",
+    source.text,
+  ]);
+}
+
+function stableUuid(parts: readonly string[]): string {
   const hex = createHash("sha256")
-    .update([kind, source.channel ?? "", source.messageId ?? "", source.runId ?? ""].join("\u0000"))
+    .update(parts.join("\u0000"))
     .digest("hex")
     .slice(0, 32)
     .split("");
@@ -1542,6 +1694,47 @@ function parseInitial12RMText(text: string, receivedAt: string): {
       ...(ambiguousTime ? {} : { occurredAt: receivedAt }),
     },
     fields,
+  };
+}
+
+function parseInitial12RMBatchText(
+  text: string,
+  receivedAt: string,
+): {
+  readonly facts: readonly Initial12RMFact[];
+  readonly fields: readonly JourneyConfirmationField[];
+} | undefined {
+  const lines = text.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  if (lines.length < 2) return undefined;
+  if (lines.length > INITIAL_12RM_EXERCISES.length) {
+    return {
+      facts: [],
+      fields: [{
+        path: "exerciseId",
+        question: "一条消息最多记录三个初始 12RM 动作；本批次未保存。",
+      }],
+    };
+  }
+  const parsed = lines.map((line) => parseInitial12RMText(line, receivedAt));
+  const facts = parsed.flatMap(({ candidate, fields }) =>
+    fields.length === 0
+      ? [{
+          exerciseId: candidate.exerciseId as Initial12RMExerciseId,
+          valueKg: candidate.valueKg as number,
+        }]
+      : [],
+  );
+  const duplicateExercise = new Set(facts.map(({ exerciseId }) => exerciseId)).size !== facts.length;
+  return {
+    facts,
+    fields: parsed.some(({ fields }) => fields.length > 0) || duplicateExercise
+      ? [{
+          path: "exerciseId",
+          question: duplicateExercise
+            ? "每个初始 12RM 动作只能出现一次；本批次未保存。"
+            : "请确保每行只包含一个支持的动作和一个明确的 kg 数值；本批次未保存。",
+        }]
+      : [],
   };
 }
 

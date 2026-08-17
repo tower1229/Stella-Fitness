@@ -414,126 +414,12 @@ export function registerStellaFitnessPlugin(
         );
       }
       {
-        const boundText = [event.content, event.body, event.bodyForAgent]
+        const text = [event.content, event.body, event.bodyForAgent]
           .find((value): value is string => typeof value === "string") ?? "";
-        const prerequisiteId = parseNaturalPrerequisiteAcknowledgement(boundText);
-        if (prerequisiteId !== undefined) {
-          const { receivedAt: acknowledgedAt, source } = inboundSource(event);
-          const status = await stellaRuntime.acknowledgePrerequisite({
-            prerequisiteId,
-            acknowledgedAt,
-            source: {
-              kind: "user-text",
-              text: boundText,
-              ...source,
-            },
-          });
-          return { handled: true, reply: { text: formatJourneyStatus(status) } };
-        }
-        const date = event.timestamp === undefined
-          ? new Date().toISOString().slice(0, 10)
-          : new Date(event.timestamp).toISOString().slice(0, 10);
-        const factQuery = parseNaturalProgramFactsQuery(boundText, date);
-        if (isOutOfScopeProgramQuestion(boundText)) {
-          const result = await stellaRuntime.programFacts({
-            kind: "unsupported",
-            question: boundText,
-          });
-          return { handled: true, reply: { text: formatProgramFacts(result) } };
-        }
-        if (isWeightFactsQuery(boundText)) {
-          return {
-            handled: true,
-            reply: { text: formatWeightFacts(await stellaRuntime.weightFacts()) },
-          };
-        }
-        if (factQuery !== undefined) {
-          return {
-            handled: true,
-            reply: {
-              text: await formatAvailableProgramFacts(stellaRuntime, factQuery),
-            },
-          };
-        }
-        if (isBodyWeightInput(boundText)) {
-          const receivedAt = event.timestamp === undefined
-            ? new Date().toISOString()
-            : new Date(event.timestamp).toISOString();
-          const correctionId = bodyWeightCorrectionId(boundText);
-          if (correctionId !== undefined) {
-            const result = await stellaRuntime.correctBodyWeight({
-              replacesObservationId: correctionId,
-              text: boundText,
-              receivedAt,
-              source: {
-                channel: event.channel,
-                ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
-                ...(event.runId === undefined ? {} : { runId: event.runId }),
-              },
-            });
-            return {
-              handled: true,
-              reply: {
-                text: result.status === "clarification"
-                  ? result.question
-                  : formatBodyWeightCorrection(result),
-              },
-            };
-          }
-          const journeyStatus = await stellaRuntime.programJourneyStatus({
-            date: receivedAt.slice(0, 10),
-          });
-          if (journeyStatus.state === "BASELINE_WEIGHT_REQUIRED") {
-            const result = await stellaRuntime.submitProgramJourneyText({
-              text: boundText,
-              receivedAt,
-              source: {
-                channel: event.channel,
-                ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
-                ...(event.runId === undefined ? {} : { runId: event.runId }),
-              },
-            });
-            return {
-              handled: true,
-              reply: { text: await formatProgramJourneyTextResult(stellaRuntime, result) },
-            };
-          }
-          const result = await recordJourneyAwareBodyWeight(stellaRuntime, {
-            text: boundText,
-            receivedAt,
-            source: {
-              channel: event.channel,
-              ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
-              ...(event.runId === undefined ? {} : { runId: event.runId }),
-            },
-          });
-          return {
-            handled: true,
-            reply: {
-              text: result.status === "clarification"
-                ? result.question
-                : formatJourneyBodyWeight(result),
-            },
-          };
-        }
-        if (isInitial12RMText(boundText)) {
-          const { receivedAt, source } = inboundSource(event);
-          const result = await stellaRuntime.submitProgramJourneyText({
-            text: boundText,
-            receivedAt,
-            source,
-          });
-          return {
-            handled: true,
-            reply: { text: await formatProgramJourneyTextResult(stellaRuntime, result) },
-          };
-        }
-        if (isQuestion(boundText)) {
-          const result = await stellaRuntime.programFacts({
-            kind: "unsupported",
-            question: boundText,
-          });
-          return { handled: true, reply: { text: formatProgramFacts(result) } };
+        const { receivedAt, source } = inboundSource(event);
+        const reply = await handleDedicatedTextInputSafely({ text, receivedAt, source });
+        if (reply !== undefined) {
+          return { handled: true, reply };
         }
       }
       if (!isWorkoutLogImageInput(event)) {
@@ -620,16 +506,16 @@ export function registerStellaFitnessPlugin(
     { priority: 100, timeoutMs: 65_000 },
   );
 
-  const handleDedicatedTextInput = async (
-    text: string,
-    context: {
-      readonly agentId?: string;
-      readonly sessionKey?: string;
-      readonly messageProvider?: string;
+  const handleDedicatedTextInput = async (input: {
+    readonly text: string;
+    readonly receivedAt: string;
+    readonly source: {
+      readonly channel?: string;
+      readonly messageId?: string;
       readonly runId?: string;
-    },
-  ): Promise<{ readonly text: string } | undefined> => {
-      if (!isDedicatedAgentContext(context, api)) return;
+    };
+  }): Promise<{ readonly text: string } | undefined> => {
+      const { text, receivedAt, source } = input;
       if (normalizeStatusInput(text) === STATUS_INPUT) {
         return createStatusResponse(preflight());
       }
@@ -639,21 +525,18 @@ export function registerStellaFitnessPlugin(
       if (prerequisiteId !== undefined) {
         const status = await stellaRuntime.acknowledgePrerequisite({
           prerequisiteId,
-          acknowledgedAt: new Date().toISOString(),
+          acknowledgedAt: receivedAt,
           source: {
             kind: "user-text",
             text,
-            ...(context.messageProvider === undefined
-              ? {}
-              : { channel: context.messageProvider }),
-            ...(context.runId === undefined ? {} : { runId: context.runId }),
+            ...source,
           },
         });
         return { text: formatJourneyStatus(status) };
       }
       const factQuery = parseNaturalProgramFactsQuery(
         text,
-        new Date().toISOString().slice(0, 10),
+        receivedAt.slice(0, 10),
       );
       if (isOutOfScopeProgramQuestion(text)) {
         const result = await stellaRuntime.programFacts({
@@ -670,51 +553,69 @@ export function registerStellaFitnessPlugin(
           text: await formatAvailableProgramFacts(stellaRuntime, factQuery),
         };
       }
+      if (isInitial12RMText(text)) {
+        const journeyStatus = await stellaRuntime.programJourneyStatus({
+          date: receivedAt.slice(0, 10),
+        });
+        if (
+          journeyStatus.state !== "INITIAL_12RM_REQUIRED" &&
+          journeyStatus.state !== "READY_TO_ACTIVATE"
+        ) {
+          return { text: formatJourneyStatus(journeyStatus) };
+        }
+        const result = await stellaRuntime.submitProgramJourneyText({
+          text,
+          receivedAt,
+          source,
+        });
+        return {
+          text: await formatProgramJourneyTextResult(stellaRuntime, result),
+        };
+      }
       if (!isBodyWeightInput(text)) {
+        if (isQuestion(text)) {
+          const result = await stellaRuntime.programFacts({
+            kind: "unsupported",
+            question: text,
+          });
+          return { text: formatProgramFacts(result) };
+        }
         return;
       }
-      const receivedAt = new Date().toISOString();
-      const sourceIdentity = {
-        ...(context.messageProvider === undefined
-          ? {}
-          : { channel: context.messageProvider }),
-        ...(context.runId === undefined ? {} : { runId: context.runId }),
-      };
-      const source =
-        Object.keys(sourceIdentity).length === 0
-          ? {}
-          : { source: sourceIdentity };
       const correctionId = bodyWeightCorrectionId(text);
       if (correctionId === undefined) {
         const journeyStatus = await stellaRuntime.programJourneyStatus({
           date: receivedAt.slice(0, 10),
         });
-        if (journeyStatus.state === "BASELINE_WEIGHT_REQUIRED") {
+        if (
+          journeyStatus.state === "BASELINE_WEIGHT_REQUIRED" ||
+          journeyStatus.state === "PHASE_CHECKPOINT_REQUIRED"
+        ) {
           const result = await stellaRuntime.submitProgramJourneyText({
             text,
             receivedAt,
-            source: sourceIdentity,
+            source,
           });
           return {
             text: await formatProgramJourneyTextResult(stellaRuntime, result),
           };
         }
-        const result = await stellaRuntime.recordBodyWeight({
+        const result = await recordJourneyAwareBodyWeight(stellaRuntime, {
           text,
           receivedAt,
-          ...source,
+          source,
         });
         return {
           text: result.status === "clarification"
             ? result.question
-            : formatBodyWeightRecording(result),
+            : formatJourneyBodyWeight(result),
         };
       }
       const result = await stellaRuntime.correctBodyWeight({
         replacesObservationId: correctionId,
         text,
         receivedAt,
-        ...source,
+        source,
       });
       return {
         text: result.status === "clarification"
@@ -723,10 +624,34 @@ export function registerStellaFitnessPlugin(
       };
   };
 
+  const handleDedicatedTextInputSafely = async (
+    input: Parameters<typeof handleDedicatedTextInput>[0],
+  ): Promise<{ readonly text: string } | undefined> => {
+    try {
+      return await handleDedicatedTextInput(input);
+    } catch (error) {
+      api.logger?.error(`stella-fitness dedicated text routing failed: ${String(error)}`);
+      return {
+        text: "Stella Fitness could not process this Plugin-owned input. No success was recorded. Please retry.",
+      };
+    }
+  };
+
   api.on(
     "before_agent_reply",
     async (event, context) => {
-      const reply = await handleDedicatedTextInput(event.cleanedBody, context);
+      if (!isDedicatedAgentContext(context, api)) return;
+      const receivedAt = new Date().toISOString();
+      const reply = await handleDedicatedTextInputSafely({
+        text: event.cleanedBody,
+        receivedAt,
+        source: {
+          ...(context.messageProvider === undefined
+            ? {}
+            : { channel: context.messageProvider }),
+          ...(context.runId === undefined ? {} : { runId: context.runId }),
+        },
+      });
       return reply === undefined ? undefined : { handled: true, reply };
     },
     { priority: 100, timeoutMs: 1_000 },
@@ -741,7 +666,16 @@ export function registerStellaFitnessPlugin(
       if (hasHostMediaMarker(event.prompt)) {
         return { outcome: "pass" as const };
       }
-      const reply = await handleDedicatedTextInput(event.prompt, context);
+      const reply = await handleDedicatedTextInputSafely({
+        text: event.prompt,
+        receivedAt: new Date().toISOString(),
+        source: {
+          ...(context.messageProvider === undefined
+            ? {}
+            : { channel: context.messageProvider }),
+          ...(context.runId === undefined ? {} : { runId: context.runId }),
+        },
+      });
       const reason = normalizeStatusInput(event.prompt) === STATUS_INPUT
         ? "stella-status-is-plugin-owned"
         : isBodyWeightInput(event.prompt)
@@ -1234,6 +1168,17 @@ async function formatProgramJourneyTextResult(
   runtime: StellaFitnessRuntime,
   result: Awaited<ReturnType<StellaFitnessRuntime["submitProgramJourneyText"]>>,
 ): Promise<string> {
+  if (result.kind === "course-start-12rm-batch") {
+    if (result.status === "clarification") {
+      return result.fields.map(({ question }) => question).join("\n");
+    }
+    return [
+      ...result.observations.map((observation) =>
+        `Initial 12RM recorded: ${observation.exerciseId} ${observation.result.value} kg\nobservation: ${observation.id}`
+      ),
+      formatJourneyStatus(await runtime.programJourneyStatus()),
+    ].join("\n");
+  }
   if (result.status === "confirmation") {
     return [
       `Program Journey needs confirmation: ${result.confirmationId}`,

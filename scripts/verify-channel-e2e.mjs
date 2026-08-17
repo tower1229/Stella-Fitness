@@ -157,17 +157,8 @@ export async function verifyTelegramChannelFlow(options) {
       text.startsWith("baseline body weight recorded: 68.4 kg"),
     );
     await restartGateway("baseline body weight");
-    for (const [exercise, value] of [
-      ["goblet-squat", 32],
-      ["dumbbell-bench-press", 24],
-      ["dumbbell-deadlift", 40],
-    ]) {
-      telegram.pushText(`/stella-12rm ${exercise} ${value} kg confirm`);
-      await telegram.waitForText((text) =>
-        text.startsWith(`Initial 12RM recorded: ${exercise} ${value} kg`),
-      );
-      await restartGateway(`${exercise} 12RM`);
-    }
+    await verifyWebChatInitial12RMBatch(options, personalDataDirectory);
+    await restartGateway("WebChat initial 12RM batch");
     telegram.pushText("/stella-activate 2026-07-13");
     await telegram.waitForText((text) =>
       text.startsWith("Program State activated:") &&
@@ -520,6 +511,8 @@ export async function verifyTelegramChannelFlow(options) {
       baseline: true,
       baselineConfirmationRecovered: true,
       initial12RM: true,
+      initial12RMBatch: true,
+      initial12RMBatchZeroToken: true,
       activated: true,
       initialBindings: true,
       facts: true,
@@ -763,6 +756,83 @@ async function verifyWebChatFlow(options, gatewayPort) {
   }
 }
 
+async function verifyWebChatInitial12RMBatch(options, personalDataDirectory) {
+  const sessionKey = "agent:fitness:stella-clean-install-webchat-12rm-batch";
+  options.run(options.openclaw, [
+    "gateway",
+    "call",
+    "chat.send",
+    "--expect-final",
+    "--json",
+    "--token",
+    GATEWAY_TOKEN,
+    "--timeout",
+    String(REQUEST_TIMEOUT_MS),
+    "--params",
+    JSON.stringify({
+      sessionKey,
+      agentId: "fitness",
+      message: [
+        "高脚杯深蹲 12RM 32 kg",
+        "哑铃卧推 12RM 24 kg",
+        "哑铃硬拉 12RM 40 kg",
+      ].join("\n"),
+      deliver: false,
+      idempotencyKey: "648459cd-713b-4d7e-a2c5-bd37e59a7f39",
+    }),
+  ]);
+  let snapshot;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    snapshot = JSON.parse(options.run(options.openclaw, [
+      "gateway",
+      "call",
+      "chat.history",
+      "--json",
+      "--token",
+      GATEWAY_TOKEN,
+      "--params",
+      JSON.stringify({ sessionKey, agentId: "fitness", limit: 10 }),
+    ]));
+    if (
+      snapshot.sessionInfo?.hasActiveRun === false &&
+      snapshot.messages?.some((message) => message.role === "assistant")
+    ) break;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+  const reply = snapshot.messages?.findLast((message) => message.role === "assistant");
+  const replyText = reply?.content?.find((content) => content.type === "text")?.text;
+  if (
+    typeof replyText !== "string" ||
+    !replyText.includes("goblet-squat 32 kg") ||
+    !replyText.includes("dumbbell-bench-press 24 kg") ||
+    !replyText.includes("dumbbell-deadlift 40 kg") ||
+    !replyText.includes("journey: READY_TO_ACTIVATE") ||
+    reply.usage?.totalTokens !== 0 ||
+    reply.provider !== "openclaw" ||
+    reply.model !== "gateway-injected"
+  ) {
+    throw new Error(`WebChat initial 12RM batch was not a zero-token synthetic reply: ${JSON.stringify(reply)}`);
+  }
+  const setup = JSON.parse(readFileSync(
+    join(personalDataDirectory, "program", "setup.json"),
+    "utf8",
+  ));
+  const observationFiles = readdirSync(join(
+    personalDataDirectory,
+    "observations",
+    "special-session",
+  ));
+  if (
+    observationFiles.length !== 3 ||
+    Object.keys(setup.initial12RMObservationIds).length !== 3
+  ) {
+    throw new Error(
+      `WebChat initial 12RM batch did not persist exactly three active facts: ${JSON.stringify({ observationFiles, setup })}`,
+    );
+  }
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
+}
+
 function startGateway(options, port) {
   const output = [];
   const child = spawn(
@@ -803,7 +873,7 @@ async function stopGateway(gateway) {
   if (gateway.exitCode !== null) return;
   gateway.kill("SIGTERM");
   const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error("OpenClaw Gateway did not stop")), 10_000),
+    setTimeout(() => reject(new Error("OpenClaw Gateway did not stop")), 20_000),
   );
   const result = await Promise.race([gateway.result, timeout]);
   if (result.code !== 0 && result.signal !== "SIGTERM") {

@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -662,6 +663,47 @@ describe("Program Journey", () => {
     await expect(harness.programJourneyStatus({ date: "2026-09-07" })).rejects.toThrow(
       "Program State is schema-invalid",
     );
+  });
+
+  it("rolls back a new 12RM batch when Program Setup cannot be committed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stella-journey-batch-rollback-"));
+    temporaryRoots.push(root);
+    const harness = journeyHarness(root);
+    await advanceToInitial12RM(harness);
+    const personal = join(root, "personal");
+    const programDirectory = join(personal, "program");
+    const observationDirectory = join(personal, "observations", "special-session");
+    mkdirSync(observationDirectory, { recursive: true });
+    const input = {
+      facts: [
+        { exerciseId: "goblet-squat" as const, valueKg: 29 },
+        { exerciseId: "dumbbell-bench-press" as const, valueKg: 29 },
+        { exerciseId: "dumbbell-deadlift" as const, valueKg: 29 },
+      ],
+      occurredAt: "2026-08-14T06:14:10.933Z",
+      recordedAt: "2026-08-17T02:00:00.000Z",
+      source: {
+        kind: "user-text" as const,
+        text: "three initial 12RM facts",
+        channel: "webchat",
+        messageId: "batch-rollback",
+      },
+    };
+
+    chmodSync(programDirectory, 0o500);
+    try {
+      await expect(harness.recordInitial12RMBatch(input)).rejects.toThrow();
+    } finally {
+      chmodSync(programDirectory, 0o700);
+    }
+    expect(readdirSync(observationDirectory)).toEqual([]);
+    expect(JSON.parse(readFileSync(join(programDirectory, "setup.json"), "utf8")))
+      .toMatchObject({ initial12RMObservationIds: {} });
+
+    await expect(harness.recordInitial12RMBatch(input)).resolves.toHaveLength(3);
+    await expect(harness.programJourneyStatus()).resolves.toMatchObject({
+      state: "READY_TO_ACTIVATE",
+    });
   });
 
   it("persists an ambiguous checkpoint confirmation across restart", async () => {

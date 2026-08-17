@@ -569,6 +569,50 @@ describe("Plugin registration", () => {
     });
   });
 
+  it("persists the same clear 12RM batch at the run gate", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    registerStellaFitnessPlugin(
+      compatibleApi({
+        commands: [],
+        hooks,
+        cliRegistrations: [],
+        pluginConfig: directories,
+        openclawConfig: permittedOpenClawConfig(),
+      }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const run = hooks.get("before_agent_run")!;
+    const context = { agentId: "fitness", messageProvider: "webchat" };
+    for (const [index, prompt] of [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+      "体重 67 kg",
+    ].entries()) {
+      await expect(run(
+        { prompt },
+        { ...context, runId: `run-gate-batch-${index}` },
+      )).resolves.toMatchObject({ outcome: "block" });
+    }
+
+    await expect(run({
+      prompt: [
+        "高脚杯深蹲 12RM 29 kg",
+        "哑铃卧推 12RM 29 kg",
+        "哑铃硬拉 12RM 29 kg",
+      ].join("\n"),
+    }, { ...context, runId: "run-gate-batch-12rm" })).resolves.toMatchObject({
+      outcome: "block",
+      message: expect.stringContaining("journey: READY_TO_ACTIVATE"),
+    });
+    expect(readdirSync(join(
+      directories.personalDataDirectory,
+      "observations",
+      "special-session",
+    ))).toHaveLength(3);
+  });
+
   it("does not classify Host media markers or paths as dedicated-agent text", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const api = compatibleApi({
@@ -918,6 +962,253 @@ describe("Plugin registration", () => {
       "observations",
       "special-session",
     ))).toHaveLength(4);
+  });
+
+  it("records a clear three-exercise 12RM message through the WebChat fallback hook", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    registerStellaFitnessPlugin(
+      compatibleApi({
+        commands: [],
+        hooks,
+        cliRegistrations: [],
+        pluginConfig: directories,
+        openclawConfig: permittedOpenClawConfig(),
+      }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const reply = hooks.get("before_agent_reply")!;
+    const context = {
+      messageProvider: "webchat",
+      sessionKey: "agent:fitness:webchat:batch-12rm",
+    };
+    for (const content of [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+      "体重 67 kg",
+    ]) {
+      await expect(reply({ cleanedBody: content }, context)).resolves.toMatchObject({
+        handled: true,
+      });
+    }
+
+    await expect(reply({
+      cleanedBody: [
+        "高脚杯深蹲 12RM 29 kg",
+        "哑铃卧推 12RM 29 kg",
+        "哑铃硬拉 12RM 29 kg",
+      ].join("\n"),
+    }, context)).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /Initial 12RM recorded:.+goblet-squat 29 kg.+dumbbell-bench-press 29 kg.+dumbbell-deadlift 29 kg.+journey: READY_TO_ACTIVATE/su,
+        ),
+      },
+    });
+
+    const setup = JSON.parse(readFileSync(
+      join(directories.personalDataDirectory, "program", "setup.json"),
+      "utf8",
+    ));
+    expect(Object.keys(setup.initial12RMObservationIds).sort()).toEqual([
+      "dumbbell-bench-press",
+      "dumbbell-deadlift",
+      "goblet-squat",
+    ]);
+    expect(readdirSync(join(
+      directories.personalDataDirectory,
+      "observations",
+      "special-session",
+    ))).toHaveLength(3);
+  });
+
+  it("replays one batch idempotently after Plugin restart", async () => {
+    const directories = configuredPersonalDirectory();
+    const context = {
+      messageProvider: "webchat",
+      sessionKey: "agent:fitness:webchat:batch-replay",
+    };
+    const createHooks = () => {
+      const hooks = new Map<string, (...args: unknown[]) => unknown>();
+      registerStellaFitnessPlugin(
+        compatibleApi({
+          commands: [],
+          hooks,
+          cliRegistrations: [],
+          pluginConfig: directories,
+          openclawConfig: permittedOpenClawConfig(),
+        }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+      );
+      return hooks;
+    };
+    let hooks = createHooks();
+    const reply = hooks.get("before_agent_reply")!;
+    for (const content of [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+      "体重 67 kg",
+    ]) {
+      await reply({ cleanedBody: content }, context);
+    }
+    const batch = [
+      "高脚杯深蹲 12RM 29 kg",
+      "哑铃卧推 12RM 29 kg",
+      "哑铃硬拉 12RM 29 kg",
+    ].join("\n");
+    await reply({ cleanedBody: batch }, context);
+    const directory = join(
+      directories.personalDataDirectory,
+      "observations",
+      "special-session",
+    );
+    const originalFiles = readdirSync(directory).sort();
+
+    hooks = createHooks();
+    await expect(hooks.get("before_agent_reply")?.(
+      { cleanedBody: batch },
+      context,
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("journey: READY_TO_ACTIVATE") },
+    });
+    expect(readdirSync(directory).sort()).toEqual(originalFiles);
+
+    await expect(hooks.get("before_agent_reply")?.(
+      { cleanedBody: batch.replaceAll("29 kg", "30 kg") },
+      context,
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("No success was recorded") },
+    });
+    expect(readdirSync(directory).sort()).toEqual(originalFiles);
+  });
+
+  it("rejects an ambiguous 12RM batch without persisting any part of it", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    registerStellaFitnessPlugin(
+      compatibleApi({
+        commands: [],
+        hooks,
+        cliRegistrations: [],
+        pluginConfig: directories,
+        openclawConfig: permittedOpenClawConfig(),
+      }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const reply = hooks.get("before_agent_reply")!;
+    const context = {
+      messageProvider: "webchat",
+      sessionKey: "agent:fitness:webchat:ambiguous-batch",
+    };
+    for (const content of [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+      "体重 67 kg",
+    ]) {
+      await reply({ cleanedBody: content }, context);
+    }
+
+    await expect(reply({
+      cleanedBody: [
+        "高脚杯深蹲 12RM 29 kg",
+        "哑铃卧推 12RM 29",
+        "哑铃硬拉 12RM 29 kg",
+      ].join("\n"),
+    }, context)).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("本批次未保存") },
+    });
+    await expect(reply({
+      cleanedBody: [
+        "高脚杯深蹲 12RM 29 kg",
+        "哑铃卧推 12RM 29 kg",
+        "哑铃硬拉 12RM 29 kg",
+        "高脚杯深蹲 12RM 30 kg",
+      ].join("\n"),
+    }, context)).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("最多记录三个") },
+    });
+    expect(existsSync(join(
+      directories.personalDataDirectory,
+      "observations",
+      "special-session",
+    ))).toBe(false);
+  });
+
+  it("records a due checkpoint through the same WebChat fallback hook", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    registerStellaFitnessPlugin(
+      compatibleApi({
+        commands: [],
+        hooks,
+        cliRegistrations: [],
+        pluginConfig: directories,
+        openclawConfig: permittedOpenClawConfig(),
+      }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const inbound = hooks.get("inbound_claim")!;
+    const bound = { sessionKey: "agent:fitness:webchat:checkpoint-fallback" };
+    for (const [index, content] of [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+      "体重 68.4 kg",
+      "高脚杯深蹲 12RM 32 kg",
+      "哑铃卧推 12RM 24 kg",
+      "哑铃硬拉 12RM 40 kg",
+    ].entries()) {
+      await inbound({
+        content,
+        channel: "webchat",
+        messageId: `checkpoint-fallback-${index}`,
+        timestamp: `2026-08-10T0${index}:00:00.000Z`,
+        isGroup: false,
+      }, bound);
+    }
+    await inbound({
+      content: "/stella-activate 2026-08-10",
+      channel: "webchat",
+      messageId: "checkpoint-fallback-activate",
+      timestamp: "2026-08-10T08:00:00.000Z",
+      isGroup: false,
+    }, bound);
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-07T08:00:00.000Z"));
+    try {
+      await expect(hooks.get("before_agent_reply")?.(
+        { cleanedBody: "体重 69 kg" },
+        {
+          messageProvider: "webchat",
+          runId: "checkpoint-fallback-run",
+          sessionKey: "agent:fitness:webchat:checkpoint-fallback",
+        },
+      )).resolves.toMatchObject({
+        handled: true,
+        reply: {
+          text: expect.stringContaining("Week 4 body weight recorded: 69 kg"),
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const state = JSON.parse(readFileSync(
+      join(directories.personalDataDirectory, "program", "state.json"),
+      "utf8",
+    ));
+    expect(state.phaseCheckpointObservationIds).toMatchObject({
+      "4": expect.any(String),
+    });
   });
 
   it("activates with the first session and keeps all bound Program Facts deterministic after restart", async () => {

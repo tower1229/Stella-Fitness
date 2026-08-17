@@ -55,6 +55,11 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
     ) {
       return pluginRuntime.recordInitial12RM(input);
     },
+    recordInitial12RMBatch(
+      input: Parameters<typeof pluginRuntime.recordInitial12RMBatch>[0],
+    ) {
+      return pluginRuntime.recordInitial12RMBatch(input);
+    },
     correctInitial12RM(
       input: Parameters<typeof pluginRuntime.correctInitial12RM>[0],
     ) {

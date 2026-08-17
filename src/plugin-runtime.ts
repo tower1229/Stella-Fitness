@@ -186,6 +186,9 @@ export type StellaFitnessRuntime = {
     readonly recordedAt: string;
     readonly source: ObservationSource;
   }): ReturnType<ReturnType<typeof createProgramJourney>["recordInitial12RM"]>;
+  recordInitial12RMBatch(input: Parameters<
+    ReturnType<typeof createProgramJourney>["recordInitial12RMBatch"]
+  >[0]): ReturnType<ReturnType<typeof createProgramJourney>["recordInitial12RMBatch"]>;
   correctInitial12RM(input: Parameters<
     ReturnType<typeof createProgramJourney>["correctInitial12RM"]
   >[0]): ReturnType<ReturnType<typeof createProgramJourney>["correctInitial12RM"]>;
@@ -397,6 +400,9 @@ export function createStellaFitnessRuntime(options: {
     },
     recordInitial12RM(input) {
       return journey().recordInitial12RM(input);
+    },
+    recordInitial12RMBatch(input) {
+      return journey().recordInitial12RMBatch(input);
     },
     correctInitial12RM(input) {
       return journey().correctInitial12RM(input);
