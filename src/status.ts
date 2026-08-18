@@ -14,6 +14,7 @@ export function createStatusResponse(
     : ([
         ["personal-data-directory", preflight.capabilities.personalDataDirectory],
         ["conversation", preflight.capabilities.conversation],
+        ["time-zone", preflight.capabilities.timeZone],
         ["media", preflight.capabilities.media],
         ["model-permission", preflight.capabilities.modelPermission],
       ] as const).map(

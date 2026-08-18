@@ -8,14 +8,14 @@
 2. 新增一个 Stella Fitness 专属 OpenClaw agent，并将其 id 配置为 Plugin 必填项 `dedicatedAgentId`；
 3. 显式启用所需 conversation/media 权限；
 4. 选择 operator 允许的训练日志 extraction model；
-5. 显式配置 Personal Data Directory；
+5. 显式配置 Personal Data Directory，并将 OpenClaw `agents.defaults.userTimezone` 配置为用户的 IANA 时区（例如 `Asia/Shanghai`）；
 6. 在 WebChat 中选择该专属 agent 后运行 `/stella-start`；如使用 Telegram 等 Channel，先用 OpenClaw 顶层 routing binding 将对应账号路由到该 agent；
 7. Plugin 自动验证并使用唯一的卓叔 12 周 Built-in Program；
 8. 运行 `/stella-print` 获取完整 12 周内置 XLSX 并打印所需页面；
 9. 逐项确认可拆卸哑铃、引体向上杆、打印训练日志和训练记录协议；
 10. 按自然语言提示记录初始体重和三个初始 12RM；初始化完成后回复“本周开始”“下周开始”或明确的星期一日期。
 
-首次使用不提供计划选择器、ProgramSpec 导入或文件路径输入。`/stella-status` 独立报告 Personal Data Directory、conversation hook access、media 和 model permission；Program Journey Status 只报告训练前准备与当前唯一下一步。Plugin 命令虽然由 Host 全局注册，但任何写命令在非 dedicated agent session 中都会拒绝执行。
+首次使用不提供计划选择器、ProgramSpec 导入或文件路径输入。`/stella-status` 独立报告 Personal Data Directory、conversation hook access、user timezone、media 和 model permission；时区缺失或不是合法 IANA 时区时 Technical Readiness 为 `BLOCKED_CONFIGURATION`。Program Journey Status 只报告训练前准备与当前唯一下一步。Plugin 命令虽然由 Host 全局注册，但任何写命令在非 dedicated agent session 中都会拒绝执行。
 
 训练日志需要确认时，按回复中展示的点号数字路径提交 JSON，例如 `exercises.0.load.value` 或 `testResults.3.result.value`。Plugin 仍接受旧的方括号路径，但不依赖 Channel 保留 `[]` 字符。
 

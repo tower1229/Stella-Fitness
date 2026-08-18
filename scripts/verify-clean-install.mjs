@@ -86,7 +86,7 @@ try {
   const status = run(openclaw, ["stella-fitness", "status"]);
   progress("runtime inspection complete");
   const expectedStatus =
-    "Stella Fitness: BLOCKED_CONFIGURATION\ncontract: openclaw>=2026.6.34\nscope: recording-only\ntechnical-readiness: personal-data-directory: blocked - Configure an absolute Personal Data Directory\ntechnical-readiness: conversation: ready - Plugin conversation hook access is enabled\ntechnical-readiness: media: ready - OpenClaw structured media extraction is available\ntechnical-readiness: model-permission: setup-required - Configure an allowlisted extraction provider and model\nreason: PERSONAL_DATA_DIRECTORY_REQUIRED: Configure an absolute Personal Data Directory";
+    "Stella Fitness: BLOCKED_CONFIGURATION\ncontract: openclaw>=2026.6.34\nscope: recording-only\ntechnical-readiness: personal-data-directory: blocked - Configure an absolute Personal Data Directory\ntechnical-readiness: conversation: ready - Plugin conversation hook access is enabled\ntechnical-readiness: time-zone: blocked - Configure agents.defaults.userTimezone with an IANA timezone\ntechnical-readiness: media: ready - OpenClaw structured media extraction is available\ntechnical-readiness: model-permission: setup-required - Configure an allowlisted extraction provider and model\nreason: PERSONAL_DATA_DIRECTORY_REQUIRED: Configure an absolute Personal Data Directory\nreason: USER_TIMEZONE_REQUIRED: Configure agents.defaults.userTimezone with an IANA timezone";
 
   if (inspection.plugin.status !== "loaded") {
     throw new Error(`Plugin did not load: ${inspection.plugin.status}`);

@@ -30,6 +30,10 @@ describe("deterministic Plugin status", () => {
             status: "ready",
             message: "Extraction provider and model are allowlisted",
           },
+          timeZone: {
+            status: "ready",
+            message: "User timezone is a valid IANA timezone",
+          },
         },
       }).text,
     ).toContain(
@@ -42,6 +46,7 @@ describe("deterministic Plugin status", () => {
     ["conversation", "blocked"],
     ["media", "limited"],
     ["model-permission", "setup-required"],
+    ["time-zone", "blocked"],
   ] as const)("keeps %s remediation visible when it is %s", (name, status) => {
     const capabilities = {
       personalDataDirectory: {
@@ -59,6 +64,10 @@ describe("deterministic Plugin status", () => {
       modelPermission: {
         status: "setup-required" as const,
         message: "Configure an allowlisted extraction provider and model",
+      },
+      timeZone: {
+        status: "blocked" as const,
+        message: "Configure agents.defaults.userTimezone",
       },
     };
     const text = createStatusResponse({

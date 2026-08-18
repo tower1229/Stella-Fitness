@@ -30,6 +30,15 @@ const ordinaryCandidate = {
   ],
 };
 
+const automaticCandidate = structuredClone(ordinaryCandidate);
+automaticCandidate.exercises[0].load = field({
+  kind: "kg",
+  value: 20,
+  unit: "kg",
+  raw: "20",
+});
+automaticCandidate.uncertainFields = [];
+
 const strengthCandidate = {
   layout: field("zhuoshu-strength-test-block"),
   stage: field(1),
@@ -73,9 +82,12 @@ export default definePluginEntry({
       id: "stella-e2e",
       capabilities: ["image"],
       async extractStructured(request) {
-        const candidate = extractionCount++ === 0
-          ? strengthCandidate
-          : ordinaryCandidate;
+        const targeted = request.instructions?.includes("Target exactly:");
+        const candidate = targeted
+          ? automaticCandidate
+          : extractionCount++ === 0
+            ? strengthCandidate
+            : ordinaryCandidate;
         return {
           parsed: structuredClone(candidate),
           text: JSON.stringify(candidate),

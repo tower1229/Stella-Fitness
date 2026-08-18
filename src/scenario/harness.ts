@@ -9,7 +9,8 @@ import type { MediaSanitizer } from "../media/sanitizer.js";
 import { createStellaFitnessRuntime } from "../plugin-runtime.js";
 import type { ConfigurationPreflightResult } from "../preflight.js";
 
-type HarnessInput = Omit<WorkoutLogIngestRequest, "signal"> & {
+type HarnessInput = Omit<WorkoutLogIngestRequest, "signal" | "intent"> & {
+  intent?: WorkoutLogIngestRequest["intent"];
   signal?: AbortSignal;
 };
 
@@ -17,6 +18,7 @@ type ScenarioHarnessOptions = {
   extractionRuntime: ExtractionRuntime;
   personalDataDirectory?: () => string | undefined;
   runtimeDirectory?: () => string | undefined;
+  userTimezone?: () => string | undefined;
   mediaSanitizer?: MediaSanitizer;
   preflight: () => ConfigurationPreflightResult;
 };
@@ -112,6 +114,7 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
     },
     ingestWorkoutLog(input: HarnessInput) {
       return pluginRuntime.ingestWorkoutLog({
+        intent: input.intent ?? "explicit",
         runId: input.runId,
         upload: input.upload,
         timeoutMs: input.timeoutMs,
@@ -122,6 +125,7 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
       input: HarnessInput & { readonly replacesObservationId: string },
     ) {
       return pluginRuntime.correctWorkoutLog({
+        intent: input.intent ?? "explicit",
         runId: input.runId,
         upload: input.upload,
         timeoutMs: input.timeoutMs,

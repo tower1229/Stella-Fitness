@@ -299,6 +299,30 @@ export async function verifyTelegramChannelFlow(options) {
     ) {
       throw new Error("Telegram channel flow did not persist confirmed facts");
     }
+    const automaticCursor = telegram.messageCount();
+    telegram.pushPhoto(undefined, {
+      variant: "automatic",
+      date: Math.floor(Date.parse("2026-07-13T08:00:00.000Z") / 1_000),
+    });
+    await telegram.waitForTextAfter(
+      automaticCursor,
+      (text) =>
+        text === "已记录训练：第 1 阶段第 1 周，周一，全身训练。本周已记录 1/3 次；下一次计划：2026-07-15（周三）全身训练。",
+    );
+    const automaticObservationCount = workoutObservationCount(personalDataDirectory);
+    await restartGateway("captionless automatic workout log");
+    const duplicateAutomaticCursor = telegram.messageCount();
+    telegram.pushPhoto(undefined, {
+      variant: "automatic",
+      date: Math.floor(Date.parse("2026-07-13T08:00:00.000Z") / 1_000),
+    });
+    await telegram.waitForTextAfter(
+      duplicateAutomaticCursor,
+      (text) => text.includes("本周已记录 1/3 次"),
+    );
+    if (workoutObservationCount(personalDataDirectory) !== automaticObservationCount) {
+      throw new Error("Captionless workout log was duplicated after Gateway restart");
+    }
     const expectedRecoveredWeightFacts = await requestTelegramText(
       telegram,
       "/stella-facts weight",
@@ -507,6 +531,8 @@ export async function verifyTelegramChannelFlow(options) {
       factsRecovered: true,
       printableWorkbook: true,
       imageIngress: true,
+      captionlessImageIngress: true,
+      captionlessProgressRecovered: true,
       gatewayRestarts: gatewayStarts - 1,
       confirmationRecovered: true,
       checkpointRecovered: true,
@@ -561,6 +587,11 @@ function newestWorkoutObservationId(personalDataDirectory) {
         String(left.observation.recordedAt ?? left.observation.occurredAt),
       )
     )[0]?.id;
+}
+
+function workoutObservationCount(personalDataDirectory) {
+  const directory = join(personalDataDirectory, "observations", "workout-log");
+  return readdirSync(directory).filter((file) => file.endsWith(".json")).length;
 }
 
 function bodyWeightObservationId(personalDataDirectory, amount, occurredAt) {
@@ -692,6 +723,7 @@ function configureOpenClaw(options, input) {
     models: [{ id: "fixture-v1", name: "Fixture v1" }],
   });
   set("agents.defaults.models", { "stella-e2e/fixture-v1": {} }, ["--replace"]);
+  set("agents.defaults.userTimezone", "Asia/Shanghai");
   set("channels.telegram", {
     enabled: true,
     botToken: BOT_TOKEN,
@@ -918,11 +950,17 @@ async function createFakeTelegramApi() {
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
     "base64",
   );
+  const automaticImage = Buffer.concat([image, Buffer.from([0])]);
   const server = createServer(async (request, response) => {
     try {
       if (request.url === `/file/bot${BOT_TOKEN}/photos/workout.png`) {
         response.writeHead(200, { "content-type": "image/png" });
         response.end(image);
+        return;
+      }
+      if (request.url === `/file/bot${BOT_TOKEN}/photos/automatic.png`) {
+        response.writeHead(200, { "content-type": "image/png" });
+        response.end(automaticImage);
         return;
       }
       const method = request.url
@@ -951,11 +989,14 @@ async function createFakeTelegramApi() {
         return;
       }
       if (method === "getfile") {
+        const automatic = body.file_id === "automatic-workout-photo";
         reply(response, {
-          file_id: "workout-photo",
-          file_unique_id: "workout-photo-unique",
-          file_size: image.length,
-          file_path: "photos/workout.png",
+          file_id: automatic ? "automatic-workout-photo" : "workout-photo",
+          file_unique_id: automatic
+            ? "automatic-workout-photo-unique"
+            : "workout-photo-unique",
+          file_size: automatic ? automaticImage.length : image.length,
+          file_path: automatic ? "photos/automatic.png" : "photos/workout.png",
         });
         return;
       }
@@ -1017,21 +1058,24 @@ async function createFakeTelegramApi() {
         message: userMessage(fixedMessageId ?? inboundMessageId++, { text }),
       });
     },
-    pushPhoto(caption) {
+    pushPhoto(caption, options = {}) {
+      const automatic = options.variant === "automatic";
       updates.push({
         update_id: updateId++,
         message: userMessage(inboundMessageId++, {
-          caption,
+          ...(caption === undefined ? {} : { caption }),
           photo: [
             {
-              file_id: "workout-photo",
-              file_unique_id: "workout-photo-unique",
+              file_id: automatic ? "automatic-workout-photo" : "workout-photo",
+              file_unique_id: automatic
+                ? "automatic-workout-photo-unique"
+                : "workout-photo-unique",
               width: 1,
               height: 1,
-              file_size: image.length,
+              file_size: automatic ? automaticImage.length : image.length,
             },
           ],
-        }),
+        }, options.date),
       });
     },
     pushCallback(data, platformMessage) {
@@ -1101,10 +1145,10 @@ async function createFakeTelegramApi() {
   };
 }
 
-function userMessage(messageId, content) {
+function userMessage(messageId, content, date = nowSeconds()) {
   return {
     message_id: messageId,
-    date: nowSeconds(),
+    date,
     chat: telegramChat(),
     from: telegramUser(),
     ...content,

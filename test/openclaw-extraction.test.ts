@@ -179,6 +179,63 @@ describe("OpenClaw structured extraction adapter", () => {
     });
   });
 
+  it("locks structured extraction to the deterministic planned-session target", async () => {
+    const extractStructuredWithModel = vi.fn().mockResolvedValue({
+      parsed: { layout: "not-workout-log", reason: "not-fixed-workbook" },
+      text: "{}",
+    });
+    const runtime = createOpenClawExtractionRuntime({
+      extractStructuredWithModel,
+      openclawConfig: {},
+      model: { provider: "codex", model: "gpt-5.6-sol" },
+    });
+
+    await runtime.extract({
+      runId: "targeted-week-one-monday",
+      media: sanitizedFixture(),
+      target: {
+        date: "2026-08-10",
+        stage: 1,
+        week: 1,
+        weekday: "monday",
+        sessionType: "full-body",
+        exerciseIds: [
+          "goblet-squat",
+          "dumbbell-bench-press",
+          "dumbbell-deadlift",
+          "plank",
+        ],
+      },
+      timeoutMs: 1_500,
+      signal: new AbortController().signal,
+    });
+
+    const request = extractStructuredWithModel.mock.calls[0]?.[0];
+    expect(request.instructions).toContain(
+      "Target exactly: stage 1, week 1, monday, full-body, date 2026-08-10",
+    );
+    expect(request.instructions).toContain(
+      "Ignore every other visible session block",
+    );
+    expect(request.instructions).toContain(
+      "goblet-squat, dumbbell-bench-press, dumbbell-deadlift, plank",
+    );
+    expect(request.jsonSchema.oneOf).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          layout: { const: "not-workout-log" },
+        }),
+      }),
+    );
+    expect(request.jsonSchema.oneOf).not.toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          layout: { const: "multi-session-page" },
+        }),
+      }),
+    );
+  });
+
   it("reports an explicit compatibility error when the selected provider lacks structured extraction", async () => {
     const extractStructuredWithModel = vi.fn().mockRejectedValue(
       new Error("Provider does not support structured extraction: codex"),

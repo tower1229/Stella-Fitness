@@ -27,6 +27,95 @@ afterEach(() => {
 });
 
 describe("workout-log Observation recording", () => {
+  it("targets the latest unrecorded planned session in the upload's local week", async () => {
+    const personalDataDirectory = temporaryDirectory("stella-personal-");
+    const extractionRuntime = new ControlledExtractionRuntime([
+      { parsed: plannedWeekOnePage(), metadata: { provider: "controlled" } },
+    ]);
+    const harness = createScenarioHarness({
+      extractionRuntime,
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => temporaryDirectory("stella-runtime-"),
+      userTimezone: () => "Asia/Shanghai",
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+      cycleStart: "2026-08-10",
+    });
+    const upload = {
+      ...rawMediaUploadFixture(),
+      receivedAt: "2026-08-10T16:30:00.000Z",
+    };
+
+    const result = await harness.ingestWorkoutLog({
+      intent: "auto",
+      runId: "auto-week-one-monday",
+      upload,
+      timeoutMs: 2_000,
+    });
+
+    expect(result).toMatchObject({ status: "recorded" });
+    expect(extractionRuntime.requests).toEqual([
+      expect.objectContaining({
+        target: expect.objectContaining({
+          date: "2026-08-10",
+          week: 1,
+          weekday: "monday",
+          sessionType: "full-body",
+          exerciseIds: [
+            "goblet-squat",
+            "dumbbell-bench-press",
+            "dumbbell-deadlift",
+            "plank",
+          ],
+        }),
+      }),
+    ]);
+  });
+
+  it("does not persist an automatic candidate from another visible session", async () => {
+    const personalDataDirectory = temporaryDirectory("stella-personal-");
+    const runtimeDirectory = temporaryDirectory("stella-runtime-");
+    const otherSession = plannedWeekOnePage();
+    otherSession.weekday = field("wednesday");
+    const harness = createScenarioHarness({
+      extractionRuntime: new ControlledExtractionRuntime([
+        { parsed: otherSession, metadata: { provider: "controlled" } },
+      ]),
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => runtimeDirectory,
+      userTimezone: () => "Asia/Shanghai",
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+      cycleStart: "2026-08-10",
+    });
+
+    await expect(harness.ingestWorkoutLog({
+      intent: "auto",
+      runId: "auto-other-session",
+      upload: {
+        ...rawMediaUploadFixture(),
+        receivedAt: "2026-08-10T16:30:00.000Z",
+      },
+      timeoutMs: 2_000,
+    })).resolves.toMatchObject({
+      status: "user-action-required",
+      reason: "target-mismatch",
+      target: { week: 1, weekday: "monday" },
+    });
+    expect(filesUnder(personalDataDirectory)).not.toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("raw-artifacts/workout-log"),
+        expect.stringContaining("observations/workout-log"),
+      ]),
+    );
+  });
+
   it("fails closed when an ordinary page session type conflicts with ProgramSpec", async () => {
     const personalDataDirectory = temporaryDirectory("stella-personal-");
     const runtimeDirectory = temporaryDirectory("stella-runtime-");
@@ -658,6 +747,35 @@ function plannedTorsoPage(): ReturnType<typeof completedTorsoPage> {
     problemNote: field(null),
   });
   return candidate;
+}
+
+function plannedWeekOnePage(): ReturnType<typeof completedTorsoPage> {
+  const candidate = completedTorsoPage();
+  candidate.stage = field(1);
+  candidate.week = field(1);
+  candidate.weekday = field("monday");
+  candidate.sessionType = field("full-body");
+  candidate.exercises = [
+    workoutExercise("高脚杯深蹲", "goblet-squat"),
+    workoutExercise("哑铃卧推", "dumbbell-bench-press"),
+    workoutExercise("哑铃硬拉", "dumbbell-deadlift"),
+    {
+      ...workoutExercise("平板支撑", "plank"),
+      load: field({ kind: "none", raw: "-" }),
+    },
+  ];
+  return candidate;
+}
+
+function workoutExercise(rawLabel: string, exerciseId: string) {
+  return {
+    rawLabel: field(rawLabel),
+    exerciseId: field(exerciseId),
+    load: field({ kind: "kg", value: 20, unit: "kg", raw: "20" }),
+    sets: [field(10), field(null)],
+    actionQuality: field("高"),
+    problemNote: field(null),
+  };
 }
 
 function field<T>(value: T, confidence: "high" | "low" = "high") {

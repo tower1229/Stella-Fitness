@@ -37,6 +37,8 @@ export type ReadinessReason = {
     | "PERSONAL_DATA_DIRECTORY_PROBE_CLEANUP_FAILED"
     | "DATA_DIRECTORIES_OVERLAP"
     | "RUNTIME_DIRECTORY_UNAVAILABLE"
+    | "USER_TIMEZONE_REQUIRED"
+    | "USER_TIMEZONE_INVALID"
     | "CONVERSATION_ACCESS_REQUIRED"
     | "STRUCTURED_MEDIA_REQUIRED"
     | "EXTRACTION_MODEL_REQUIRED"
@@ -58,6 +60,7 @@ export type TechnicalReadinessCapability = {
 export type TechnicalReadinessCapabilities = {
   readonly personalDataDirectory: TechnicalReadinessCapability;
   readonly conversation: TechnicalReadinessCapability;
+  readonly timeZone: TechnicalReadinessCapability;
   readonly media: TechnicalReadinessCapability;
   readonly modelPermission: TechnicalReadinessCapability;
 };
@@ -69,6 +72,7 @@ export type TechnicalReadiness = ConfigurationPreflightResult & {
 export type ExtractionPermission = "unconfigured" | "allowed" | "denied";
 
 export function runConfigurationPreflight(options: {
+  userTimezone: unknown;
   personalDataDirectory: unknown;
   runtimeDirectory: string;
   conversationAccess: boolean;
@@ -80,6 +84,8 @@ export function runConfigurationPreflight(options: {
     options.personalDataDirectory,
     reasons,
   );
+  const timeZoneReason = validateUserTimezone(options.userTimezone);
+  if (timeZoneReason !== undefined) reasons.push(timeZoneReason);
 
   if (personalDataDirectory !== undefined) {
     const canonicalPersonalDataDirectory = canonicalize(personalDataDirectory);
@@ -154,6 +160,7 @@ export function runConfigurationPreflight(options: {
 
 function technicalReadinessCapabilities(
   options: {
+    readonly userTimezone: unknown;
     readonly conversationAccess: boolean;
     readonly structuredMedia: boolean;
     readonly extraction: ExtractionPermission;
@@ -181,6 +188,7 @@ function technicalReadinessCapabilities(
           status: "blocked",
           message: "Enable Plugin conversation hook access",
         },
+    timeZone: timeZoneCapability(options.userTimezone, reasons),
     media: options.structuredMedia
       ? {
           status: "ready",
@@ -205,6 +213,41 @@ function technicalReadinessCapabilities(
             message: "Allowlist the configured extraction provider and model",
           },
   };
+}
+
+function validateUserTimezone(
+  value: unknown,
+): ReadinessReason | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return {
+      code: "USER_TIMEZONE_REQUIRED",
+      message: "Configure agents.defaults.userTimezone with an IANA timezone",
+    };
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
+    return undefined;
+  } catch {
+    return {
+      code: "USER_TIMEZONE_INVALID",
+      message: "agents.defaults.userTimezone must be a valid IANA timezone",
+    };
+  }
+}
+
+function timeZoneCapability(
+  value: unknown,
+  reasons: readonly ReadinessReason[],
+): TechnicalReadinessCapability {
+  const reason = reasons.find(({ code }) =>
+    code === "USER_TIMEZONE_REQUIRED" || code === "USER_TIMEZONE_INVALID"
+  );
+  return reason === undefined
+    ? {
+        status: "ready",
+        message: `OpenClaw user timezone is ${String(value)}`,
+      }
+    : { status: "blocked", message: reason.message };
 }
 
 function validatePersonalDataDirectory(

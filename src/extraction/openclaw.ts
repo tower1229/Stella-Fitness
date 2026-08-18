@@ -6,9 +6,12 @@ import type {
   ExtractionRuntime,
 } from "./runtime.js";
 import { rejectOnAbort, throwIfAborted } from "./cancellation.js";
-import { WORKOUT_LOG_CANDIDATE_SCHEMA } from "./candidate.js";
+import {
+  TARGETED_WORKOUT_LOG_CANDIDATE_SCHEMA,
+  WORKOUT_LOG_CANDIDATE_SCHEMA,
+} from "./candidate.js";
 import { normalizeWorkoutLogExtraction } from "./candidate.js";
-import { WORKOUT_LOG_EXTRACTION_INSTRUCTIONS } from "./instructions.js";
+import { workoutLogExtractionInstructions } from "./instructions.js";
 
 type ExtractStructuredWithModel =
   OpenClawPluginApi["runtime"]["mediaUnderstanding"]["extractStructuredWithModel"];
@@ -40,9 +43,11 @@ export function createOpenClawExtractionRuntime(
               mime: request.media.mime,
             },
           ],
-          instructions: WORKOUT_LOG_EXTRACTION_INSTRUCTIONS,
+          instructions: workoutLogExtractionInstructions(request.target),
           schemaName: "stella_workout_log_candidate_v2",
-          jsonSchema: WORKOUT_LOG_CANDIDATE_SCHEMA,
+          jsonSchema: request.target === undefined
+            ? WORKOUT_LOG_CANDIDATE_SCHEMA
+            : TARGETED_WORKOUT_LOG_CANDIDATE_SCHEMA,
           jsonMode: true,
           cfg: options.openclawConfig,
           provider: options.model.provider,

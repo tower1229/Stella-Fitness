@@ -1,4 +1,5 @@
 import type { ExtractionExecutionMetadata } from "../extraction/runtime.js";
+import type { WorkoutLogTarget } from "../extraction/runtime.js";
 
 export type RawMediaUpload = {
   readonly bytes: Buffer;
@@ -57,6 +58,7 @@ export type WorkoutLogProcessingRecord = {
         readonly kind: "workout-log-confirmation";
         readonly confirmationId: string;
         readonly candidate: unknown;
+        readonly target?: WorkoutLogTarget;
         readonly replacesObservationId?: string;
       };
   readonly errorCategory?:
@@ -69,6 +71,7 @@ export type WorkoutLogProcessingRecord = {
 };
 
 export type WorkoutLogIngestRequest = {
+  readonly intent: "auto" | "explicit";
   readonly runId: string;
   readonly upload: RawMediaUpload;
   readonly timeoutMs: number;

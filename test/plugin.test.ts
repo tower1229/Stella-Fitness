@@ -11,9 +11,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { parse } from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin, { registerStellaFitnessPlugin } from "../src/plugin.js";
+import { activateProgramFixture } from "./support/program-state.js";
 import { rawMediaUploadFixture } from "./support/sanitized-media.js";
 import { workoutLogCandidate } from "./support/workout-log-candidate.js";
 
@@ -26,7 +28,7 @@ afterEach(() => {
 });
 
 const READY_FOR_SETUP_STATUS =
-  "Stella Fitness: READY_FOR_SETUP\ncontract: openclaw>=2026.6.34\nscope: recording-only\ntechnical-readiness: personal-data-directory: ready - Personal Data Directory is readable and writable\ntechnical-readiness: conversation: ready - Plugin conversation hook access is enabled\ntechnical-readiness: media: ready - OpenClaw structured media extraction is available\ntechnical-readiness: model-permission: setup-required - Configure an allowlisted extraction provider and model\nreason: EXTRACTION_MODEL_REQUIRED: Configure an allowlisted extraction provider and model";
+  "Stella Fitness: READY_FOR_SETUP\ncontract: openclaw>=2026.6.34\nscope: recording-only\ntechnical-readiness: personal-data-directory: ready - Personal Data Directory is readable and writable\ntechnical-readiness: conversation: ready - Plugin conversation hook access is enabled\ntechnical-readiness: time-zone: ready - OpenClaw user timezone is Asia/Shanghai\ntechnical-readiness: media: ready - OpenClaw structured media extraction is available\ntechnical-readiness: model-permission: setup-required - Configure an allowlisted extraction provider and model\nreason: EXTRACTION_MODEL_REQUIRED: Configure an allowlisted extraction provider and model";
 
 describe("Plugin registration", () => {
   it("registers status CLI metadata without loading full runtime contracts", () => {
@@ -335,7 +337,7 @@ describe("Plugin registration", () => {
     expect(handled).toMatchObject({
       handled: true,
       reply: {
-        text: "已记录体重：68.4 kg（2026-08-17）。目前共有 1 条体重记录。",
+        text: `已记录体重：68.4 kg（${new Date().toISOString().slice(0, 10)}）。目前共有 1 条体重记录。`,
       },
     });
     expect(JSON.stringify(handled)).not.toMatch(
@@ -1612,6 +1614,7 @@ describe("Plugin registration", () => {
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
     const output = await runtime?.ingestWorkoutLog({
+      intent: "explicit",
       runId: "plugin-run-1",
       upload: rawMediaUploadFixture(),
       timeoutMs: 2_000,
@@ -1638,7 +1641,7 @@ describe("Plugin registration", () => {
     );
     writeFileSync(mediaPath, rawMediaUploadFixture().bytes);
     const extractStructuredWithModel = vi.fn().mockResolvedValue({
-      parsed: workoutLogCandidate(),
+      parsed: activeWorkoutLogCandidate(),
       provider: "operator-provider",
       model: "operator-model",
       contentType: "json",
@@ -1657,6 +1660,11 @@ describe("Plugin registration", () => {
       openclawConfig: permittedOpenClawConfig({ allowModel: true }),
       extractStructuredWithModel,
     });
+    await activateProgramFixture({
+      personalDataDirectory: personalDataDirectory.personalDataDirectory,
+      programSpec: parse(readFileSync(programFixturePath(), "utf8")),
+      cycleStart: "2026-08-10",
+    });
     registerStellaFitnessPlugin(
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
@@ -1664,15 +1672,21 @@ describe("Plugin registration", () => {
     await expect(
       hooks.get("inbound_claim")?.(
         {
-          content: "看看这张照片",
+          content: "",
           channel: "test-channel",
+          timestamp: Date.parse("2026-08-10T16:30:00.000Z"),
           messageId: "ordinary-image-message",
           metadata: { mediaPath, mediaType: "image/png" },
         },
         { sessionKey: "agent:fitness:webchat:test" },
       ),
-    ).resolves.toBeUndefined();
-    expect(extractStructuredWithModel).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: "已记录训练：第 1 阶段第 1 周，周一，全身训练。本周已记录 1/3 次；下一次计划：2026-08-12（周三）全身训练。",
+      },
+    });
+    expect(extractStructuredWithModel).toHaveBeenCalledOnce();
 
     const result = await hooks.get("inbound_claim")?.(
       {
@@ -1689,7 +1703,7 @@ describe("Plugin registration", () => {
     expect(result).toMatchObject({
       handled: true,
       reply: {
-        text: "已记录训练：第 1 阶段第 1 周，周一，全身训练。",
+        text: "已记录训练：第 1 阶段第 1 周，周一，全身训练。本周已记录 1/3 次；下一次计划：2026-08-12（周三）全身训练。",
       },
     });
     expect(extractStructuredWithModel).toHaveBeenCalledOnce();
@@ -1722,11 +1736,16 @@ describe("Plugin registration", () => {
       },
       openclawConfig: permittedOpenClawConfig({ allowModel: true }),
       extractStructuredWithModel: vi.fn().mockResolvedValue({
-        parsed: workoutLogCandidate(),
+        parsed: activeWorkoutLogCandidate(),
         provider: "operator-provider",
         model: "operator-model",
         contentType: "json",
       }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory: personalDataDirectory.personalDataDirectory,
+      programSpec: parse(readFileSync(programFixturePath(), "utf8")),
+      cycleStart: "2026-08-10",
     });
     registerStellaFitnessPlugin(
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
@@ -1734,8 +1753,8 @@ describe("Plugin registration", () => {
 
     await hooks.get("message_received")?.(
       {
-        content: "训练日志",
-        timestamp: Date.parse("2026-08-10T08:00:00.000Z"),
+        content: "",
+        timestamp: Date.parse("2026-08-10T16:30:00.000Z"),
         messageId: "routed-workout",
         metadata: { mediaPath, mediaType: "image/png" },
       },
@@ -1747,7 +1766,7 @@ describe("Plugin registration", () => {
     const sendFinalReply = vi.fn().mockReturnValue(true);
     await expect(hooks.get("reply_dispatch")?.(
       {
-        ctx: { BodyForAgent: "训练日志", Provider: "telegram" },
+        ctx: { BodyForAgent: "", Provider: "telegram" },
         sessionKey: "agent:fitness:telegram:direct:515151",
       },
       {
@@ -1764,8 +1783,71 @@ describe("Plugin registration", () => {
       queuedFinal: true,
     });
     expect(sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringMatching(/^已记录训练：/u),
+      text: "已记录训练：第 1 阶段第 1 周，周一，全身训练。本周已记录 1/3 次；下一次计划：2026-08-12（周三）全身训练。",
     });
+  });
+
+  it("lets the generic Telegram reply continue for a non-log image", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const personalDataDirectory = configuredPersonalDirectory();
+    const mediaPath = join(
+      personalDataDirectory.personalDataDirectory,
+      "routed-ordinary.png",
+    );
+    writeFileSync(mediaPath, rawMediaUploadFixture().bytes);
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: {
+        ...personalDataDirectory,
+        extraction: { provider: "operator-provider", model: "operator-model" },
+      },
+      openclawConfig: permittedOpenClawConfig({ allowModel: true }),
+      extractStructuredWithModel: vi.fn().mockResolvedValue({
+        parsed: { layout: "not-workout-log", reason: "not-fixed-workbook" },
+        provider: "operator-provider",
+        model: "operator-model",
+        contentType: "json",
+      }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory: personalDataDirectory.personalDataDirectory,
+      programSpec: parse(readFileSync(programFixturePath(), "utf8")),
+      cycleStart: "2026-08-10",
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    await hooks.get("message_received")?.({
+      content: "",
+      timestamp: Date.parse("2026-08-10T16:30:00.000Z"),
+      messageId: "routed-ordinary",
+      metadata: { mediaPath, mediaType: "image/png" },
+    }, {
+      channelId: "telegram",
+      sessionKey: "agent:fitness:telegram:direct:616161",
+    });
+    const sendFinalReply = vi.fn();
+
+    await expect(hooks.get("reply_dispatch")?.({
+      ctx: { BodyForAgent: "", Provider: "telegram" },
+      sessionKey: "agent:fitness:telegram:direct:616161",
+    }, {
+      dispatcher: {
+        sendFinalReply,
+        markComplete: vi.fn(),
+        getQueuedCounts: () => ({ tool: 0, block: 0, final: 0 }),
+      },
+      recordProcessed: vi.fn(),
+      markIdle: vi.fn(),
+    })).resolves.toBeUndefined();
+    expect(sendFinalReply).not.toHaveBeenCalled();
+    expect(existsSync(join(
+      personalDataDirectory.personalDataDirectory,
+      "raw-artifacts",
+      "workout-log",
+    ))).toBe(false);
   });
 
   it("asks the user to crop a multi-session workout-log page", async () => {
@@ -1972,6 +2054,7 @@ describe("Plugin registration", () => {
 
     await expect(
       runtime?.ingestWorkoutLog({
+        intent: "explicit",
         runId: "plugin-unconfigured",
         upload: rawMediaUploadFixture(),
         timeoutMs: 2_000,
@@ -2011,6 +2094,7 @@ describe("Plugin registration", () => {
     });
     await expect(
       runtime?.ingestWorkoutLog({
+        intent: "explicit",
         runId: "plugin-denied-model",
         upload: rawMediaUploadFixture(),
         timeoutMs: 2_000,
@@ -2047,6 +2131,7 @@ describe("Plugin registration", () => {
     });
     await expect(
       runtime?.ingestWorkoutLog({
+        intent: "explicit",
         runId: "plugin-missing-media",
         upload: rawMediaUploadFixture(),
         timeoutMs: 2_000,
@@ -2102,6 +2187,7 @@ describe("Plugin registration", () => {
     expect(runtime?.preflight()).toMatchObject({ readiness: "READY", reasons: [] });
     await expect(
       runtime?.ingestWorkoutLog({
+        intent: "explicit",
         runId: "plugin-corrected",
         upload: rawMediaUploadFixture(),
         timeoutMs: 2_000,
@@ -2202,6 +2288,7 @@ function allowedModelConfig() {
   return {
     agents: {
       defaults: {
+        userTimezone: "Asia/Shanghai",
         models: { "operator-provider/operator-model": {} },
       },
     },
@@ -2209,7 +2296,12 @@ function allowedModelConfig() {
 }
 
 type TestOpenClawConfig = {
-  agents?: ReturnType<typeof allowedModelConfig>["agents"];
+  agents?: {
+    defaults: {
+      userTimezone: string;
+      models: Record<string, Record<string, never>>;
+    };
+  };
   bindings?: Array<{
     agentId: string;
     match: { channel: string; accountId?: string };
@@ -2228,7 +2320,14 @@ function permittedOpenClawConfig(options?: {
   allowModel?: boolean;
 }): TestOpenClawConfig {
   return {
-    ...(options?.allowModel ? allowedModelConfig() : {}),
+    agents: {
+      defaults: {
+        userTimezone: "Asia/Shanghai",
+        ...(options?.allowModel
+          ? { models: { "operator-provider/operator-model": {} } }
+          : { models: {} }),
+      },
+    },
     plugins: {
       entries: {
         "stella-fitness": {
@@ -2238,6 +2337,30 @@ function permittedOpenClawConfig(options?: {
       },
     },
   };
+}
+
+function activeWorkoutLogCandidate() {
+  const candidate = workoutLogCandidate();
+  const exercise = candidate.exercises[0]!;
+  candidate.exercises = [
+    exercise,
+    {
+      ...structuredClone(exercise),
+      rawLabel: { value: "哑铃卧推", confidence: "high" },
+      exerciseId: { value: "dumbbell-bench-press", confidence: "high" },
+    },
+    {
+      ...structuredClone(exercise),
+      rawLabel: { value: "哑铃硬拉", confidence: "high" },
+      exerciseId: { value: "dumbbell-deadlift", confidence: "high" },
+    },
+    {
+      ...structuredClone(exercise),
+      rawLabel: { value: "平板支撑", confidence: "high" },
+      exerciseId: { value: "plank", confidence: "high" },
+    },
+  ];
+  return candidate;
 }
 
 function configuredPersonalDirectory(): {

@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import sharp from "sharp";
+import { parse } from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -30,6 +31,7 @@ import {
 } from "../src/scenario/harness.js";
 import type { ConfigurationPreflightResult } from "../src/preflight.js";
 import { workoutLogCandidate } from "./support/workout-log-candidate.js";
+import { activateProgramFixture } from "./support/program-state.js";
 
 const temporaryRoots: string[] = [];
 
@@ -40,6 +42,102 @@ afterEach(() => {
 });
 
 describe("workout-log Raw Artifact ingest", () => {
+  it("does not retain an automatically inspected ordinary image", async () => {
+    const directories = temporaryDirectories();
+    const runtime = new ControlledExtractionRuntime([{
+      parsed: { layout: "not-workout-log", reason: "not-fixed-workbook" },
+      metadata: { provider: "controlled", model: "fixture-v1" },
+    }]);
+    const harness = readyHarness(runtime, directories, {
+      userTimezone: () => "Asia/Shanghai",
+    });
+    await activateProgramFixture({
+      personalDataDirectory: directories.personalDataDirectory,
+      programSpec: await programFixture(),
+      cycleStart: "2026-08-10",
+    });
+
+    const output = await harness.ingestWorkoutLog({
+      intent: "auto",
+      runId: "auto-ordinary-image",
+      upload: upload(await orientedJpeg()),
+      timeoutMs: 2_000,
+    });
+
+    expect(output).toEqual({ status: "ignored", reason: "not-workout-log" });
+    expect(filesUnder(directories.personalDataDirectory)).not.toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("raw-artifacts/workout-log"),
+        expect.stringContaining("processing/workout-log"),
+      ]),
+    );
+    expect(filesUnder(directories.runtimeDirectory)).toEqual([]);
+  });
+
+  it("does not retain automatic media when extraction fails", async () => {
+    const directories = temporaryDirectories();
+    const runtime = new RejectingExtractionRuntime(new Error("provider unavailable"));
+    const harness = readyHarness(runtime, directories, {
+      userTimezone: () => "Asia/Shanghai",
+    });
+    await activateProgramFixture({
+      personalDataDirectory: directories.personalDataDirectory,
+      programSpec: await programFixture(),
+      cycleStart: "2026-08-10",
+    });
+
+    await expect(harness.ingestWorkoutLog({
+      intent: "auto",
+      runId: "auto-provider-failure",
+      upload: upload(await orientedJpeg()),
+      timeoutMs: 2_000,
+    })).rejects.toThrow("provider unavailable");
+
+    expect(filesUnder(directories.personalDataDirectory)).not.toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("raw-artifacts/workout-log"),
+        expect.stringContaining("processing/workout-log"),
+      ]),
+    );
+    expect(filesUnder(directories.runtimeDirectory)).toEqual([]);
+  });
+
+  it("asks for the deterministic block without retaining a missing target", async () => {
+    const directories = temporaryDirectories();
+    const runtime = new ControlledExtractionRuntime([{
+      parsed: { layout: "target-not-visible", reason: "missing" },
+      metadata: { provider: "controlled", model: "fixture-v1" },
+    }]);
+    const harness = readyHarness(runtime, directories, {
+      userTimezone: () => "Asia/Shanghai",
+    });
+    await activateProgramFixture({
+      personalDataDirectory: directories.personalDataDirectory,
+      programSpec: await programFixture(),
+      cycleStart: "2026-08-10",
+    });
+
+    const output = await harness.ingestWorkoutLog({
+      intent: "auto",
+      runId: "auto-target-missing",
+      upload: upload(await orientedJpeg()),
+      timeoutMs: 2_000,
+    });
+
+    expect(output).toMatchObject({
+      status: "user-action-required",
+      reason: "target-not-visible",
+      target: { week: 1, weekday: "monday" },
+    });
+    expect(filesUnder(directories.personalDataDirectory)).not.toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("raw-artifacts/workout-log"),
+        expect.stringContaining("processing/workout-log"),
+      ]),
+    );
+    expect(filesUnder(directories.runtimeDirectory)).toEqual([]);
+  });
+
   it("preserves the original and submits only an oriented metadata-free payload", async () => {
     const directories = temporaryDirectories();
     const rawBytes = await orientedJpeg();
@@ -53,6 +151,8 @@ describe("workout-log Raw Artifact ingest", () => {
       upload: upload(rawBytes),
       timeoutMs: 2_000,
     });
+    expect(output.status).toBe("recorded");
+    if (output.status !== "recorded") throw new Error("expected recorded output");
 
     const artifactPath = join(
       directories.personalDataDirectory,
@@ -354,16 +454,25 @@ describe("workout-log Raw Artifact ingest", () => {
 function readyHarness(
   extractionRuntime: ExtractionRuntime,
   directories: ReturnType<typeof temporaryDirectories>,
+  overrides: { readonly userTimezone?: () => string | undefined } = {},
 ) {
   return createScenarioHarness({
     extractionRuntime,
     personalDataDirectory: () => directories.personalDataDirectory,
     runtimeDirectory: () => directories.runtimeDirectory,
+    ...overrides,
     preflight: (): ConfigurationPreflightResult => ({
       readiness: "READY",
       reasons: [],
     }),
   });
+}
+
+async function programFixture(): Promise<unknown> {
+  return parse(readFileSync(new URL(
+    "../knowledge/programs/zhuoshu-12-week/program-spec.v0.2.yaml",
+    import.meta.url,
+  ), "utf8"));
 }
 
 class RejectingExtractionRuntime implements ExtractionRuntime {

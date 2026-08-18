@@ -68,13 +68,13 @@ inbound message
   → synthetic reply
 ```
 
-`before_agent_run` 是文本路由保险；`message_received` 在 agent routing 后按 session 暂存 Host media metadata，`reply_dispatch` 在模型调用前消费它，使未使用 Plugin conversation binding 的图片仍能进入净化与结构化抽取。暂存项只含当前 Host 媒体引用，在消费、Plugin stop 或 shutdown 时移除。Plugin 不接管普通健身聊天，也不把普通聊天内容保存为训练事实。
+`before_agent_run` 是文本路由保险；`message_received` 在 agent routing 后按 session 与 message/run identity 暂存全部受支持的 Host 图片 metadata，`reply_dispatch` 一次消费一个暂存项，使未使用 Plugin conversation binding、且没有 caption 的图片仍能进入同一 Runtime 入口。ACTIVE Program 中，普通图片经分类后返回 `ignored`，继续原通用回复且不保存 Stella 数据；暂存项在消费、Plugin stop 或 shutdown 时移除。
 
 non-bundled Plugin 所需 conversation-access 权限必须由 operator 显式启用，不得绕过。`dedicatedAgentId` 缺失、session key 缺失或 agent 不匹配时，所有写入口 fail closed；旧 Plugin conversation binding 记录不参与授权判断。
 
 ## 4. 媒体处理
 
-原始上传先按字节写入 Personal Data Directory。模型调用使用 Runtime Directory 中的 `Sanitized Media Copy`：
+显式训练日志入口保留“原始上传先按字节写入 Personal Data Directory”的审计语义。ACTIVE Program 的自动图片入口先只在 Runtime Directory 生成 `Sanitized Media Copy` 并分类；仅当输出是 schema-valid 的权威目标 candidate 或确认请求时，才保存原始上传、Processing Record 和后续 Observation。普通图片、目标缺失和 provider 失败不会长期保存。模型调用统一使用 `Sanitized Media Copy`：
 
 1. 应用 EXIF orientation 到像素；
 2. 移除 EXIF、GPS、设备、软件、缩略图等非必要 metadata；
@@ -101,12 +101,17 @@ uncertain_fields[]
 
 规则：
 
+- 自动模式使用 `agents.defaults.userTimezone` 将上传时间换算为本地日期，只选择该 Program 周内截至该日最近、尚未记录的 Planned Session，不跨周且不选择未来日；
+- 模型同时完成固定工作簿分类与目标区块抽取；只读权威标题至下一标题之间的区块，忽略照片中的其他 session；
+- candidate 的阶段、周次、星期、session 类型和动作集合必须与权威目标完全一致，否则不保存、不计入完成度；
 - 空白 actual 保持空白；
 - 关键数字低置信时必须确认；
 - `重量` 不强制为 number；
 - 第 4 周力量测试使用独立 schema；
 - recovery session 不因普通布局标题丢失计划身份；
 - 备注按原始用户记录保存，不作表现、心理或健康解释。
+
+Observation 仍是唯一训练事实。“本周已记录 X/Y 次”和下一 Planned Session 每次都从 Training Record View 与 ProgramSpec 派生，不保存独立进度游标。
 
 ## 6. 体重输入
 

@@ -23,6 +23,7 @@ afterEach(() => {
 describe("configuration preflight", () => {
   it("blocks when the Personal Data Directory is missing", () => {
     const result = runConfigurationPreflight({
+      userTimezone: "Asia/Shanghai",
       personalDataDirectory: undefined,
       runtimeDirectory: "/var/lib/openclaw/stella-fitness",
       conversationAccess: true,
@@ -46,6 +47,7 @@ describe("configuration preflight", () => {
 
     expect(
       runConfigurationPreflight({
+        userTimezone: "Asia/Shanghai",
         personalDataDirectory,
         runtimeDirectory,
         conversationAccess: true,
@@ -67,6 +69,7 @@ describe("configuration preflight", () => {
     const { personalDataDirectory, runtimeDirectory } = isolatedDirectories();
 
     const result = runConfigurationPreflight({
+        userTimezone: "Asia/Shanghai",
         personalDataDirectory,
         runtimeDirectory,
         conversationAccess: true,
@@ -95,6 +98,7 @@ describe("configuration preflight", () => {
     symlinkSync(personalDataDirectory, runtimeParent, "dir");
 
     const result = runConfigurationPreflight({
+      userTimezone: "Asia/Shanghai",
       personalDataDirectory,
       runtimeDirectory: join(runtimeParent, "stella-fitness"),
       conversationAccess: true,
@@ -135,6 +139,7 @@ describe("configuration preflight", () => {
     mkdirSync(runtimeDirectory, { recursive: true });
 
     const result = runConfigurationPreflight({
+      userTimezone: "Asia/Shanghai",
       personalDataDirectory,
       runtimeDirectory,
       conversationAccess: true,
@@ -166,6 +171,7 @@ describe("configuration preflight", () => {
       const { personalDataDirectory, runtimeDirectory } = isolatedDirectories();
 
       const result = runConfigurationPreflight({
+        userTimezone: "Asia/Shanghai",
         personalDataDirectory,
         runtimeDirectory,
         conversationAccess,
@@ -184,6 +190,7 @@ describe("configuration preflight", () => {
 
     expect(
       runConfigurationPreflight({
+        userTimezone: "Asia/Shanghai",
         personalDataDirectory,
         runtimeDirectory,
         conversationAccess: true,
@@ -198,6 +205,28 @@ describe("configuration preflight", () => {
           message: "Enable OpenClaw structured media extraction",
         },
       ],
+    });
+  });
+
+  it.each([
+    [undefined, "USER_TIMEZONE_REQUIRED"],
+    ["Mars/Olympus_Mons", "USER_TIMEZONE_INVALID"],
+  ])("blocks an unusable OpenClaw user timezone", (userTimezone, expectedCode) => {
+    const { personalDataDirectory, runtimeDirectory } = isolatedDirectories();
+
+    const result = runConfigurationPreflight({
+      userTimezone,
+      personalDataDirectory,
+      runtimeDirectory,
+      conversationAccess: true,
+      structuredMedia: true,
+      extraction: "allowed",
+    });
+
+    expect(result).toMatchObject({
+      readiness: "BLOCKED_CONFIGURATION",
+      reasons: [expect.objectContaining({ code: expectedCode })],
+      capabilities: { timeZone: { status: "blocked" } },
     });
   });
 });

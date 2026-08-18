@@ -9,8 +9,18 @@ export type ExtractionExecutionMetadata = {
 export type ExtractionRequest = {
   runId: string;
   media: SanitizedMediaCopy;
+  target?: WorkoutLogTarget;
   timeoutMs: number;
   signal: AbortSignal;
+};
+
+export type WorkoutLogTarget = {
+  readonly date: string;
+  readonly stage: number;
+  readonly week: number;
+  readonly weekday: string;
+  readonly sessionType: string;
+  readonly exerciseIds: readonly string[];
 };
 
 export type ExtractionResult = {

@@ -101,9 +101,10 @@ export function registerStellaFitnessPlugin(
       ),
     runtimeDirectory: () =>
       join(api.runtime.state.resolveStateDir(process.env), PLUGIN_ID),
+    userTimezone: () => currentOpenClawConfig(api).agents?.defaults?.userTimezone,
     preflight,
   });
-  const pendingMediaBySession = new Map<string, PluginHookInboundClaimEvent>();
+  const pendingMediaBySession = new Map<string, PluginHookInboundClaimEvent[]>();
   registerPrintableLogDownloadRoute(api, stellaRuntime);
   api.registerService({
     id: "stella-fitness-media-lifecycle",
@@ -378,8 +379,7 @@ export function registerStellaFitnessPlugin(
       const sessionKey = context.sessionKey;
       if (
         sessionKey === undefined ||
-        !isDedicatedAgentContext(context, api) ||
-        !/(?:训练(?:日志|记录)|记录训练|workout\s*log)/iu.test(event.content)
+        !isDedicatedAgentContext(context, api)
       ) return;
       const metadata = event.metadata;
       if (
@@ -387,7 +387,8 @@ export function registerStellaFitnessPlugin(
         (nonBlankString(metadata.mediaPath) === undefined &&
           firstNonBlankString(metadata.mediaPaths) === undefined)
       ) return;
-      pendingMediaBySession.set(sessionKey, {
+      const pending = pendingMediaBySession.get(sessionKey) ?? [];
+      pending.push({
         content: event.content,
         channel: context.channelId,
         isGroup: false,
@@ -396,6 +397,7 @@ export function registerStellaFitnessPlugin(
         ...(event.timestamp === undefined ? {} : { timestamp: event.timestamp }),
         metadata,
       });
+      pendingMediaBySession.set(sessionKey, pending);
     },
     { priority: 100 },
   );
@@ -452,6 +454,7 @@ export function registerStellaFitnessPlugin(
         return;
       }
       const request = {
+        intent: workoutLogIntent(event),
         runId:
           event.runId ??
           event.messageId ??
@@ -461,6 +464,7 @@ export function registerStellaFitnessPlugin(
         signal: new AbortController().signal,
       };
       const correctionId = workoutLogCorrectionId(event);
+      if (correctionId !== undefined) request.intent = "explicit";
       let result;
       try {
         result = correctionId === undefined
@@ -480,6 +484,7 @@ export function registerStellaFitnessPlugin(
         }
         throw error;
       }
+      if (result.status === "ignored") return;
       return {
         handled: true,
         reply: { text: formatWorkoutLogResult(result) },
@@ -494,19 +499,26 @@ export function registerStellaFitnessPlugin(
       if (!isDedicatedAgentContext(event, api)) return;
       const sessionKey = event.sessionKey;
       if (sessionKey === undefined) return;
-      const pendingMedia = pendingMediaBySession.get(sessionKey);
+      const pending = pendingMediaBySession.get(sessionKey);
+      if (pending === undefined || pending.length === 0) return;
+      const matchingIndex = event.runId === undefined
+        ? 0
+        : pending.findIndex((item) => item.runId === event.runId);
+      const pendingMedia = pending.splice(matchingIndex < 0 ? 0 : matchingIndex, 1)[0];
+      if (pending.length === 0) pendingMediaBySession.delete(sessionKey);
       if (pendingMedia === undefined) return;
-      pendingMediaBySession.delete(sessionKey);
       const upload = await workoutLogUpload(pendingMedia);
       if (upload === undefined) return;
       let replyText: string;
       try {
         const result = await stellaRuntime.ingestWorkoutLog({
+          intent: workoutLogIntent(pendingMedia),
           runId: event.runId ?? `workout-log-${randomUUID()}`,
           upload,
           timeoutMs: 60_000,
           signal: new AbortController().signal,
         });
+        if (result.status === "ignored") return;
         replyText = formatWorkoutLogResult(result);
       } catch (error) {
         if (error instanceof MultiSessionWorkoutLogPageError) {
@@ -807,7 +819,19 @@ function isWorkoutLogImageInput(event: PluginHookInboundClaimEvent): boolean {
   const text = [event.content, event.body, event.bodyForAgent]
     .filter((value): value is string => typeof value === "string")
     .join(" ");
-  return /(?:训练(?:日志|记录)|记录训练|workout\s*log)/iu.test(text);
+  return event.metadata !== undefined ||
+    /(?:训练(?:日志|记录)|记录训练|workout\s*log)/iu.test(text);
+}
+
+function workoutLogIntent(
+  event: PluginHookInboundClaimEvent,
+): "auto" | "explicit" {
+  const text = [event.content, event.body, event.bodyForAgent]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  return /(?:训练(?:日志|记录)|记录训练|workout\s*log)/iu.test(text)
+    ? "explicit"
+    : "auto";
 }
 
 function hasHostMediaMarker(text: string): boolean {
@@ -1144,19 +1168,47 @@ function formatWorkoutLogResult(
   if (result.status === "recorded") {
     return formatWorkoutLogRecording(result);
   }
+  if (result.status === "user-action-required") {
+    if (result.reason === "no-due-session") {
+      return "本周截至当前没有尚未记录的计划训练；不会选择未来训练日或其他周。";
+    }
+    if (result.reason === "training-record-invalid") {
+      return "现有训练记录无法安全读取，因此尚未保存这张照片。请先处理记录错误后重试。";
+    }
+    if (result.reason === "program-target-invalid") {
+      return "当前计划无法确定唯一训练目标，因此尚未保存这张照片。";
+    }
+    const target = result.target;
+    const targetText = target === undefined
+      ? "本次计划训练区块"
+      : `第 ${target.stage} 阶段第 ${target.week} 周，${dayName(target.weekday)}，${sessionTypeName(target.sessionType)}`;
+    if (result.reason === "target-mismatch") {
+      return `照片内容与确定性目标（${targetText}）不匹配，因此未保存、未计入进度。`;
+    }
+    return `未能清晰读取确定性目标（${targetText}）。请只补拍该训练区块，确保标题和填写内容完整可见。`;
+  }
   return "这张训练日志有内容无法确定，因此尚未保存。请补充说明或重新发送一张更清晰、只包含一次训练的照片。";
 }
 
 function formatWorkoutLogRecording(
   result: { readonly observation: Awaited<
     ReturnType<StellaFitnessRuntime["confirmWorkoutLog"]>
-  >["observation"] },
+  >["observation"]; readonly progress?: Awaited<
+    ReturnType<StellaFitnessRuntime["confirmWorkoutLog"]>
+  >["progress"] },
 ): string {
   const { observation } = result;
+  const progress = result.progress === undefined
+    ? ""
+    : `本周已记录 ${result.progress.recordedSessions}/${result.progress.plannedSessions} 次；${
+        result.progress.nextSession === undefined
+          ? "当前周期暂无下一次计划训练。"
+          : `下一次计划：${result.progress.nextSession.date}（${dayName(result.progress.nextSession.weekday)}）${sessionTypeName(result.progress.nextSession.sessionType)}。`
+      }`;
   if (observation.provenance.kind === "workout-log-correction") {
-    return `已更正训练记录：第 ${observation.stage.value} 阶段第 ${observation.week.value} 周，${dayName(observation.weekday.value)}，${sessionTypeName(observation.sessionType.value)}。`;
+    return `已更正训练记录：第 ${observation.stage.value} 阶段第 ${observation.week.value} 周，${dayName(observation.weekday.value)}，${sessionTypeName(observation.sessionType.value)}。${progress}`;
   }
-  return `已记录训练：第 ${observation.stage.value} 阶段第 ${observation.week.value} 周，${dayName(observation.weekday.value)}，${sessionTypeName(observation.sessionType.value)}。`;
+  return `已记录训练：第 ${observation.stage.value} 阶段第 ${observation.week.value} 周，${dayName(observation.weekday.value)}，${sessionTypeName(observation.sessionType.value)}。${progress}`;
 }
 
 function workoutLogCorrectionId(
@@ -1332,6 +1384,7 @@ function createPreflightRunner(
     const pluginConfig = currentPluginConfig(openclawConfig);
     const extractionConfig = resolveExtractionConfig(pluginConfig);
     return runConfigurationPreflight({
+      userTimezone: openclawConfig.agents?.defaults?.userTimezone,
       personalDataDirectory: pluginConfig?.personalDataDirectory,
       runtimeDirectory: join(
         api.runtime.state.resolveStateDir(process.env),

@@ -27,12 +27,14 @@ import { rejectOnAbort } from "./extraction/cancellation.js";
 import {
   parseWorkoutLogFieldPath,
   parseWorkoutLogCandidate,
+  parseWorkoutLogExtractionAbstention,
   type SpecialSessionCandidate,
   type WorkoutLogCandidate,
 } from "./extraction/candidate.js";
 import type {
   ExtractionExecutionMetadata,
   ExtractionRuntime,
+  WorkoutLogTarget,
 } from "./extraction/runtime.js";
 import {
   createRuntimeFileMediaSanitizer,
@@ -98,10 +100,38 @@ type PluginExtractionBase = {
   programState?: ProgramState;
 };
 
+export type TrainingRecordingProgress = {
+  readonly week: number;
+  readonly recordedSessions: number;
+  readonly plannedSessions: number;
+  readonly nextSession?: {
+    readonly date: string;
+    readonly weekday: string;
+    readonly sessionType: string;
+  };
+};
+
 export type PluginExtractionOutput =
+  | {
+      status: "ignored";
+      reason: "not-workout-log" | "program-not-active";
+    }
+  | {
+      status: "user-action-required";
+      reason:
+        | "no-due-session"
+        | "target-not-visible"
+        | "target-blank"
+        | "target-illegible"
+        | "target-mismatch"
+        | "program-target-invalid"
+        | "training-record-invalid";
+      target?: WorkoutLogTarget;
+    }
   | (PluginExtractionBase & {
       status: "recorded";
       observation: WorkoutLogObservation;
+      progress?: TrainingRecordingProgress | undefined;
     })
   | (PluginExtractionBase & {
       status: "confirmation";
@@ -112,6 +142,7 @@ export type PluginExtractionOutput =
 export type ConfirmedWorkoutLogOutput = PluginExtractionBase & {
   status: "recorded";
   observation: WorkoutLogObservation;
+  progress?: TrainingRecordingProgress | undefined;
 };
 
 export type StellaFitnessRuntime = {
@@ -221,6 +252,7 @@ type PendingWorkoutLogConfirmation = {
   readonly artifact: RawArtifactRecord;
   readonly runId: string;
   readonly execution: ExtractionExecutionMetadata;
+  readonly target?: WorkoutLogTarget;
   readonly replacesObservationId?: string;
   result?: {
     readonly fingerprint: string;
@@ -246,6 +278,7 @@ export function createStellaFitnessRuntime(options: {
   extractionRuntime: ExtractionRuntime;
   personalDataDirectory?: () => string | undefined;
   runtimeDirectory?: () => string | undefined;
+  userTimezone?: () => string | undefined;
   mediaSanitizer?: MediaSanitizer;
   preflight: () => ConfigurationPreflightResult;
 }): StellaFitnessRuntime {
@@ -357,6 +390,9 @@ export function createStellaFitnessRuntime(options: {
         extractionRuntime: options.extractionRuntime,
         mediaSanitizer,
         personalDataDirectory: requiredPersonalDataDirectory(options),
+        ...(options.userTimezone === undefined
+          ? {}
+          : { userTimezone: options.userTimezone }),
         request,
         controller,
         confirmations,
@@ -639,6 +675,8 @@ function fingerprintRequest(
     .update("\0")
     .update(request.upload.receivedAt)
     .update("\0")
+    .update(request.intent)
+    .update("\0")
     .update(request.upload.bytes)
     .update("\0")
     .update(replacesObservationId ?? "")
@@ -663,6 +701,7 @@ async function executeWorkoutLogIngest(options: {
   extractionRuntime: ExtractionRuntime;
   mediaSanitizer: MediaSanitizer;
   personalDataDirectory: string;
+  userTimezone?: () => string | undefined;
   request: WorkoutLogIngestRequest;
   controller: AbortController;
   confirmations: Map<string, PendingWorkoutLogConfirmation>;
@@ -730,10 +769,32 @@ async function executeWorkoutLogIngest(options: {
       execution: { provider: "deduplicated" },
     });
   }
-  const artifact = await persistRawWorkoutLogArtifact({
-    personalDataDirectory: options.personalDataDirectory,
-    upload: options.request.upload,
-  });
+  let target: WorkoutLogTarget | undefined;
+  if (options.request.intent === "auto") {
+    try {
+      target = await resolveAutomaticWorkoutTarget({
+        personalDataDirectory: options.personalDataDirectory,
+        receivedAt: options.request.upload.receivedAt,
+        userTimezone: options.userTimezone?.(),
+      });
+    } catch (error) {
+      if (error instanceof AutomaticWorkoutLogTargetError) {
+        if (error.reason === "program-not-active") {
+          return { status: "ignored", reason: error.reason };
+        }
+        if (error.reason !== "user-timezone-unavailable") {
+          return { status: "user-action-required", reason: error.reason };
+        }
+      }
+      throw error;
+    }
+  }
+  let artifact = options.request.intent === "explicit"
+    ? await persistRawWorkoutLogArtifact({
+        personalDataDirectory: options.personalDataDirectory,
+        upload: options.request.upload,
+      })
+    : undefined;
   let lease: SanitizedMediaLease | undefined;
   let execution: ExtractionExecutionMetadata | undefined;
   const onCallerAbort = () => {
@@ -753,19 +814,39 @@ async function executeWorkoutLogIngest(options: {
 
   try {
     lease = await acquireSanitizedMedia(
-      options.mediaSanitizer.sanitize(options.request.upload, artifact.id),
+      options.mediaSanitizer.sanitize(
+        options.request.upload,
+        artifact?.id ?? randomUUID(),
+      ),
       options.controller.signal,
     );
     const result = await rejectOnAbort(
       options.extractionRuntime.extract({
         runId: options.request.runId,
         media: lease.media,
+        ...(target === undefined ? {} : { target }),
         timeoutMs: options.request.timeoutMs,
         signal: options.controller.signal,
       }),
       options.controller.signal,
     );
     execution = result.metadata;
+    const abstention = parseWorkoutLogExtractionAbstention(result.parsed);
+    if (abstention !== undefined) {
+      if (options.request.intent === "explicit") {
+        throw new ProcessingFailureError(
+          "invalid-result",
+          new Error(`Explicit workout-log extraction abstained: ${abstention.reason}`),
+        );
+      }
+      return abstention.layout === "not-workout-log"
+        ? { status: "ignored", reason: "not-workout-log" }
+        : {
+            status: "user-action-required",
+            reason: abstentionReason(abstention.reason),
+            ...(target === undefined ? {} : { target }),
+          };
+    }
     let candidate: WorkoutLogCandidate;
     try {
       candidate = parseWorkoutLogCandidate(result.parsed);
@@ -773,6 +854,17 @@ async function executeWorkoutLogIngest(options: {
       throw new ProcessingFailureError("invalid-result", error);
     }
     candidate = requireSpecialSessionConfirmation(candidate);
+    if (target !== undefined) {
+      try {
+        assertCandidateMatchesTarget(candidate, target);
+      } catch {
+        return {
+          status: "user-action-required",
+          reason: "target-mismatch",
+          target,
+        };
+      }
+    }
     let context: CandidateSessionContext;
     try {
       context = await resolveCandidateSessionContext({
@@ -784,6 +876,10 @@ async function executeWorkoutLogIngest(options: {
     }
     candidate = context.candidate;
     const { plannedSession } = context;
+    artifact ??= await persistRawWorkoutLogArtifact({
+      personalDataDirectory: options.personalDataDirectory,
+      upload: options.request.upload,
+    });
     const replaced = options.replacesObservationId === undefined
       ? undefined
       : await activeWorkoutLogById(
@@ -870,6 +966,7 @@ async function executeWorkoutLogIngest(options: {
                 kind: "workout-log-confirmation" as const,
                 confirmationId: confirmationId!,
                 candidate: candidateExtractionShape(candidate),
+                ...(target === undefined ? {} : { target }),
                 ...(options.replacesObservationId === undefined
                   ? {}
                   : { replacesObservationId: options.replacesObservationId }),
@@ -888,6 +985,10 @@ async function executeWorkoutLogIngest(options: {
       return {
         status: "recorded",
         observation: persistedObservation.observation,
+        progress: await deriveTrainingRecordingProgress(
+          options.personalDataDirectory,
+          persistedObservation.observation,
+        ),
         ...(programState === undefined ? {} : { programState }),
         execution: result.metadata,
         artifact,
@@ -902,6 +1003,7 @@ async function executeWorkoutLogIngest(options: {
       artifact,
       runId: options.request.runId,
       execution: result.metadata,
+      ...(target === undefined ? {} : { target }),
       ...(options.replacesObservationId === undefined
         ? {}
         : { replacesObservationId: options.replacesObservationId }),
@@ -916,21 +1018,23 @@ async function executeWorkoutLogIngest(options: {
     };
   } catch (error) {
     const errorCategory = processingErrorCategory(error);
-    await persistWorkoutLogProcessingRecord({
-      personalDataDirectory: options.personalDataDirectory,
-      record: {
-        schemaVersion: "stella-fitness/processing/workout-log/v0.1",
-        operation: "workout-log-extraction",
-        runId: options.request.runId,
-        startedAt,
-        completedAt: new Date().toISOString(),
-        status: "failed",
-        artifact: artifactReference(artifact),
-        ...(lease === undefined ? {} : { payload: payloadReference(lease) }),
-        ...(execution === undefined ? {} : { execution }),
-        errorCategory,
-      },
-    });
+    if (artifact !== undefined) {
+      await persistWorkoutLogProcessingRecord({
+        personalDataDirectory: options.personalDataDirectory,
+        record: {
+          schemaVersion: "stella-fitness/processing/workout-log/v0.1",
+          operation: "workout-log-extraction",
+          runId: options.request.runId,
+          startedAt,
+          completedAt: new Date().toISOString(),
+          status: "failed",
+          artifact: artifactReference(artifact),
+          ...(lease === undefined ? {} : { payload: payloadReference(lease) }),
+          ...(execution === undefined ? {} : { execution }),
+          errorCategory,
+        },
+      });
+    }
     throw error instanceof ProcessingFailureError && error.cause !== undefined
       ? error.cause
       : error;
@@ -1037,6 +1141,9 @@ async function readPendingWorkoutLogConfirmation(
     artifact,
     runId: awaiting.runId,
     execution: awaiting.execution,
+    ...(isWorkoutLogTarget(awaiting.result.target)
+      ? { target: awaiting.result.target }
+      : {}),
     ...(replacesObservationId === undefined ? {} : { replacesObservationId }),
   };
 }
@@ -1091,6 +1198,17 @@ function isExtractionExecutionMetadata(
       value.contentType === "text");
 }
 
+function isWorkoutLogTarget(value: unknown): value is WorkoutLogTarget {
+  return isRecord(value) &&
+    typeof value.date === "string" &&
+    typeof value.stage === "number" &&
+    typeof value.week === "number" &&
+    typeof value.weekday === "string" &&
+    typeof value.sessionType === "string" &&
+    Array.isArray(value.exerciseIds) &&
+    value.exerciseIds.every((exerciseId) => typeof exerciseId === "string");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -1128,6 +1246,10 @@ async function duplicateWorkoutLogOutput(options: {
   return {
     status: "recorded",
     observation: options.observation,
+    progress: await deriveTrainingRecordingProgress(
+      options.personalDataDirectory,
+      options.observation,
+    ),
     execution: options.execution,
     artifact: options.artifact,
     processing,
@@ -1229,6 +1351,9 @@ async function recordConfirmedWorkoutLog(options: {
   }
   corrected.uncertainFields = [];
   let candidate = parseWorkoutLogCandidate(corrected);
+  if (options.pending.target !== undefined) {
+    assertCandidateMatchesTarget(candidate, options.pending.target);
+  }
   const attemptedAt = new Date().toISOString();
   let context: CandidateSessionContext;
   try {
@@ -1304,6 +1429,10 @@ async function recordConfirmedWorkoutLog(options: {
   return {
     status: "recorded",
     observation: persisted.observation,
+    progress: await deriveTrainingRecordingProgress(
+      options.personalDataDirectory,
+      persisted.observation,
+    ),
     ...(programState === undefined ? {} : { programState }),
     execution: options.pending.execution,
     artifact: options.pending.artifact,
@@ -1419,6 +1548,250 @@ async function resolveCandidateSessionContext(options: {
     state: activeProgram.state,
   });
   return { ...ordinary, programContext };
+}
+
+async function deriveTrainingRecordingProgress(
+  personalDataDirectory: string,
+  observation: WorkoutLogObservation,
+): Promise<TrainingRecordingProgress | undefined> {
+  const context = observation.programContext;
+  if (context === undefined) return undefined;
+  const active = await readActiveProgramIfPresent({ personalDataDirectory });
+  if (
+    active === undefined ||
+    active.state.id !== context.stateId ||
+    active.state.cycle.startDate !== context.cycleStart
+  ) return undefined;
+  const view = await rebuildTrainingRecordView(personalDataDirectory);
+  if (view.errors.length > 0) return undefined;
+  const week = observation.week.value;
+  const weekStartOffset = (week - 1) * 7;
+  const planned: PlannedSession[] = [];
+  for (let offset = weekStartOffset; offset < weekStartOffset + 7; offset += 1) {
+    const session = resolvePlannedSession({
+      program: active.program,
+      programVersion: active.state.program.version,
+      cycleStart: active.state.cycle.startDate,
+      date: addIsoDays(active.state.cycle.startDate, offset),
+    });
+    if (session !== null) planned.push(session);
+  }
+  const recordedKeys = new Set(view.records.flatMap(({ observation: record }) =>
+    record.programContext?.stateId === active.state.id && record.week.value === week
+      ? [`${record.week.value}:${record.weekday.value}`]
+      : []
+  ));
+  const currentSession = planned.find(({ day }) =>
+    day === observation.weekday.value
+  );
+  const currentOffset = currentSession === undefined
+    ? weekStartOffset
+    : Math.round(
+        (parseIsoDate(currentSession.date).getTime() -
+          parseIsoDate(active.state.cycle.startDate).getTime()) / 86_400_000,
+      );
+  let nextSession: PlannedSession | undefined;
+  for (
+    let offset = currentOffset + 1;
+    offset < active.program.weeks.length * 7;
+    offset += 1
+  ) {
+    const session = resolvePlannedSession({
+      program: active.program,
+      programVersion: active.state.program.version,
+      cycleStart: active.state.cycle.startDate,
+      date: addIsoDays(active.state.cycle.startDate, offset),
+    });
+    if (
+      session !== null &&
+      !view.records.some(({ observation: record }) =>
+        record.programContext?.stateId === active.state.id &&
+        record.week.value === session.cycle.week &&
+        record.weekday.value === session.day
+      )
+    ) {
+      nextSession = session;
+      break;
+    }
+  }
+  return {
+    week,
+    recordedSessions: planned.filter(({ day }) =>
+      recordedKeys.has(`${week}:${day}`)
+    ).length,
+    plannedSessions: planned.length,
+    ...(nextSession === undefined
+      ? {}
+      : {
+          nextSession: {
+            date: nextSession.date,
+            weekday: nextSession.day,
+            sessionType: nextSession.type,
+          },
+        }),
+  };
+}
+
+async function resolveAutomaticWorkoutTarget(options: {
+  readonly personalDataDirectory: string;
+  readonly receivedAt: string;
+  readonly userTimezone: string | undefined;
+}): Promise<WorkoutLogTarget> {
+  if (options.userTimezone === undefined) {
+    throw new AutomaticWorkoutLogTargetError("user-timezone-unavailable");
+  }
+  const active = await readActiveProgramIfPresent({
+    personalDataDirectory: options.personalDataDirectory,
+  });
+  if (active === undefined) {
+    throw new AutomaticWorkoutLogTargetError("program-not-active");
+  }
+  const localDate = dateInTimeZone(options.receivedAt, options.userTimezone);
+  const cycleStart = parseIsoDate(active.state.cycle.startDate);
+  const receivedDate = parseIsoDate(localDate);
+  const dayOffset = Math.round(
+    (receivedDate.getTime() - cycleStart.getTime()) / 86_400_000,
+  );
+  if (dayOffset < 0 || dayOffset >= active.program.weeks.length * 7) {
+    throw new AutomaticWorkoutLogTargetError("no-due-session");
+  }
+  const weekStartOffset = Math.floor(dayOffset / 7) * 7;
+  const view = await rebuildTrainingRecordView(options.personalDataDirectory);
+  if (view.errors.length > 0) {
+    throw new AutomaticWorkoutLogTargetError("training-record-invalid");
+  }
+  const recorded = new Set(
+    view.records.flatMap(({ observation }) =>
+      observation.programContext?.stateId === active.state.id &&
+        observation.programContext.cycleStart === active.state.cycle.startDate
+        ? [`${observation.week.value}:${observation.weekday.value}`]
+        : []
+    ),
+  );
+  const candidates: PlannedSession[] = [];
+  for (let offset = weekStartOffset; offset <= dayOffset; offset += 1) {
+    const date = addIsoDays(active.state.cycle.startDate, offset);
+    const session = resolvePlannedSession({
+      program: active.program,
+      programVersion: active.state.program.version,
+      cycleStart: active.state.cycle.startDate,
+      date,
+    });
+    if (
+      session !== null &&
+      !recorded.has(`${session.cycle.week}:${session.day}`)
+    ) {
+      candidates.push(session);
+    }
+  }
+  const session = candidates.at(-1);
+  if (session === undefined) {
+    throw new AutomaticWorkoutLogTargetError("no-due-session");
+  }
+  const stageMatch = /^phase-(\d+)$/u.exec(session.cycle.phase);
+  if (stageMatch?.[1] === undefined) {
+    throw new AutomaticWorkoutLogTargetError("program-target-invalid");
+  }
+  return {
+    date: session.date,
+    stage: Number(stageMatch[1]),
+    week: session.cycle.week,
+    weekday: session.day,
+    sessionType:
+      session.type === "strength-test" ? "strength_test" : session.type,
+    exerciseIds: session.exercises.length > 0
+      ? session.exercises.map(({ exerciseId }) => exerciseId)
+      : session.tests.map(({ exerciseId }) => exerciseId),
+  };
+}
+
+class AutomaticWorkoutLogTargetError extends Error {
+  readonly reason:
+    | "user-timezone-unavailable"
+    | "program-not-active"
+    | "no-due-session"
+    | "training-record-invalid"
+    | "program-target-invalid";
+
+  constructor(reason: AutomaticWorkoutLogTargetError["reason"]) {
+    super(`Automatic workout-log target is unavailable: ${reason}`);
+    this.name = "AutomaticWorkoutLogTargetError";
+    this.reason = reason;
+  }
+}
+
+function abstentionReason(
+  reason: "missing" | "blank" | "illegible" | "mismatch",
+): Extract<PluginExtractionOutput, { status: "user-action-required" }>[
+  "reason"
+] {
+  return reason === "missing" ? "target-not-visible" : `target-${reason}`;
+}
+
+function assertCandidateMatchesTarget(
+  candidate: WorkoutLogCandidate,
+  target: WorkoutLogTarget,
+): void {
+  const candidateExerciseIds = "testResults" in candidate
+    ? candidate.testResults.map(({ exerciseId }) => exerciseId.value)
+    : candidate.exercises.map(({ exerciseId }) => exerciseId.value);
+  const candidateSessionType = candidate.sessionType.value;
+  const candidateExerciseSet = new Set(candidateExerciseIds);
+  const targetExerciseSet = new Set(target.exerciseIds);
+  const exactExercises =
+    candidateExerciseSet.size === candidateExerciseIds.length &&
+    targetExerciseSet.size === target.exerciseIds.length &&
+    candidateExerciseSet.size === targetExerciseSet.size &&
+    [...candidateExerciseSet].every((exerciseId) =>
+      targetExerciseSet.has(exerciseId)
+    );
+  if (
+    candidate.stage.value !== target.stage ||
+    candidate.week.value !== target.week ||
+    candidate.weekday.value !== target.weekday ||
+    candidateSessionType !== target.sessionType ||
+    !exactExercises
+  ) {
+    throw new Error("Workout-log candidate does not match deterministic target");
+  }
+}
+
+function dateInTimeZone(timestamp: string, timeZone: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    throw new AutomaticWorkoutLogTargetError("program-target-invalid");
+  }
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    calendar: "iso8601",
+    numberingSystem: "latn",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const part = (type: "year" | "month" | "day") =>
+    parts.find((candidate) => candidate.type === type)?.value;
+  const year = part("year");
+  const month = part("month");
+  const day = part("day");
+  if (year === undefined || month === undefined || day === undefined) {
+    throw new AutomaticWorkoutLogTargetError("program-target-invalid");
+  }
+  return `${year}-${month}-${day}`;
+}
+
+function parseIsoDate(value: string): Date {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+    throw new AutomaticWorkoutLogTargetError("program-target-invalid");
+  }
+  return date;
+}
+
+function addIsoDays(start: string, offset: number): string {
+  return new Date(parseIsoDate(start).getTime() + offset * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
 }
 
 function setCandidateFieldValue(

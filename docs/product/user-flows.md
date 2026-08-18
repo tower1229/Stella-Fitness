@@ -24,14 +24,18 @@ Technical Readiness 与 Program Journey Status 分开报告；每次 prerequisit
 查看当前 Planned Session
 → 打印/使用原课程训练日志
 → 正常训练 + 纸笔填写 Actual
-→ 训练后拍照
-→ 结构化候选字段
+→ 训练后直接拍照发送（无需附加“记录训练”）
+→ 按用户时区锁定本周最近到期且未记录的 Planned Session
+→ 只抽取照片中该 session 的结构化候选字段
 → 仅确认关键歧义
 → 保存 Observation Record
 → 更新 Training Record View
+→ 返回本周派生完成数和下一 Planned Session
 ```
 
 训练过程中不要求逐组手机输入。
+
+照片不是固定训练日志时继续普通图片回复且不保存 Stella 数据；目标区块不可见、空白或不清晰时要求只补拍该区块。照片只填写了其他训练日或动作集合与当前 ProgramSpec 不一致时，系统不会改选可见区块，也不会推进进度。
 
 ## 3. 特殊训练日志
 

@@ -36,6 +36,13 @@ export type WorkoutLogCandidate =
   | OrdinaryWorkoutLogCandidate
   | SpecialSessionCandidate;
 
+export type WorkoutLogExtractionAbstention =
+  | { readonly layout: "not-workout-log"; readonly reason: "not-fixed-workbook" }
+  | {
+      readonly layout: "target-not-visible";
+      readonly reason: "missing" | "blank" | "illegible" | "mismatch";
+    };
+
 export type WorkoutLogFieldLocation =
   | {
       readonly kind: "top-level";
@@ -314,11 +321,45 @@ const MULTI_SESSION_PAGE_SCHEMA = {
   },
 } as const;
 
+const NOT_WORKOUT_LOG_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["layout", "reason"],
+  properties: {
+    layout: { const: "not-workout-log" },
+    reason: { const: "not-fixed-workbook" },
+  },
+} as const;
+
+const TARGET_NOT_VISIBLE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["layout", "reason"],
+  properties: {
+    layout: { const: "target-not-visible" },
+    reason: {
+      type: "string",
+      enum: ["missing", "blank", "illegible", "mismatch"],
+    },
+  },
+} as const;
+
 export const WORKOUT_LOG_CANDIDATE_SCHEMA = {
   oneOf: [
     ORDINARY_WORKOUT_LOG_CANDIDATE_SCHEMA,
     SPECIAL_SESSION_CANDIDATE_SCHEMA,
     MULTI_SESSION_PAGE_SCHEMA,
+    NOT_WORKOUT_LOG_SCHEMA,
+    TARGET_NOT_VISIBLE_SCHEMA,
+  ],
+} as const;
+
+export const TARGETED_WORKOUT_LOG_CANDIDATE_SCHEMA = {
+  oneOf: [
+    ORDINARY_WORKOUT_LOG_CANDIDATE_SCHEMA,
+    SPECIAL_SESSION_CANDIDATE_SCHEMA,
+    NOT_WORKOUT_LOG_SCHEMA,
+    TARGET_NOT_VISIBLE_SCHEMA,
   ],
 } as const;
 
@@ -470,6 +511,30 @@ export function parseWorkoutLogCandidate(value: unknown): WorkoutLogCandidate {
     exercises,
     uncertainFields: uncertainFields as OrdinaryWorkoutLogCandidate["uncertainFields"],
   };
+}
+
+export function parseWorkoutLogExtractionAbstention(
+  value: unknown,
+): WorkoutLogExtractionAbstention | undefined {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["layout", "reason"])) {
+    return undefined;
+  }
+  if (
+    value.layout === "not-workout-log" &&
+    value.reason === "not-fixed-workbook"
+  ) {
+    return { layout: value.layout, reason: value.reason };
+  }
+  if (
+    value.layout === "target-not-visible" &&
+    (value.reason === "missing" ||
+      value.reason === "blank" ||
+      value.reason === "illegible" ||
+      value.reason === "mismatch")
+  ) {
+    return { layout: value.layout, reason: value.reason };
+  }
+  return undefined;
 }
 
 function parseSpecialSessionCandidate(
