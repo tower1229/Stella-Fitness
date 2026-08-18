@@ -10,7 +10,8 @@
 → 逐项确认可拆卸哑铃、引体向上杆、打印材料和训练记录协议
 → 记录 baseline 体重
 → 分别确认高脚杯深蹲、哑铃卧推、哑铃硬拉初始 12RM
-→ 确认星期一 cycle start 并建立 Program State
+→ Plugin 询问从本周一还是下周一开始
+→ 用户用“本周开始”“下周开始”或明确的星期一日期确认并建立 Program State
 → ACTIVE
 ```
 
@@ -54,7 +55,7 @@ Recovery session 保持来源计划中的 session identity，但系统不评价�
 
 ## 5. 事实问答与打印
 
-绑定 conversation 支持 today/next/week Planned Session 事实问答；week 以查询日期所在的周一至周日为边界，逐日返回 ProgramSpec 中的课程，无课程日明确显示 `No Planned Session`。系统也支持直接获取固定 digest 的完整 12 周 XLSX。`/stella-print` 不要求 Program 已激活，不接受 today/week/phase 范围，也不在运行时生成 PDF；用户在工作簿中自行选择需要打印的页面。无法识别或超出 Program Facts 范围的问题由 Plugin 明确拒绝，不传给通用 Agent 诊断或调整计划。
+绑定 conversation 支持用自然语言查询今天、下次和本周的 Planned Session；本周以查询日期所在的周一至周日为边界，逐日返回 ProgramSpec 中的课程，无课程日明确显示“休息”。普通回复只展示简明中文，不暴露 Journey 状态码、Observation ID、schema 或内部确认命令；`/stella-status` 是保留技术细节的诊断例外。系统也支持直接获取固定 digest 的完整 12 周 XLSX。`/stella-print` 不要求 Program 已激活，不接受 today/week/phase 范围，也不在运行时生成 PDF；用户在工作簿中自行选择需要打印的页面。无法识别或超出 Program Facts 范围的问题由 Plugin 明确拒绝，不传给通用 Agent 诊断或调整计划。
 
 ## 6. 纠错与删除
 

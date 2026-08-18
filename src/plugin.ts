@@ -45,6 +45,29 @@ const INITIAL_12RM_ALIASES = {
   "dumbbell-bench-press": /(?:哑铃卧推|dumbbell[\s-]*bench[\s-]*press)/iu,
   "dumbbell-deadlift": /(?:哑铃硬拉|dumbbell[\s-]*deadlift)/iu,
 } satisfies Record<Initial12RMExerciseId, RegExp>;
+const DAY_NAMES: Readonly<Record<string, string>> = {
+  monday: "周一",
+  tuesday: "周二",
+  wednesday: "周三",
+  thursday: "周四",
+  friday: "周五",
+  saturday: "周六",
+  sunday: "周日",
+};
+const SESSION_TYPE_NAMES: Readonly<Record<string, string>> = {
+  "full-body": "全身训练",
+  torso: "躯干训练",
+  limbs: "四肢训练",
+  strength_test: "力量测试",
+  recovery: "恢复训练",
+  test: "力量测试",
+};
+const OTHER_EXERCISE_NAMES: Readonly<Record<string, string>> = {
+  "pull-up": "引体向上",
+  plank: "平板支撑",
+  "dumbbell-overhead-press": "哑铃肩推",
+  "dumbbell-lateral-raise": "哑铃侧平举",
+};
 
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "stella-fitness",
@@ -126,7 +149,7 @@ export function registerStellaFitnessPlugin(
       const prerequisiteId = context.args?.trim();
       if (prerequisiteId === undefined || prerequisiteId.length === 0) {
         return {
-          text: "Usage: /stella-prerequisite <adjustable-dumbbells|pull-up-bar|printed-workout-log|recording-protocol>",
+          text: "请直接告诉我你已经准备好的项目，例如“我已准备好可拆卸哑铃”。",
         };
       }
       const status = await stellaRuntime.acknowledgePrerequisite({
@@ -153,7 +176,7 @@ export function registerStellaFitnessPlugin(
       if (bindingReply !== undefined) return bindingReply;
       const text = context.args?.trim();
       if (text === undefined || text.length === 0) {
-        return { text: "Usage: /stella-weight <weight with kg or lb>" };
+        return { text: "请告诉我体重和单位，例如“体重 67 kg”。" };
       }
       const deletionId = parseDeletionCommand(text);
       if (deletionId !== undefined) {
@@ -167,7 +190,7 @@ export function registerStellaFitnessPlugin(
             ...(context.sessionKey === undefined ? {} : { runId: context.sessionKey }),
           },
         });
-        return { text: `baseline body weight deleted: ${observation.provenance.kind}\n${formatJourneyStatus(await stellaRuntime.programJourneyStatus())}` };
+        return { text: `已删除这条初始体重记录。\n${formatJourneyStatus(await stellaRuntime.programJourneyStatus())}` };
       }
       const correction = parseCorrectionCommand(text);
       const result = correction === undefined
@@ -211,7 +234,7 @@ export function registerStellaFitnessPlugin(
             ...(context.sessionKey === undefined ? {} : { runId: context.sessionKey }),
           },
         });
-        return { text: `Initial 12RM deleted: ${observation.exerciseId}\n${formatJourneyStatus(await stellaRuntime.programJourneyStatus())}` };
+        return { text: `已删除${exerciseName(observation.exerciseId)}的初始 12RM。\n${formatJourneyStatus(await stellaRuntime.programJourneyStatus())}` };
       }
       if (correction !== undefined) {
         const observation = await stellaRuntime.correctInitial12RM({
@@ -226,12 +249,12 @@ export function registerStellaFitnessPlugin(
             ...(context.sessionKey === undefined ? {} : { runId: context.sessionKey }),
           },
         });
-        return { text: `Initial 12RM corrected: ${observation.exerciseId} ${observation.result.value} kg\n${formatJourneyStatus(await stellaRuntime.programJourneyStatus())}` };
+        return { text: `已将${exerciseName(observation.exerciseId)}的初始 12RM 更正为 ${observation.result.value} kg。\n${formatJourneyStatus(await stellaRuntime.programJourneyStatus())}` };
       }
       const input = parseInitial12RMCommand(context.args);
       if (input === undefined) {
         return {
-          text: "Usage: /stella-12rm <goblet-squat|dumbbell-bench-press|dumbbell-deadlift> <kg> confirm",
+          text: "请直接告诉我动作和 12RM，例如“高脚杯深蹲 12RM 29 kg”。",
         };
       }
       const observation = await stellaRuntime.recordInitial12RM({
@@ -249,8 +272,7 @@ export function registerStellaFitnessPlugin(
       const status = await stellaRuntime.programJourneyStatus();
       return {
         text: [
-          `Initial 12RM recorded: ${observation.exerciseId} ${observation.result.value} kg`,
-          `observation: ${observation.id}`,
+          `已记录${exerciseName(observation.exerciseId)}初始 12RM：${observation.result.value} kg。`,
           formatJourneyStatus(status),
         ].join("\n"),
       };
@@ -452,7 +474,7 @@ export function registerStellaFitnessPlugin(
           return {
             handled: true,
             reply: {
-              text: "Please crop the photo to exactly one session block and send it again.",
+              text: "这张照片包含多次训练。请裁剪到只保留一次训练记录后重新发送。",
             },
           };
         }
@@ -488,7 +510,7 @@ export function registerStellaFitnessPlugin(
         replyText = formatWorkoutLogResult(result);
       } catch (error) {
         if (error instanceof MultiSessionWorkoutLogPageError) {
-          replyText = "Please crop the photo to exactly one session block and send it again.";
+          replyText = "这张照片包含多次训练。请裁剪到只保留一次训练记录后重新发送。";
         } else {
           throw error;
         }
@@ -519,6 +541,24 @@ export function registerStellaFitnessPlugin(
       if (normalizeStatusInput(text) === STATUS_INPUT) {
         return createStatusResponse(preflight());
       }
+      const activationIntent = parseNaturalActivationIntent(text, receivedAt.slice(0, 10));
+      if (activationIntent !== undefined) {
+        const status = await stellaRuntime.programJourneyStatus({
+          date: receivedAt.slice(0, 10),
+        });
+        if (status.state !== "READY_TO_ACTIVATE") {
+          return { text: formatJourneyStatus(status, receivedAt.slice(0, 10)) };
+        }
+        if (activationIntent.kind === "clarification") {
+          return { text: activationIntent.message };
+        }
+        if (activationIntent.kind === "defer") {
+          return { text: "好的，暂不开始。准备好后告诉我“本周开始”或“下周开始”即可。" };
+        }
+        return {
+          text: await activateProgramReply(stellaRuntime, activationIntent.cycleStart),
+        };
+      }
       const prerequisiteId = parseNaturalPrerequisiteAcknowledgement(
         text,
       );
@@ -532,7 +572,7 @@ export function registerStellaFitnessPlugin(
             ...source,
           },
         });
-        return { text: formatJourneyStatus(status) };
+        return { text: formatJourneyStatus(status, receivedAt.slice(0, 10)) };
       }
       const factQuery = parseNaturalProgramFactsQuery(
         text,
@@ -561,7 +601,7 @@ export function registerStellaFitnessPlugin(
           journeyStatus.state !== "INITIAL_12RM_REQUIRED" &&
           journeyStatus.state !== "READY_TO_ACTIVATE"
         ) {
-          return { text: formatJourneyStatus(journeyStatus) };
+          return { text: formatJourneyStatus(journeyStatus, receivedAt.slice(0, 10)) };
         }
         const result = await stellaRuntime.submitProgramJourneyText({
           text,
@@ -569,7 +609,11 @@ export function registerStellaFitnessPlugin(
           source,
         });
         return {
-          text: await formatProgramJourneyTextResult(stellaRuntime, result),
+          text: await formatProgramJourneyTextResult(
+            stellaRuntime,
+            result,
+            receivedAt.slice(0, 10),
+          ),
         };
       }
       if (!isBodyWeightInput(text)) {
@@ -597,7 +641,11 @@ export function registerStellaFitnessPlugin(
             source,
           });
           return {
-            text: await formatProgramJourneyTextResult(stellaRuntime, result),
+            text: await formatProgramJourneyTextResult(
+              stellaRuntime,
+              result,
+              receivedAt.slice(0, 10),
+            ),
           };
         }
         const result = await recordJourneyAwareBodyWeight(stellaRuntime, {
@@ -631,9 +679,7 @@ export function registerStellaFitnessPlugin(
       return await handleDedicatedTextInput(input);
     } catch (error) {
       api.logger?.error(`stella-fitness dedicated text routing failed: ${String(error)}`);
-      return {
-        text: "Stella Fitness could not process this Plugin-owned input. No success was recorded. Please retry.",
-      };
+      return { text: "这次没有处理成功，也没有保存任何新记录。请稍后重试。" };
     }
   };
 
@@ -874,7 +920,7 @@ async function handleBoundStellaCommand(
       });
       return {
         handled: true,
-        reply: { text: `baseline body weight deleted: ${observation.id}\n${formatJourneyStatus(await runtime.programJourneyStatus())}` },
+        reply: { text: `已删除这条初始体重记录。\n${formatJourneyStatus(await runtime.programJourneyStatus())}` },
       };
     }
     const correction = parseCorrectionCommand(command.args);
@@ -917,7 +963,7 @@ async function handleBoundStellaCommand(
       });
       return {
         handled: true,
-        reply: { text: `Initial 12RM deleted: ${observation.exerciseId}\n${formatJourneyStatus(await runtime.programJourneyStatus())}` },
+        reply: { text: `已删除${exerciseName(observation.exerciseId)}的初始 12RM。\n${formatJourneyStatus(await runtime.programJourneyStatus())}` },
       };
     }
     const correction = parse12RMCorrectionCommand(command.args);
@@ -936,7 +982,7 @@ async function handleBoundStellaCommand(
       });
       return {
         handled: true,
-        reply: { text: `Initial 12RM corrected: ${observation.exerciseId} ${observation.result.value} kg\n${formatJourneyStatus(await runtime.programJourneyStatus())}` },
+        reply: { text: `已将${exerciseName(observation.exerciseId)}的初始 12RM 更正为 ${observation.result.value} kg。\n${formatJourneyStatus(await runtime.programJourneyStatus())}` },
       };
     }
     const input = parseInitial12RMCommand(command.args);
@@ -944,7 +990,7 @@ async function handleBoundStellaCommand(
       return {
         handled: true,
         reply: {
-          text: "Usage: /stella-12rm <goblet-squat|dumbbell-bench-press|dumbbell-deadlift> <kg> confirm",
+          text: "请直接告诉我动作和 12RM，例如“高脚杯深蹲 12RM 29 kg”。",
         },
       };
     }
@@ -964,8 +1010,7 @@ async function handleBoundStellaCommand(
       handled: true,
       reply: {
         text: [
-          `Initial 12RM recorded: ${observation.exerciseId} ${observation.result.value} kg`,
-          `observation: ${observation.id}`,
+          `已记录${exerciseName(observation.exerciseId)}初始 12RM：${observation.result.value} kg。`,
           formatJourneyStatus(await runtime.programJourneyStatus()),
         ].join("\n"),
       },
@@ -1070,19 +1115,19 @@ function parseWorkoutConfirmationCommand(args: string | undefined): {
   const match = /^\s*([0-9a-f-]{36})\s+(\{.*\})\s*$/isu.exec(args ?? "");
   if (match === null) {
     throw new Error(
-      'Usage: /stella-confirm <confirmation-id> {"field.path": value}',
+      "确认信息格式不正确，请直接补充说明或重新发送清晰的训练日志。",
     );
   }
   const values: unknown = JSON.parse(match[2]!);
   const record = asRecord(values);
   if (record === undefined) {
-    throw new Error("Workout-log confirmation values must be a JSON object");
+    throw new Error("确认内容无法识别，请直接补充说明或重新发送清晰的训练日志。");
   }
   const canonicalValues: Record<string, unknown> = {};
   for (const [path, value] of Object.entries(record)) {
     const canonicalPath = canonicalConfirmationPath(path);
     if (Object.hasOwn(canonicalValues, canonicalPath)) {
-      throw new Error(`Duplicate workout-log confirmation field: ${canonicalPath}`);
+      throw new Error(`确认内容中有重复字段：${canonicalPath}`);
     }
     canonicalValues[canonicalPath] = value;
   }
@@ -1093,25 +1138,13 @@ function canonicalConfirmationPath(path: string): string {
   return path.replace(/^(exercises|testResults)\.(\d+)(?=\.)/u, "$1[$2]");
 }
 
-function commandConfirmationPath(path: string): string {
-  return path.replace(/^(exercises|testResults)\[(\d+)\](?=\.)/u, "$1.$2");
-}
-
 function formatWorkoutLogResult(
   result: Awaited<ReturnType<StellaFitnessRuntime["ingestWorkoutLog"]>>,
 ): string {
   if (result.status === "recorded") {
     return formatWorkoutLogRecording(result);
   }
-  return [
-    `Workout log needs confirmation: ${result.confirmationId}`,
-    ...result.fields.map(({ path, kind, candidates }) =>
-      `- ${commandConfirmationPath(path)} (${kind})${
-        candidates === undefined ? "" : `: ${candidates.join(" / ")}`
-      }`,
-    ),
-    `Run /stella-confirm ${result.confirmationId} with one JSON value for each listed path.`,
-  ].join("\n");
+  return "这张训练日志有内容无法确定，因此尚未保存。请补充说明或重新发送一张更清晰、只包含一次训练的照片。";
 }
 
 function formatWorkoutLogRecording(
@@ -1121,15 +1154,9 @@ function formatWorkoutLogRecording(
 ): string {
   const { observation } = result;
   if (observation.provenance.kind === "workout-log-correction") {
-    return [
-      `Workout corrected: stage ${observation.stage.value}, week ${observation.week.value}, ${observation.weekday.value}, ${observation.sessionType.value}`,
-      `correction: ${observation.id} replaces: ${observation.provenance.replacesObservationId}`,
-    ].join("\n");
+    return `已更正训练记录：第 ${observation.stage.value} 阶段第 ${observation.week.value} 周，${dayName(observation.weekday.value)}，${sessionTypeName(observation.sessionType.value)}。`;
   }
-  return [
-    `Workout recorded: stage ${observation.stage.value}, week ${observation.week.value}, ${observation.weekday.value}, ${observation.sessionType.value}`,
-    `observation: ${observation.id}`,
-  ].join("\n");
+  return `已记录训练：第 ${observation.stage.value} 阶段第 ${observation.week.value} 周，${dayName(observation.weekday.value)}，${sessionTypeName(observation.sessionType.value)}。`;
 }
 
 function workoutLogCorrectionId(
@@ -1159,6 +1186,55 @@ function isInitial12RMText(input: string): boolean {
     /高脚杯深蹲|goblet[ -]squat|哑铃卧推|dumbbell[ -]bench[ -]press|哑铃硬拉|dumbbell[ -]deadlift/iu.test(input);
 }
 
+type NaturalActivationIntent =
+  | { readonly kind: "activate"; readonly cycleStart: string }
+  | { readonly kind: "clarification"; readonly message: string }
+  | { readonly kind: "defer" };
+
+function parseNaturalActivationIntent(
+  text: string,
+  referenceDate: string,
+): NaturalActivationIntent | undefined {
+  if (/^\s*(?:暂不开始|先不开始|以后再说|稍后再说)[。.!]?\s*$/u.test(text)) {
+    return { kind: "defer" };
+  }
+  if (/^\s*(?:开始|确认开始|现在开始)[。.!]?\s*$/u.test(text)) {
+    return {
+      kind: "clarification",
+      message: "请回复“本周开始”或“下周开始”，我不会替你猜开始日期。",
+    };
+  }
+  if (/^\s*(?:从)?本周(?:一)?开始[。.!]?\s*$/u.test(text)) {
+    return { kind: "activate", cycleStart: mondayFor(referenceDate, 0) };
+  }
+  if (/^\s*(?:从)?下周(?:一)?开始[。.!]?\s*$/u.test(text)) {
+    return { kind: "activate", cycleStart: mondayFor(referenceDate, 7) };
+  }
+  const explicitDate = /^\s*(?:从)?(\d{4}-\d{2}-\d{2})(?:（?周一）?)?(?:正式)?开始[。.!]?\s*$/u.exec(text)?.[1];
+  if (explicitDate === undefined) return undefined;
+  if (!isMonday(explicitDate)) {
+    return {
+      kind: "clarification",
+      message: `${explicitDate} 不是周一。请选择一个周一作为正式开始日期。`,
+    };
+  }
+  return { kind: "activate", cycleStart: explicitDate };
+}
+
+function mondayFor(referenceDate: string, offsetDays: 0 | 7): string {
+  const date = new Date(`${referenceDate}T00:00:00.000Z`);
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() - (day === 0 ? 6 : day - 1) + offsetDays);
+  return date.toISOString().slice(0, 10);
+}
+
+function isMonday(date: string): boolean {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === date &&
+    parsed.getUTCDay() === 1;
+}
+
 function isUnavailableJourneyConfirmation(error: unknown): boolean {
   return error instanceof Error &&
     error.message === "Program Journey confirmation is unavailable";
@@ -1167,34 +1243,30 @@ function isUnavailableJourneyConfirmation(error: unknown): boolean {
 async function formatProgramJourneyTextResult(
   runtime: StellaFitnessRuntime,
   result: Awaited<ReturnType<StellaFitnessRuntime["submitProgramJourneyText"]>>,
+  referenceDate?: string,
 ): Promise<string> {
   if (result.kind === "course-start-12rm-batch") {
     if (result.status === "clarification") {
       return result.fields.map(({ question }) => question).join("\n");
     }
     return [
-      ...result.observations.map((observation) =>
-        `Initial 12RM recorded: ${observation.exerciseId} ${observation.result.value} kg\nobservation: ${observation.id}`
-      ),
-      formatJourneyStatus(await runtime.programJourneyStatus()),
+      `已记录初始 12RM：${result.observations.map((observation) =>
+        `${exerciseName(observation.exerciseId)} ${observation.result.value} kg`
+      ).join("、")}。`,
+      formatJourneyStatus(await runtime.programJourneyStatus(), referenceDate),
     ].join("\n");
   }
   if (result.status === "confirmation") {
-    return [
-      `Program Journey needs confirmation: ${result.confirmationId}`,
-      ...result.fields.map(({ path, question }) => `- ${path}: ${question}`),
-      `Run /stella-confirm ${result.confirmationId} with one JSON value for each listed path.`,
-    ].join("\n");
+    return `这条信息还不够明确，没有保存。${result.fields.map(({ question }) => question).join(" ")} 请用一句完整、明确的话重新发送。`;
   }
   const fact = result.kind === "baseline-body-weight"
-    ? `baseline body weight recorded: ${result.observation.value.amount} ${result.observation.value.unit}`
+    ? `已记录初始体重：${result.observation.value.amount} ${result.observation.value.unit}。`
     : result.kind === "checkpoint-body-weight"
-      ? `Week ${result.checkpointWeek} body weight recorded: ${result.observation.value.amount} ${result.observation.value.unit}`
-      : `Initial 12RM recorded: ${result.observation.exerciseId} ${result.observation.result.value} kg`;
+      ? `已记录第 ${result.checkpointWeek} 周体重：${result.observation.value.amount} ${result.observation.value.unit}。`
+      : `已记录${exerciseName(result.observation.exerciseId)}初始 12RM：${result.observation.result.value} kg。`;
   return [
     fact,
-    `observation: ${result.observation.id}`,
-    formatJourneyStatus(await runtime.programJourneyStatus()),
+    formatJourneyStatus(await runtime.programJourneyStatus(), referenceDate),
   ].join("\n");
 }
 
@@ -1210,16 +1282,7 @@ function formatBodyWeightRecording(
   },
 ): string {
   const { observation, view } = result;
-  return [
-    `Body weight recorded: ${observation.value.amount} ${observation.value.unit}`,
-    `occurred-at: ${observation.occurredAt}`,
-    `observation: ${observation.id}`,
-    "timeline:",
-    ...view.points.map(
-      (point) =>
-        `- ${point.occurredAt} ${point.amount} ${point.unit}`,
-    ),
-  ].join("\n");
+  return `已记录体重：${observation.value.amount} ${observation.value.unit}（${observation.occurredAt.slice(0, 10)}）。目前共有 ${view.points.length} 条体重记录。`;
 }
 
 function formatBodyWeightCorrection(
@@ -1231,14 +1294,7 @@ function formatBodyWeightCorrection(
   if (observation.provenance.kind !== "body-weight-correction") {
     throw new Error("Body-weight correction is missing correction provenance");
   }
-  return [
-    `Body weight corrected: ${observation.value.amount} ${observation.value.unit}`,
-    `correction: ${observation.id} replaces: ${observation.provenance.replacesObservationId}`,
-    "timeline:",
-    ...view.points.map(
-      (point) => `- ${point.occurredAt} ${point.amount} ${point.unit}`,
-    ),
-  ].join("\n");
+  return `已将体重记录更正为 ${observation.value.amount} ${observation.value.unit}。目前共有 ${view.points.length} 条有效体重记录。`;
 }
 
 function registerStatusCli(
@@ -1394,19 +1450,44 @@ function resolveExtractionConfig(
 
 function formatJourneyStatus(
   status: Awaited<ReturnType<StellaFitnessRuntime["programJourneyStatus"]>>,
+  referenceDate = new Date().toISOString().slice(0, 10),
 ): string {
-  return [
-    `Built-in Program: ${status.program.id}@${status.program.version}`,
-    `journey: ${status.state}`,
-    ...(status.missingPrerequisiteIds.length === 0
-      ? []
-      : [`missing-prerequisites: ${status.missingPrerequisiteIds.join(", ")}`]),
-    ...(status.missingInitial12RMExerciseIds.length === 0
-      ? []
-      : [`missing-initial-12rm: ${status.missingInitial12RMExerciseIds.join(", ")}`]),
-    ...status.errors.map(({ file, message }) => `error: ${file} - ${message}`),
-    `next: ${status.nextStep.code} - ${status.nextStep.prompt}`,
-  ].join("\n");
+  if (status.errors.length > 0) {
+    return "读取训练记录时遇到问题，请稍后重试。你的已有记录没有被修改。";
+  }
+  if (status.state === "PREREQUISITES_REQUIRED") {
+    return `开始前还需要确认：${prerequisiteName(status.missingPrerequisiteIds[0]!)}。确认准备好后直接告诉我。`;
+  }
+  if (status.state === "BASELINE_WEIGHT_REQUIRED") {
+    return "准备事项已确认。请告诉我你的初始体重，例如“体重 67 kg”。";
+  }
+  if (status.state === "INITIAL_12RM_REQUIRED") {
+    return `请记录${status.missingInitial12RMExerciseIds.map(exerciseName).join("、")}的初始 12RM，例如“高脚杯深蹲 12RM 29 kg”。`;
+  }
+  if (status.state === "READY_TO_ACTIVATE") {
+    return `初始化已完成。你想从本周一（${mondayFor(referenceDate, 0)}）还是下周一（${mondayFor(referenceDate, 7)}）开始？`;
+  }
+  if (status.state === "PHASE_CHECKPOINT_REQUIRED") {
+    return `继续查看下一阶段前，请记录第 ${status.requiredCheckpointWeek} 周的体重，例如“体重 69 kg”。`;
+  }
+  return "训练计划已经开始。你可以问我今天、下次或本周的训练安排。";
+}
+
+function prerequisiteName(id: RequiredPrerequisiteId): string {
+  return {
+    "adjustable-dumbbells": "已准备好可拆卸哑铃",
+    "pull-up-bar": "已准备好引体向上杆",
+    "printed-workout-log": "已打印训练日志",
+    "recording-protocol": "已了解训练记录方式",
+  }[id];
+}
+
+function exerciseName(id: Initial12RMExerciseId): string {
+  return {
+    "goblet-squat": "高脚杯深蹲",
+    "dumbbell-bench-press": "哑铃卧推",
+    "dumbbell-deadlift": "哑铃硬拉",
+  }[id];
 }
 
 type AvailableProgramFactsQuery = Exclude<
@@ -1423,7 +1504,7 @@ async function formatAvailableProgramFacts(
   );
   return status.state === "ACTIVE"
     ? formatProgramFacts(await runtime.programFacts(query))
-    : formatJourneyStatus(status);
+    : formatJourneyStatus(status, "date" in query ? query.date : undefined);
 }
 
 function requireDedicatedAgent(
@@ -1434,7 +1515,7 @@ function requireDedicatedAgent(
     return undefined;
   }
   return {
-    text: "agent-scope: unavailable (Use Stella Fitness from its configured dedicated agent.)",
+    text: "请在 Stella Fitness 专属对话中使用这项功能。",
   };
 }
 
@@ -1628,31 +1709,33 @@ function isQuestion(text: string): boolean {
 }
 
 function factsUsage(): string {
-  return "Usage: /stella-facts <today|next|week> [YYYY-MM-DD] | weight | symbol <exercise-id> <A|N>";
+  return "你可以直接问“今天练什么”“下次练什么”“本周训练计划”或“体重变化”。";
 }
 
 function formatWeightFacts(
   view: Awaited<ReturnType<StellaFitnessRuntime["weightFacts"]>>,
 ): string {
-  const lines = ["Weight Facts:"];
-  lines.push(...view.errors.map(({ file, message }) => `error: ${file} - ${message}`));
+  if (view.errors.length > 0) {
+    return "读取体重记录时遇到问题，请稍后重试。你的已有记录没有被修改。";
+  }
+  const lines = ["体重记录："];
   lines.push(view.baseline === undefined
-    ? "baseline: insufficient-data"
-    : `baseline: ${view.baseline.amountKg} kg (${view.baseline.observationId})`);
+    ? "- 初始体重：尚未记录"
+    : `- 初始体重：${view.baseline.amountKg} kg`);
   lines.push(view.current === undefined
-    ? "current: insufficient-data"
-    : `current: ${view.current.amountKg} kg at ${view.current.occurredAt} (${view.current.observationId})`);
+    ? "- 当前体重：尚未记录"
+    : `- 当前体重：${view.current.amountKg} kg（${view.current.occurredAt.slice(0, 10)}）`);
   for (const week of ["4", "8", "12"] as const) {
     const checkpoint = view.checkpoints[week];
     if (checkpoint === undefined) {
-      lines.push(`week-${week}: insufficient-data`);
+      lines.push(`- 第 ${week} 周：尚未记录`);
       continue;
     }
     lines.push([
-      `week-${week}: ${checkpoint.amountKg} kg (${checkpoint.observationId})`,
-      `from-baseline=${formatWeightChange(checkpoint.fromBaseline)}`,
-      `from-previous=${formatWeightChange(checkpoint.fromPrevious)}`,
-    ].join(", "));
+      `- 第 ${week} 周：${checkpoint.amountKg} kg`,
+      `较初始体重${formatWeightChange(checkpoint.fromBaseline)}`,
+      `较上次记录${formatWeightChange(checkpoint.fromPrevious)}`,
+    ].join("；"));
   }
   return lines.join("\n");
 }
@@ -1663,35 +1746,42 @@ function formatWeightChange(change: {
   readonly direction: string;
 }): string {
   if (change.changeKg === undefined || change.changePercent === undefined) {
-    return change.direction;
+    return "暂无足够数据";
   }
-  return `${change.changeKg} kg/${change.changePercent}%/${change.direction}`;
+  const prefix = change.changeKg > 0 ? "增加" : change.changeKg < 0 ? "减少" : "变化";
+  return `${prefix} ${Math.abs(change.changeKg)} kg（${Math.abs(change.changePercent)}%）`;
 }
 
 function formatProgramFacts(
   result: Awaited<ReturnType<StellaFitnessRuntime["programFacts"]>>,
 ): string {
-  if (result.kind === "unsupported") return result.scope;
-  if (result.kind === "no-session") return `No ${result.relation} Planned Session.`;
+  if (result.kind === "unsupported") {
+    return "我只能记录训练事实并按原计划查询安排，不能评价表现、诊断问题或调整训练和饮食。";
+  }
+  if (result.kind === "no-session") {
+    return result.relation === "today" ? "今天没有安排训练。" : "接下来没有安排训练。";
+  }
   if (result.kind === "planned-week-facts") {
     return [
-      `week Planned Sessions: ${result.startDate} to ${result.endDate}`,
+      `本周训练安排（${result.startDate} 至 ${result.endDate}）：`,
       ...result.days.flatMap(({ date, day, session }) =>
         session === null
-          ? [`${date} ${day}: No Planned Session.`]
-          : formatPlannedSession(session, `${date} ${day}`)
+          ? [`${date}（${dayName(day)}）：休息。`]
+          : formatPlannedSession(session, `${date}（${dayName(day)}）`)
       ),
     ].join("\n");
   }
   if (result.kind === "symbol-fact") {
-    return `${result.exerciseId} ${result.symbol}: ${result.value} ${result.unit}`;
+    return `${exerciseDisplayName(result.exerciseId)}当前 ${result.symbol} 重量是 ${result.value} ${result.unit}。`;
   }
   if (result.kind === "symbol-binding-pending") {
-    return `${result.exerciseId} ${result.symbol}: binding pending. next: ${result.nextStep}`;
+    return `${exerciseDisplayName(result.exerciseId)}的 ${result.symbol} 重量还没有确定，需要先完成对应的力量测试记录。`;
   }
   return formatPlannedSession(
     result.session,
-    `${result.relation} Planned Session: ${result.session.date}`,
+    result.relation === "today"
+      ? `今天（${result.session.date}）的训练：`
+      : `下次训练（${result.session.date}）：`,
   ).join("\n");
 }
 
@@ -1704,31 +1794,71 @@ function formatPlannedSession(
 ): string[] {
   return [
     heading,
-    `stage: ${session.cycle.phase}, week: ${session.cycle.week}, day: ${session.day}, type: ${session.type}, recovery: ${session.recovery}`,
+    `第 ${session.cycle.week} 周，${session.recovery ? "恢复训练" : sessionTypeName(session.type)}。`,
     ...session.exercises.map((exercise) =>
-      `- ${exercise.displayName ?? exercise.exerciseId}: prescription: ${JSON.stringify(exercise.prescription)}, rest: ${formatRest(exercise)}${
+      `- ${exercise.displayName ?? exerciseDisplayName(exercise.exerciseId)}：${formatPrescription(exercise.prescription)}；休息${formatRest(exercise)}${
         exercise.resolvedLoad === undefined
           ? exercise.unresolvedLoad === undefined
             ? ""
-            : `, ${exercise.unresolvedLoad.symbol}=binding pending, next: ${exercise.unresolvedLoad.nextStep}`
-          : `, ${exercise.resolvedLoad.symbol}=${exercise.resolvedLoad.value} ${exercise.resolvedLoad.unit}`
+            : `；${exercise.unresolvedLoad.symbol} 重量待力量测试后确定`
+          : `；${exercise.resolvedLoad.symbol} 重量 ${exercise.resolvedLoad.value} ${exercise.resolvedLoad.unit}`
       }`,
     ),
     ...session.tests.map((test) =>
-      `- ${test.exerciseId}: test: ${test.test}, result-binding: ${test.resultBinding}`
+      `- ${exerciseDisplayName(test.exerciseId)}：${test.test} 测试，结果用于后续重量。`
     ),
   ];
+}
+
+function formatPrescription(prescription: {
+  readonly type: string;
+  readonly sets?: number;
+  readonly reps?: number;
+  readonly minReps?: number;
+  readonly maxReps?: number;
+  readonly seconds?: number;
+}): string {
+  if (prescription.type === "sets_reps") {
+    return `${prescription.sets} 组 × ${prescription.reps} 次`;
+  }
+  if (prescription.type === "rep_range") {
+    return `${prescription.sets} 组 × ${prescription.minReps}–${prescription.maxReps} 次`;
+  }
+  if (prescription.type === "total_reps") return `累计 ${prescription.reps} 次`;
+  if (prescription.type === "duration") {
+    return `${prescription.sets} 组 × ${prescription.seconds} 秒`;
+  }
+  if (prescription.type === "to_failure") {
+    return `${prescription.sets} 组，每组做到力竭`;
+  }
+  return "按原计划完成";
 }
 
 function formatRest(exercise: {
   readonly rest?: "self_selected";
   readonly restSeconds?: readonly number[];
 }): string {
-  if (exercise.rest === "self_selected") return "self-selected";
+  if (exercise.rest === "self_selected") return "时间自行决定";
   if (exercise.restSeconds !== undefined) {
-    return `${exercise.restSeconds.join("-")} seconds`;
+    const [minimum, maximum] = exercise.restSeconds;
+    return minimum === maximum ? `${minimum} 秒` : `${minimum}–${maximum} 秒`;
   }
-  return "not specified by source program";
+  return "时间原计划未注明";
+}
+
+function dayName(day: string): string {
+  return DAY_NAMES[day] ?? day;
+}
+
+function sessionTypeName(type: string): string {
+  return SESSION_TYPE_NAMES[type] ?? type;
+}
+
+function exerciseDisplayName(exerciseId: string): string {
+  if (INITIAL_12RM_EXERCISES.includes(exerciseId as Initial12RMExerciseId)) {
+    return exerciseName(exerciseId as Initial12RMExerciseId);
+  }
+  return OTHER_EXERCISE_NAMES[exerciseId] ?? exerciseId;
 }
 
 async function activateProgramReply(
@@ -1741,9 +1871,7 @@ async function activateProgramReply(
     date: state.cycle.startDate,
   });
   return [
-    `Program State activated: ${state.id}`,
-    `program: ${state.program.id}@${state.program.version}`,
-    `cycle-start: ${state.cycle.startDate}`,
+    `训练计划已确认，将从 ${state.cycle.startDate}（周一）开始。`,
     formatProgramFacts(firstSession),
   ].join("\n");
 }
@@ -1776,7 +1904,9 @@ function formatJourneyBodyWeight(
 ): string {
   if (result.status === "clarification") return result.question;
   if ("role" in result) {
-    return `${result.role} body weight recorded: ${result.observation.value.amount} ${result.observation.value.unit}\nobservation: ${result.observation.id}`;
+    return result.role === "baseline"
+      ? `已记录初始体重：${result.observation.value.amount} ${result.observation.value.unit}。`
+      : `已记录阶段体重：${result.observation.value.amount} ${result.observation.value.unit}。`;
   }
   return formatBodyWeightRecording(result);
 }

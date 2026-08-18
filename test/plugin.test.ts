@@ -104,7 +104,7 @@ describe("Plugin registration", () => {
     )).resolves.toMatchObject({
       handled: true,
       reply: {
-        text: expect.stringContaining("journey: PREREQUISITES_REQUIRED"),
+        text: expect.stringContaining("已准备好可拆卸哑铃"),
       },
     });
     expect(cliRegistrations).toEqual([
@@ -154,7 +154,7 @@ describe("Plugin registration", () => {
         sessionKey: "agent:fitness:webchat:test-start",
       }),
     ).resolves.toMatchObject({
-      text: expect.stringMatching(/zhuoshu-12-week@0\.2\.0.+PREREQUISITES_REQUIRED/su),
+      text: expect.stringContaining("已准备好可拆卸哑铃"),
     });
 
     const setup = JSON.parse(
@@ -199,7 +199,7 @@ describe("Plugin registration", () => {
       isAuthorizedSender: true,
       sessionKey: "agent:main:webchat:wrong-agent",
     })).resolves.toEqual({
-      text: "agent-scope: unavailable (Use Stella Fitness from its configured dedicated agent.)",
+      text: "请在 Stella Fitness 专属对话中使用这项功能。",
     });
     expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
   });
@@ -335,9 +335,7 @@ describe("Plugin registration", () => {
     expect(handled).toMatchObject({
       handled: true,
       reply: {
-        text: expect.stringMatching(
-          /^Body weight recorded: 68\.4 kg\noccurred-at: .+\nobservation: [0-9a-f-]{36}\ntimeline:\n- .+ 68\.4 kg$/,
-        ),
+        text: "已记录体重：68.4 kg（2026-08-17）。目前共有 1 条体重记录。",
       },
     });
     expect(JSON.stringify(handled)).not.toMatch(
@@ -392,9 +390,7 @@ describe("Plugin registration", () => {
     expect(handled).toMatchObject({
       handled: true,
       reply: {
-        text: expect.stringMatching(
-          /^Body weight corrected: 67\.9 kg\n.+\ntimeline:\n- 2026-08-08T23:00:00\.000Z 67\.9 kg$/,
-        ),
+        text: "已将体重记录更正为 67.9 kg。目前共有 1 条有效体重记录。",
       },
     });
     const observations = readdirSync(directory).map((file) =>
@@ -439,7 +435,7 @@ describe("Plugin registration", () => {
     ).resolves.toMatchObject({
       outcome: "block",
       reason: "stella-dedicated-input-is-plugin-owned",
-      message: expect.stringContaining("does not diagnose, advise or adjust"),
+      message: expect.stringContaining("不能评价表现、诊断问题或调整训练和饮食"),
     });
     expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([
       "program",
@@ -476,7 +472,7 @@ describe("Plugin registration", () => {
       { sessionKey: "agent:fitness:webchat:dedicated-agent" },
     )).resolves.toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("pull-up-bar") },
+      reply: { text: expect.stringContaining("已准备好引体向上杆") },
     });
   });
 
@@ -510,7 +506,7 @@ describe("Plugin registration", () => {
       { channelId: "515151" },
     )).resolves.toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("pull-up-bar") },
+      reply: { text: expect.stringContaining("已准备好引体向上杆") },
     });
   });
 
@@ -537,7 +533,7 @@ describe("Plugin registration", () => {
       },
     )).resolves.toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("pull-up-bar") },
+      reply: { text: expect.stringContaining("已准备好引体向上杆") },
     });
   });
 
@@ -565,7 +561,7 @@ describe("Plugin registration", () => {
     )).resolves.toMatchObject({
       outcome: "block",
       reason: "stella-dedicated-input-is-plugin-owned",
-      message: expect.stringContaining("pull-up-bar"),
+      message: expect.stringContaining("已准备好引体向上杆"),
     });
   });
 
@@ -604,7 +600,14 @@ describe("Plugin registration", () => {
       ].join("\n"),
     }, { ...context, runId: "run-gate-batch-12rm" })).resolves.toMatchObject({
       outcome: "block",
-      message: expect.stringContaining("journey: READY_TO_ACTIVATE"),
+      message: expect.stringContaining("初始化已完成"),
+    });
+    await expect(run(
+      { prompt: "本周开始" },
+      { ...context, runId: "run-gate-natural-activation" },
+    )).resolves.toMatchObject({
+      outcome: "block",
+      message: expect.stringContaining("训练计划已确认"),
     });
     expect(readdirSync(join(
       directories.personalDataDirectory,
@@ -670,9 +673,7 @@ describe("Plugin registration", () => {
     )).resolves.toMatchObject({
       handled: true,
       reply: {
-        text: expect.stringMatching(
-          /^Program Journey needs confirmation: [0-9a-f-]{36}\n- unit: 请确认体重单位：kg 还是 lb？/u,
-        ),
+        text: expect.stringContaining("请确认体重单位：kg 还是 lb"),
       },
     });
   });
@@ -702,8 +703,7 @@ describe("Plugin registration", () => {
     ).resolves.toEqual({
       handled: true,
       reply: {
-        text:
-          "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+        text: "我只能记录训练事实并按原计划查询安排，不能评价表现、诊断问题或调整训练和饮食。",
       },
     });
     await expect(
@@ -719,7 +719,7 @@ describe("Plugin registration", () => {
       handled: true,
       reply: {
         text:
-          "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+          "我只能记录训练事实并按原计划查询安排，不能评价表现、诊断问题或调整训练和饮食。",
       },
     });
     await expect(
@@ -747,7 +747,7 @@ describe("Plugin registration", () => {
         handled: true,
         reply: {
           text:
-            "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+            "我只能记录训练事实并按原计划查询安排，不能评价表现、诊断问题或调整训练和饮食。",
         },
       });
     }
@@ -764,7 +764,7 @@ describe("Plugin registration", () => {
       handled: true,
       reply: {
         text:
-          "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+          "我只能记录训练事实并按原计划查询安排，不能评价表现、诊断问题或调整训练和饮食。",
       },
     });
     await expect(
@@ -780,7 +780,7 @@ describe("Plugin registration", () => {
       handled: true,
       reply: {
         text:
-          "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+          "我只能记录训练事实并按原计划查询安排，不能评价表现、诊断问题或调整训练和饮食。",
       },
     });
     await expect(
@@ -794,7 +794,7 @@ describe("Plugin registration", () => {
       ),
     ).resolves.toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("pull-up-bar") },
+      reply: { text: expect.stringContaining("已准备好引体向上杆") },
     });
   });
 
@@ -817,7 +817,7 @@ describe("Plugin registration", () => {
     )).resolves.toEqual({
       handled: true,
       reply: {
-        text: "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+        text: "我只能记录训练事实并按原计划查询安排，不能评价表现、诊断问题或调整训练和饮食。",
       },
     });
   });
@@ -921,7 +921,7 @@ describe("Plugin registration", () => {
     }
     expect(result).toMatchObject({
       reply: {
-        text: expect.stringContaining("journey: READY_TO_ACTIVATE"),
+        text: expect.stringContaining("初始化已完成"),
       },
     });
     const specialSessions = readdirSync(join(
@@ -955,13 +955,130 @@ describe("Plugin registration", () => {
     }, bound);
     expect(deleted).toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("journey: INITIAL_12RM_REQUIRED") },
+      reply: { text: expect.stringContaining("哑铃硬拉") },
     });
     expect(readdirSync(join(
       directories.personalDataDirectory,
       "observations",
       "special-session",
     ))).toHaveLength(4);
+  });
+
+  it("activates from a natural-language week choice and keeps ordinary replies human-readable", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    registerStellaFitnessPlugin(
+      compatibleApi({
+        commands: [],
+        hooks,
+        cliRegistrations: [],
+        pluginConfig: directories,
+        openclawConfig: permittedOpenClawConfig(),
+      }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const inbound = hooks.get("inbound_claim")!;
+    const bound = { sessionKey: "agent:fitness:webchat:natural-activation" };
+    const messages = [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+      "体重 67 kg",
+      [
+        "高脚杯深蹲 12RM 29 kg",
+        "哑铃卧推 12RM 29 kg",
+        "哑铃硬拉 12RM 29 kg",
+      ].join("\n"),
+    ];
+    let ready: { reply?: { text?: string } } | undefined;
+    for (const [index, content] of messages.entries()) {
+      ready = await inbound({
+        content,
+        channel: "webchat",
+        messageId: `natural-activation-${index}`,
+        timestamp: `2026-08-17T0${index}:00:00.000Z`,
+        isGroup: false,
+      }, bound) as typeof ready;
+    }
+
+    expect(ready?.reply?.text).toContain(
+      "初始化已完成。你想从本周一（2026-08-17）还是下周一（2026-08-24）开始？",
+    );
+    expect(ready?.reply?.text).not.toMatch(
+      /READY_TO_ACTIVATE|observation:|schema|CONFIRM_CYCLE_START|\{.*\}/su,
+    );
+
+    await expect(inbound({
+      content: "开始",
+      channel: "webchat",
+      messageId: "natural-activation-ambiguous",
+      timestamp: "2026-08-17T06:00:00.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("请回复“本周开始”或“下周开始”") },
+    });
+    expect(existsSync(join(
+      directories.personalDataDirectory,
+      "program",
+      "state.json",
+    ))).toBe(false);
+
+    await expect(inbound({
+      content: "暂不开始",
+      channel: "webchat",
+      messageId: "natural-activation-defer",
+      timestamp: "2026-08-17T06:00:30.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("暂不开始") },
+    });
+    await expect(inbound({
+      content: "从2026-08-18开始",
+      channel: "webchat",
+      messageId: "natural-activation-not-monday",
+      timestamp: "2026-08-17T06:00:40.000Z",
+      isGroup: false,
+    }, bound)).resolves.toMatchObject({
+      handled: true,
+      reply: { text: "2026-08-18 不是周一。请选择一个周一作为正式开始日期。" },
+    });
+
+    await expect(hooks.get("before_agent_reply")?.(
+      { cleanedBody: "下周开始" },
+      { ...bound, messageProvider: "webchat", runId: "natural-activation-next-week" },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /训练计划已确认，将从 2026-08-24（周一）开始。.+第 1 周/su,
+        ),
+      },
+    });
+    const state = JSON.parse(readFileSync(
+      join(directories.personalDataDirectory, "program", "state.json"),
+      "utf8",
+    ));
+    expect(state.cycle.startDate).toBe("2026-08-24");
+
+    const restartedHooks = new Map<string, (...args: unknown[]) => unknown>();
+    registerStellaFitnessPlugin(
+      compatibleApi({
+        commands: [],
+        hooks: restartedHooks,
+        cliRegistrations: [],
+        pluginConfig: directories,
+        openclawConfig: permittedOpenClawConfig(),
+      }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    await expect(restartedHooks.get("before_agent_reply")?.(
+      { cleanedBody: "下周开始" },
+      { ...bound, messageProvider: "webchat" },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("训练计划已经开始") },
+    });
   });
 
   it("records a clear three-exercise 12RM message through the WebChat fallback hook", async () => {
@@ -1003,7 +1120,7 @@ describe("Plugin registration", () => {
       handled: true,
       reply: {
         text: expect.stringMatching(
-          /Initial 12RM recorded:.+goblet-squat 29 kg.+dumbbell-bench-press 29 kg.+dumbbell-deadlift 29 kg.+journey: READY_TO_ACTIVATE/su,
+          /已记录初始 12RM：高脚杯深蹲 29 kg、哑铃卧推 29 kg、哑铃硬拉 29 kg。.+初始化已完成/su,
         ),
       },
     });
@@ -1073,7 +1190,7 @@ describe("Plugin registration", () => {
       context,
     )).resolves.toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("journey: READY_TO_ACTIVATE") },
+      reply: { text: expect.stringContaining("初始化已完成") },
     });
     expect(readdirSync(directory).sort()).toEqual(originalFiles);
 
@@ -1082,7 +1199,7 @@ describe("Plugin registration", () => {
       context,
     )).resolves.toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("No success was recorded") },
+      reply: { text: expect.stringContaining("没有保存任何新记录") },
     });
     expect(readdirSync(directory).sort()).toEqual(originalFiles);
   });
@@ -1175,7 +1292,7 @@ describe("Plugin registration", () => {
       }, bound);
     }
     await inbound({
-      content: "/stella-activate 2026-08-10",
+      content: "从2026-08-10开始",
       channel: "webchat",
       messageId: "checkpoint-fallback-activate",
       timestamp: "2026-08-10T08:00:00.000Z",
@@ -1195,7 +1312,7 @@ describe("Plugin registration", () => {
       )).resolves.toMatchObject({
         handled: true,
         reply: {
-          text: expect.stringContaining("Week 4 body weight recorded: 69 kg"),
+          text: expect.stringContaining("已记录第 4 周体重：69 kg"),
         },
       });
     } finally {
@@ -1259,7 +1376,7 @@ describe("Plugin registration", () => {
       handled: true,
       reply: {
         text: expect.stringMatching(
-          /Program State activated:.+today Planned Session: 2026-08-10.+rest:/su,
+          /训练计划已确认，将从 2026-08-10（周一）开始。.+第 1 周.+高脚杯深蹲/su,
         ),
       },
     });
@@ -1271,7 +1388,7 @@ describe("Plugin registration", () => {
       isGroup: false,
     }, bound)).resolves.toMatchObject({
       handled: true,
-      reply: { text: "goblet-squat A: 32 kg" },
+      reply: { text: "高脚杯深蹲当前 A 重量是 32 kg。" },
     });
     await expect(inbound({
       content: "/stella-weight 69 kg",
@@ -1281,7 +1398,7 @@ describe("Plugin registration", () => {
       isGroup: false,
     }, bound)).resolves.toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("checkpoint body weight recorded: 69 kg") },
+      reply: { text: expect.stringContaining("已记录阶段体重：69 kg") },
     });
     await expect(inbound({
       content: "/stella-facts weight",
@@ -1292,7 +1409,7 @@ describe("Plugin registration", () => {
       handled: true,
       reply: {
         text: expect.stringMatching(
-          /Weight Facts:.+baseline: 68\.4 kg.+current: 69 kg.+week-4: 69 kg.+toward-goal.+week-8: insufficient-data/su,
+          /体重记录：.+初始体重：68\.4 kg.+当前体重：69 kg.+第 4 周：69 kg.+增加 0\.6 kg.+第 8 周：尚未记录/su,
         ),
       },
     });
@@ -1305,7 +1422,7 @@ describe("Plugin registration", () => {
       handled: true,
       reply: {
         text: expect.stringMatching(
-          /today Planned Session: 2026-08-10.+stage: phase-1, week: 1, day: monday.+rest:/su,
+          /今天（2026-08-10）的训练：.+第 1 周.+高脚杯深蹲：3 组 × 10 次；休息60 秒/su,
         ),
       },
     });
@@ -1316,7 +1433,7 @@ describe("Plugin registration", () => {
       isGroup: false,
     }, bound)).resolves.toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("today Planned Session: 2026-08-10") },
+      reply: { text: expect.stringContaining("今天（2026-08-10）的训练") },
     });
     await expect(inbound({
       content: "给出本周训练计划",
@@ -1327,7 +1444,7 @@ describe("Plugin registration", () => {
       handled: true,
       reply: {
         text: expect.stringMatching(
-          /week Planned Sessions: 2026-08-10 to 2026-08-16.+2026-08-10 monday.+type: full-body.+2026-08-11 tuesday: No Planned Session\..+2026-08-12 wednesday.+type: full-body.+2026-08-14 friday.+type: full-body.+2026-08-16 sunday: No Planned Session\./su,
+          /本周训练安排（2026-08-10 至 2026-08-16）.+2026-08-10（周一）.+全身训练.+2026-08-11（周二）：休息。.+2026-08-12（周三）.+2026-08-14（周五）.+2026-08-16（周日）：休息。/su,
         ),
       },
     });
@@ -1340,10 +1457,21 @@ describe("Plugin registration", () => {
       handled: true,
       reply: {
         text: expect.stringContaining(
-          "week Planned Sessions: 2026-08-10 to 2026-08-16",
+          "本周训练安排（2026-08-10 至 2026-08-16）",
         ),
       },
     });
+    const laterWeek = await inbound({
+      content: "/stella-facts week 2026-09-11",
+      channel: "test-channel",
+      timestamp: "2026-09-11T08:02:55.000Z",
+      isGroup: false,
+    }, bound) as { reply: { text: string } };
+    expect(laterWeek.reply.text).toContain("躯干训练");
+    expect(laterWeek.reply.text).toContain("四肢训练");
+    expect(laterWeek.reply.text).not.toMatch(
+      /full-body|torso|limbs|strength_test|phase-\d|prescription|\{.*\}/su,
+    );
     await expect(inbound({
       content: "高脚杯深蹲当前 N 是多少？",
       channel: "test-channel",
@@ -1351,7 +1479,7 @@ describe("Plugin registration", () => {
       isGroup: false,
     }, bound)).resolves.toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("goblet-squat N: binding pending") },
+      reply: { text: expect.stringContaining("高脚杯深蹲的 N 重量还没有确定") },
     });
     await expect(inbound({
       content: "我应该怎么调整训练和饮食？",
@@ -1361,7 +1489,7 @@ describe("Plugin registration", () => {
     }, bound)).resolves.toEqual({
       handled: true,
       reply: {
-        text: "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.",
+        text: "我只能记录训练事实并按原计划查询安排，不能评价表现、诊断问题或调整训练和饮食。",
       },
     });
 
@@ -1374,7 +1502,7 @@ describe("Plugin registration", () => {
       isGroup: false,
     }, bound)).resolves.toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("next Planned Session: 2026-08-12") },
+      reply: { text: expect.stringContaining("下次训练（2026-08-12）") },
     });
     await expect(hooks.get("before_agent_run")?.(
       { prompt: "给出本周训练计划" },
@@ -1383,7 +1511,7 @@ describe("Plugin registration", () => {
       outcome: "block",
       reason: "stella-dedicated-input-is-plugin-owned",
       message: expect.stringMatching(
-        /week Planned Sessions:.+monday.+tuesday: No Planned Session\./su,
+        /本周训练安排.+周一.+周二）：休息。/su,
       ),
     });
     await expect(hooks.get("before_agent_reply")?.(
@@ -1393,7 +1521,7 @@ describe("Plugin registration", () => {
       handled: true,
       reply: {
         text: expect.stringMatching(
-          /week Planned Sessions:.+monday.+tuesday: No Planned Session\./su,
+          /本周训练安排.+周一.+周二）：休息。/su,
         ),
       },
     });
@@ -1435,11 +1563,10 @@ describe("Plugin registration", () => {
       timestamp: "2026-08-12T04:00:00.000Z",
       isGroup: false,
     }, bound) as { reply: { text: string } };
-    const confirmationId = /Program Journey needs confirmation: ([0-9a-f-]{36})/u.exec(
-      pending.reply.text,
-    )?.[1];
+    expect(pending.reply.text).toContain("请确认体重单位：kg 还是 lb");
+    expect(pending.reply.text).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27}|JSON|stella-confirm/iu);
     const confirmationEvent = {
-      content: `/stella-confirm ${confirmationId} {"unit":"lb"}`,
+      content: "体重 150 lb",
       channel: "test-channel",
       messageId: "confirm-baseline-boundary",
       timestamp: "2026-08-12T04:05:00.000Z",
@@ -1454,7 +1581,7 @@ describe("Plugin registration", () => {
     ))).toBe(false);
     await expect(inbound(confirmationEvent, bound)).resolves.toMatchObject({
       handled: true,
-      reply: { text: expect.stringContaining("journey: INITIAL_12RM_REQUIRED") },
+      reply: { text: expect.stringContaining("高脚杯深蹲") },
     });
   });
 
@@ -1562,9 +1689,7 @@ describe("Plugin registration", () => {
     expect(result).toMatchObject({
       handled: true,
       reply: {
-        text: expect.stringMatching(
-          /^Workout recorded: stage 1, week 1, monday, full-body\nobservation: [0-9a-f-]{36}$/u,
-        ),
+        text: "已记录训练：第 1 阶段第 1 周，周一，全身训练。",
       },
     });
     expect(extractStructuredWithModel).toHaveBeenCalledOnce();
@@ -1639,7 +1764,7 @@ describe("Plugin registration", () => {
       queuedFinal: true,
     });
     expect(sendFinalReply).toHaveBeenCalledWith({
-      text: expect.stringMatching(/^Workout recorded:/u),
+      text: expect.stringMatching(/^已记录训练：/u),
     });
   });
 
@@ -1685,12 +1810,12 @@ describe("Plugin registration", () => {
     }, { sessionKey: "agent:fitness:webchat:test" })).resolves.toMatchObject({
       handled: true,
       reply: {
-        text: expect.stringContaining("crop the photo to exactly one session"),
+        text: expect.stringContaining("裁剪到只保留一次训练记录"),
       },
     });
   });
 
-  it("confirms uncertain image fields through the dedicated agent", async () => {
+  it("asks for a clearer workout log without exposing confirmation internals", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const commands: Array<Record<string, unknown>> = [];
     const personalDataDirectory = configuredPersonalDirectory();
@@ -1751,33 +1876,13 @@ describe("Plugin registration", () => {
       { sessionKey: "agent:fitness:webchat:test" },
     );
     const pendingText = (pending as { reply: { text: string } }).reply.text;
-    expect(pendingText).toContain(
-      "- exercises.0.load.value (conflict): 20 kg / 25 kg",
-    );
-    const confirmationId = /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(
-      pendingText,
-    )?.[1];
-    const command = commands.find(({ name }) => name === "stella-confirm");
-    const handler = command?.handler as (context: {
-      args: string;
-      channel: string;
-      commandBody: string;
-      isAuthorizedSender: boolean;
-      sessionKey: string;
-    }) => Promise<unknown>;
-    const rawValues =
-      '{"exercises.0.load.value":{"kind":"kg","value":25,"unit":"kg","raw":"25"}}';
-    await expect(handler({
-      args: `${confirmationId} ${rawValues}`,
-      channel: "test-channel",
-      commandBody: `/stella-confirm ${confirmationId} ${rawValues}`,
-      isAuthorizedSender: true,
-      sessionKey: "agent:fitness:webchat:test",
-    })).resolves.toMatchObject({
-      text: expect.stringMatching(
-        /^Workout recorded: stage 1, week 1, monday, full-body\nobservation: [0-9a-f-]{36}$/u,
-      ),
-    });
+    expect(pendingText).toContain("尚未保存");
+    expect(pendingText).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27}|JSON|stella-confirm/iu);
+    expect(existsSync(join(
+      personalDataDirectory.personalDataDirectory,
+      "observations",
+      "workout-log",
+    ))).toBe(false);
   });
 
   it("routes an explicitly identified workout correction through image ingress", async () => {
@@ -1825,9 +1930,12 @@ describe("Plugin registration", () => {
       },
         { sessionKey: "agent:fitness:webchat:test" },
     ) as { reply: { text: string } };
-    const originalId = /observation: ([0-9a-f-]{36})/u.exec(
-      original.reply.text,
-    )?.[1];
+    expect(original.reply.text).toBe("已记录训练：第 1 阶段第 1 周，周一，全身训练。");
+    const originalId = readdirSync(join(
+      personalDataDirectory.personalDataDirectory,
+      "observations",
+      "workout-log",
+    ))[0]?.replace(/\.json$/u, "");
 
     const correction = await inbound(
       {
@@ -1842,12 +1950,7 @@ describe("Plugin registration", () => {
     expect(correction).toMatchObject({
       handled: true,
       reply: {
-        text: expect.stringMatching(
-          new RegExp(
-            `^Workout corrected: stage 1, week 1, monday, full-body\\ncorrection: [0-9a-f-]{36} replaces: ${originalId}$`,
-            "u",
-          ),
-        ),
+        text: "已更正训练记录：第 1 阶段第 1 周，周一，全身训练。",
       },
     });
     expect(extractStructuredWithModel).toHaveBeenCalledTimes(2);

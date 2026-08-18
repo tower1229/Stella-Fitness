@@ -67,7 +67,7 @@ export async function verifyTelegramChannelFlow(options) {
 
     telegram.pushText("/stella-start");
     await telegram.waitForText((text) =>
-      text.includes("journey: PREREQUISITES_REQUIRED"),
+      text.includes("已准备好可拆卸哑铃"),
     );
 
     telegram.pushText("/stella-print");
@@ -88,20 +88,19 @@ export async function verifyTelegramChannelFlow(options) {
     }
 
     const prerequisites = [
-      ["adjustable-dumbbells", "我已准备好可拆卸哑铃"],
-      ["pull-up-bar", "我已准备好引体向上杆"],
-      ["printed-workout-log", "我已打印训练日志"],
-      ["recording-protocol", "我已了解训练记录协议"],
+      ["adjustable-dumbbells", "我已准备好可拆卸哑铃", "已准备好可拆卸哑铃"],
+      ["pull-up-bar", "我已准备好引体向上杆", "已准备好引体向上杆"],
+      ["printed-workout-log", "我已打印训练日志", "已打印训练日志"],
+      ["recording-protocol", "我已了解训练记录协议", "已了解训练记录方式"],
     ];
     for (const [index, [, acknowledgement]] of prerequisites.entries()) {
       telegram.pushText(acknowledgement, 2_000 + index);
-      const remaining = prerequisites.slice(index + 1).map(([id]) => id);
+      const remaining = prerequisites.slice(index + 1).map(([, , replyName]) => replyName);
       try {
         await telegram.waitForText((text) =>
-          text.includes(`Built-in Program: zhuoshu-12-week@0.2.0`) &&
-          (remaining.length === 0
-            ? text.includes("journey: BASELINE_WEIGHT_REQUIRED")
-            : text.includes(`missing-prerequisites: ${remaining.join(", ")}`)),
+          remaining.length === 0
+            ? text.includes("请告诉我你的初始体重")
+            : text.includes(remaining[0]),
         );
       } catch (error) {
         throw new Error(
@@ -131,7 +130,7 @@ export async function verifyTelegramChannelFlow(options) {
     }
     telegram.pushText("我已了解训练记录协议", 2_003);
     await telegram.waitForText((text) =>
-      text.includes("journey: BASELINE_WEIGHT_REQUIRED"),
+      text.includes("请告诉我你的初始体重"),
     );
     const setupAfterReplay = JSON.parse(readFileSync(setupPath, "utf8"));
     if (
@@ -140,30 +139,18 @@ export async function verifyTelegramChannelFlow(options) {
     ) {
       throw new Error("Duplicate prerequisite message changed persisted facts");
     }
-    telegram.pushText("体重 68.4");
-    const pendingBaseline = await telegram.waitForText((text) =>
-      text.includes("Program Journey needs confirmation:"),
-    );
-    const baselineConfirmationId =
-      /Program Journey needs confirmation: ([0-9a-f-]{36})/u.exec(
-        pendingBaseline,
-      )?.[1];
-    if (baselineConfirmationId === undefined) {
-      throw new Error(`Baseline confirmation ID was missing: ${pendingBaseline}`);
-    }
-    await restartGateway("pending baseline confirmation");
-    telegram.pushText(`/stella-confirm ${baselineConfirmationId} {"unit":"kg"}`);
+    telegram.pushText("体重 68.4 kg");
     await telegram.waitForText((text) =>
-      text.startsWith("baseline body weight recorded: 68.4 kg"),
+      text.startsWith("已记录初始体重：68.4 kg"),
     );
     await restartGateway("baseline body weight");
     await verifyWebChatInitial12RMBatch(options, personalDataDirectory);
     await restartGateway("WebChat initial 12RM batch");
-    telegram.pushText("/stella-activate 2026-07-13");
+    telegram.pushText("从2026-07-13开始");
     await telegram.waitForText((text) =>
-      text.startsWith("Program State activated:") &&
-      text.includes("today Planned Session: 2026-07-13") &&
-      text.includes("rest:"),
+      text.startsWith("训练计划已确认，将从 2026-07-13（周一）开始。") &&
+      text.includes("今天（2026-07-13）的训练") &&
+      text.includes("休息"),
     );
     await restartGateway("Program State activation");
     const state = JSON.parse(readFileSync(
@@ -189,7 +176,7 @@ export async function verifyTelegramChannelFlow(options) {
     );
     await telegram.waitForTextAfter(
       checkpointGateCursor,
-      (text) => text.startsWith("checkpoint body weight recorded: 69 kg"),
+      (text) => text.startsWith("已记录阶段体重：69 kg"),
     );
     await restartGateway("Week 4 body-weight checkpoint");
     const checkpointRecoveryCursor = telegram.messageCount();
@@ -197,36 +184,35 @@ export async function verifyTelegramChannelFlow(options) {
     await telegram.waitForTextAfter(
       checkpointRecoveryCursor,
       (text) =>
-        text.startsWith("Weight Facts:") &&
-        text.includes("baseline: 68.4 kg") &&
-        text.includes("week-4: 69 kg"),
+        text.startsWith("体重记录：") &&
+        text.includes("初始体重：68.4 kg") &&
+        text.includes("第 4 周：69 kg"),
     );
     telegram.pushText("/stella-facts today 2026-08-10");
     const today = await telegram.waitForText((text) =>
-      text.startsWith("today Planned Session: 2026-08-10"),
+      text.startsWith("今天（2026-08-10）的训练"),
     );
     telegram.pushText("/stella-facts next 2026-08-10");
     await telegram.waitForText((text) =>
-      text.startsWith("next Planned Session: 2026-08-11"),
+      text.startsWith("下次训练（2026-08-11）"),
     );
     telegram.pushText("我应该怎么调整训练和饮食？");
     await telegram.waitForText((text) =>
-      text.includes("only reports source-program, Program State and recorded facts") &&
-      text.includes("does not diagnose, advise or adjust the plan"),
+      text.includes("不能评价表现、诊断问题或调整训练和饮食"),
     );
     telegram.pushText("/stella-facts weight");
     await telegram.waitForText((text) =>
-      text.startsWith("Weight Facts:") &&
-      text.includes("baseline: 68.4 kg") &&
-      text.includes("current: 68.4 kg") &&
-      text.includes("week-4: 69 kg") &&
-      text.includes("toward-goal"),
+      text.startsWith("体重记录：") &&
+      text.includes("初始体重：68.4 kg") &&
+      text.includes("当前体重：68.4 kg") &&
+      text.includes("第 4 周：69 kg") &&
+      text.includes("增加"),
     );
     await restartGateway("Program Facts questions");
     const recoveryMessageCursor = telegram.messageCount();
     telegram.pushText("/stella-facts today 2026-08-10");
     const recoveredToday = await telegram.waitForTextAfter(recoveryMessageCursor, (text) =>
-      text.startsWith("today Planned Session: 2026-08-10"),
+      text.startsWith("今天（2026-08-10）的训练"),
     );
     if (today !== recoveredToday) {
       throw new Error("Program Facts changed after Gateway restart");
@@ -235,16 +221,16 @@ export async function verifyTelegramChannelFlow(options) {
     let pendingStrength;
     try {
       pendingStrength = await telegram.waitForText((text) =>
-        text.includes("Workout log needs confirmation:") &&
-        text.includes("testResults.3.result.value"),
+        text.includes("尚未保存") && text.includes("更清晰"),
       );
     } catch (error) {
       throw new Error(
         `${String(error)}\nStrength photo: ${JSON.stringify(telegram.snapshot())}\nGateway tail: ${gateway.logs().slice(-12_000)}`,
       );
     }
-    const strengthConfirmationId =
-      /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(pendingStrength)?.[1];
+    const strengthConfirmationId = pendingWorkoutConfirmationIds(
+      personalDataDirectory,
+    )[0];
     if (strengthConfirmationId === undefined) {
       throw new Error(`Strength confirmation ID was missing: ${pendingStrength}`);
     }
@@ -253,11 +239,11 @@ export async function verifyTelegramChannelFlow(options) {
     const pendingOrdinary = await telegram.waitForTextAfter(
       ordinaryPendingCursor,
       (text) =>
-        text.includes("Workout log needs confirmation:") &&
-        text.includes("exercises.0.load.value"),
+        text.includes("尚未保存") && text.includes("更清晰"),
     );
-    const ordinaryConfirmationId =
-      /Workout log needs confirmation: ([0-9a-f-]{36})/u.exec(pendingOrdinary)?.[1];
+    const ordinaryConfirmationId = pendingWorkoutConfirmationIds(
+      personalDataDirectory,
+    ).find((id) => id !== strengthConfirmationId);
     if (ordinaryConfirmationId === undefined) {
       throw new Error(`Ordinary confirmation ID was missing: ${pendingOrdinary}`);
     }
@@ -267,7 +253,7 @@ export async function verifyTelegramChannelFlow(options) {
     let recorded;
     try {
       recorded = await telegram.waitForText((text) =>
-        text.startsWith("Workout recorded: stage 1, week 4, friday, strength_test"),
+        text.startsWith("已记录训练：第 1 阶段第 4 周，周五，力量测试"),
       );
     } catch (error) {
       throw new Error(
@@ -276,8 +262,8 @@ export async function verifyTelegramChannelFlow(options) {
     }
     await restartGateway("pending ordinary workout confirmation");
     telegram.pushText("/stella-facts symbol goblet-squat N");
-    await telegram.waitForText((text) => text === "goblet-squat N: 34 kg");
-    const observationId = /observation: ([0-9a-f-]{36})/u.exec(recorded)?.[1];
+    await telegram.waitForText((text) => text === "高脚杯深蹲当前 N 重量是 34 kg。");
+    const observationId = newestWorkoutObservationId(personalDataDirectory);
     if (observationId === undefined) {
       throw new Error(`Workout Observation ID was missing: ${recorded}`);
     }
@@ -316,12 +302,12 @@ export async function verifyTelegramChannelFlow(options) {
     const expectedRecoveredWeightFacts = await requestTelegramText(
       telegram,
       "/stella-facts weight",
-      (text) => text.startsWith("Weight Facts:"),
+      (text) => text.startsWith("体重记录："),
     );
     const expectedRecoveredStrengthBinding = await requestTelegramText(
       telegram,
       "/stella-facts symbol goblet-squat N",
-      (text) => text === "goblet-squat N: 34 kg",
+      (text) => text === "高脚杯深蹲当前 N 重量是 34 kg。",
     );
 
     const canonicalBeforeLifecycle = canonicalDataSnapshot(personalDataDirectory);
@@ -389,7 +375,7 @@ export async function verifyTelegramChannelFlow(options) {
     telegram.pushText("/stella-start");
     await telegram.waitForTextAfter(
       firstUpgradeCursor,
-      (text) => text.includes("journey: ACTIVE"),
+      (text) => text.includes("训练计划已经开始"),
     );
     const upgradedState = readFileSync(statePathForUpgrade, "utf8");
     const upgradedStateValue = JSON.parse(upgradedState);
@@ -406,7 +392,7 @@ export async function verifyTelegramChannelFlow(options) {
     telegram.pushText("/stella-start");
     await telegram.waitForTextAfter(
       secondUpgradeCursor,
-      (text) => text.includes("journey: ACTIVE"),
+      (text) => text.includes("训练计划已经开始"),
     );
     if (readFileSync(statePathForUpgrade, "utf8") !== upgradedState) {
       throw new Error("Legacy Program State upgrade was not idempotent");
@@ -424,7 +410,7 @@ export async function verifyTelegramChannelFlow(options) {
     );
     await telegram.waitForTextAfter(
       ordinaryConfirmationCursor,
-      (text) => text.startsWith("Workout recorded: stage 1, week 1, monday, full-body"),
+      (text) => text.startsWith("已记录训练：第 1 阶段第 1 周，周一，全身训练"),
     );
 
     const stateBeforeActionRequired = readFileSync(statePathForUpgrade, "utf8");
@@ -440,8 +426,7 @@ export async function verifyTelegramChannelFlow(options) {
       telegram,
       "/stella-start",
       (text) =>
-        text.includes("journey: BASELINE_WEIGHT_REQUIRED") &&
-        text.includes("next: RECORD_BASELINE_WEIGHT"),
+        text.includes("请告诉我你的初始体重"),
     );
     if (
       JSON.stringify(canonicalFactSnapshot(personalDataDirectory)) !==
@@ -460,9 +445,7 @@ export async function verifyTelegramChannelFlow(options) {
       telegram,
       "/stella-start",
       (text) =>
-        text.includes("journey: INITIAL_12RM_REQUIRED") &&
-        text.includes("missing-initial-12rm: goblet-squat") &&
-        text.includes("next: RECORD_INITIAL_12RM"),
+        text.includes("高脚杯深蹲") && text.includes("初始 12RM"),
     );
     if (
       JSON.stringify(canonicalFactSnapshot(personalDataDirectory)) !==
@@ -475,13 +458,17 @@ export async function verifyTelegramChannelFlow(options) {
 
     const invalidEditCursor = telegram.messageCount();
     telegram.pushText("/stella-weight 2026-08-11T08:00:00.000Z 体重 70 kg");
-    const currentWeight = await telegram.waitForTextAfter(
+    await telegram.waitForTextAfter(
       invalidEditCursor,
-      (text) => text.startsWith("Body weight recorded: 70 kg"),
+      (text) => text.startsWith("已记录体重：70 kg"),
     );
-    const currentWeightId = /observation: ([0-9a-f-]{36})/u.exec(currentWeight)?.[1];
+    const currentWeightId = bodyWeightObservationId(
+      personalDataDirectory,
+      70,
+      "2026-08-11T08:00:00.000Z",
+    );
     if (currentWeightId === undefined) {
-      throw new Error(`Current body-weight Observation ID was missing: ${currentWeight}`);
+      throw new Error("Current body-weight Observation was not persisted");
     }
     const invalidRelativePath = join(
       "observations",
@@ -493,11 +480,7 @@ export async function verifyTelegramChannelFlow(options) {
     telegram.pushText("/stella-facts weight");
     await telegram.waitForTextAfter(
       invalidEditFactsCursor,
-      (text) =>
-        text.includes(`error: ${invalidRelativePath} - Body-weight Observation is schema-invalid`) &&
-        text.includes("baseline: 68.4 kg") &&
-        text.includes("week-4: 69 kg") &&
-        !text.includes("current: 70 kg"),
+      (text) => text === "读取体重记录时遇到问题，请稍后重试。你的已有记录没有被修改。",
     );
 
     return {
@@ -509,7 +492,7 @@ export async function verifyTelegramChannelFlow(options) {
       prerequisites: true,
       prerequisiteReplayIdempotent: true,
       baseline: true,
-      baselineConfirmationRecovered: true,
+      baselineNaturalRecording: true,
       initial12RM: true,
       initial12RMBatch: true,
       initial12RMBatchZeroToken: true,
@@ -552,12 +535,53 @@ function restoreStagedFileName(fileName) {
     : fileName;
 }
 
+function pendingWorkoutConfirmationIds(personalDataDirectory) {
+  const directory = join(personalDataDirectory, "processing", "workout-log");
+  return readdirSync(directory)
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => JSON.parse(readFileSync(join(directory, file), "utf8")))
+    .filter((record) =>
+      record.operation === "workout-log-extraction" &&
+      record.status === "awaiting-confirmation" &&
+      record.result?.kind === "workout-log-confirmation"
+    )
+    .map((record) => record.result.confirmationId);
+}
+
+function newestWorkoutObservationId(personalDataDirectory) {
+  const directory = join(personalDataDirectory, "observations", "workout-log");
+  return readdirSync(directory)
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => ({
+      id: file.replace(/\.json$/u, ""),
+      observation: JSON.parse(readFileSync(join(directory, file), "utf8")),
+    }))
+    .sort((left, right) =>
+      String(right.observation.recordedAt ?? right.observation.occurredAt).localeCompare(
+        String(left.observation.recordedAt ?? left.observation.occurredAt),
+      )
+    )[0]?.id;
+}
+
+function bodyWeightObservationId(personalDataDirectory, amount, occurredAt) {
+  const directory = join(personalDataDirectory, "observations", "body-weight");
+  return readdirSync(directory)
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => ({
+      id: file.replace(/\.json$/u, ""),
+      observation: JSON.parse(readFileSync(join(directory, file), "utf8")),
+    }))
+    .find(({ observation }) =>
+      observation.value?.amount === amount && observation.occurredAt === occurredAt
+    )?.id;
+}
+
 async function assertRecoveredJourney(input) {
   const cursor = input.telegram.messageCount();
   input.telegram.pushText("/stella-start");
   await input.telegram.waitForMessageAfter(
     cursor,
-    (message) => message.text.includes("journey: ACTIVE"),
+    (message) => message.text.includes("训练计划已经开始"),
   );
   const state = JSON.parse(readFileSync(
     join(input.personalDataDirectory, "program", "state.json"),
@@ -573,7 +597,7 @@ async function assertRecoveredJourney(input) {
   const weightFacts = await requestTelegramText(
     input.telegram,
     "/stella-facts weight",
-    (text) => text.startsWith("Weight Facts:"),
+    (text) => text.startsWith("体重记录："),
   );
   if (weightFacts !== input.expectedWeightFacts) {
     throw new Error(`${input.checkpoint} changed the rebuilt Weight Facts View`);
@@ -581,7 +605,7 @@ async function assertRecoveredJourney(input) {
   const strengthBinding = await requestTelegramText(
     input.telegram,
     "/stella-facts symbol goblet-squat N",
-    (text) => text === "goblet-squat N: 34 kg",
+    (text) => text === "高脚杯深蹲当前 N 重量是 34 kg。",
   );
   if (strengthBinding !== input.expectedStrengthBinding) {
     throw new Error(`${input.checkpoint} changed rebuilt strength facts`);
@@ -723,7 +747,7 @@ async function verifyWebChatFlow(options, gatewayPort) {
   const replyText = latestAssistantText(history());
   if (
     typeof replyText !== "string" ||
-    !replyText.includes("journey: PREREQUISITES_REQUIRED") ||
+    !replyText.includes("已准备好可拆卸哑铃") ||
     replyText.includes("conversation-binding")
   ) {
     throw new Error(`WebChat dedicated-agent start failed: ${replyText}`);
@@ -803,10 +827,11 @@ async function verifyWebChatInitial12RMBatch(options, personalDataDirectory) {
   const replyText = reply?.content?.find((content) => content.type === "text")?.text;
   if (
     typeof replyText !== "string" ||
-    !replyText.includes("goblet-squat 32 kg") ||
-    !replyText.includes("dumbbell-bench-press 24 kg") ||
-    !replyText.includes("dumbbell-deadlift 40 kg") ||
-    !replyText.includes("journey: READY_TO_ACTIVATE") ||
+    !replyText.includes("高脚杯深蹲 32 kg") ||
+    !replyText.includes("哑铃卧推 24 kg") ||
+    !replyText.includes("哑铃硬拉 40 kg") ||
+    !replyText.includes("初始化已完成") ||
+    /READY_TO_ACTIVATE|observation:|schema|CONFIRM_CYCLE_START|\{.*\}/su.test(replyText) ||
     reply.usage?.totalTokens !== 0 ||
     reply.provider !== "openclaw" ||
     reply.model !== "gateway-injected"

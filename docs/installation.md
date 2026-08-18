@@ -13,7 +13,7 @@
 7. Plugin 自动验证并使用唯一的卓叔 12 周 Built-in Program；
 8. 运行 `/stella-print` 获取完整 12 周内置 XLSX 并打印所需页面；
 9. 逐项确认可拆卸哑铃、引体向上杆、打印训练日志和训练记录协议；
-10. 按唯一下一步记录 baseline、三个初始 12RM，并确认星期一 cycle start。
+10. 按自然语言提示记录初始体重和三个初始 12RM；初始化完成后回复“本周开始”“下周开始”或明确的星期一日期。
 
 首次使用不提供计划选择器、ProgramSpec 导入或文件路径输入。`/stella-status` 独立报告 Personal Data Directory、conversation hook access、media 和 model permission；Program Journey Status 只报告训练前准备与当前唯一下一步。Plugin 命令虽然由 Host 全局注册，但任何写命令在非 dedicated agent session 中都会拒绝执行。
 
