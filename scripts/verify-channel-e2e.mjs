@@ -221,7 +221,7 @@ export async function verifyTelegramChannelFlow(options) {
     let pendingStrength;
     try {
       pendingStrength = await telegram.waitForText((text) =>
-        text.includes("尚未保存") && text.includes("更清晰"),
+        text.includes("尚未保存") && text.includes("直接回复“全部确认”"),
       );
     } catch (error) {
       throw new Error(
@@ -234,31 +234,41 @@ export async function verifyTelegramChannelFlow(options) {
     if (strengthConfirmationId === undefined) {
       throw new Error(`Strength confirmation ID was missing: ${pendingStrength}`);
     }
-    const ordinaryPendingCursor = telegram.messageCount();
-    telegram.pushPhoto("普通训练日志");
-    const pendingOrdinary = await telegram.waitForTextAfter(
-      ordinaryPendingCursor,
-      (text) =>
-        text.includes("尚未保存") && text.includes("更清晰"),
-    );
-    const ordinaryConfirmationId = pendingWorkoutConfirmationIds(
-      personalDataDirectory,
-    ).find((id) => id !== strengthConfirmationId);
-    if (ordinaryConfirmationId === undefined) {
-      throw new Error(`Ordinary confirmation ID was missing: ${pendingOrdinary}`);
-    }
-    telegram.pushText(
-      `/stella-confirm ${strengthConfirmationId} {"testResults.0.result.value":{"kind":"kg","value":34,"unit":"kg","raw":"34"},"testResults.1.result.value":{"kind":"kg","value":26,"unit":"kg","raw":"26"},"testResults.2.result.value":{"kind":"kg","value":42,"unit":"kg","raw":"42"},"testResults.3.result.value":{"kind":"repetitions","value":9,"raw":"9"}}`,
-    );
+    const strengthConfirmationCursor = telegram.messageCount();
+    telegram.pushText("全部确认");
     let recorded;
     try {
-      recorded = await telegram.waitForText((text) =>
-        text.startsWith("已记录训练：第 1 阶段第 4 周，周五，力量测试"),
+      recorded = await telegram.waitForTextAfter(
+        strengthConfirmationCursor,
+        (text) => text.startsWith("已记录训练：第 1 阶段第 4 周，周五，力量测试"),
       );
     } catch (error) {
       throw new Error(
         `${String(error)}\nStrength confirmation: ${JSON.stringify(telegram.snapshot())}\nGateway tail: ${gateway.logs().slice(-12_000)}`,
       );
+    }
+    const ordinaryPendingCursor = telegram.messageCount();
+    telegram.pushPhoto("普通训练日志", {
+      variant: "ordinary",
+      date: Math.floor(Date.parse("2026-07-13T08:00:00.000Z") / 1_000),
+    });
+    let pendingOrdinary;
+    try {
+      pendingOrdinary = await telegram.waitForTextAfter(
+        ordinaryPendingCursor,
+        (text) =>
+          text.includes("尚未保存") && text.includes("直接回复“全部确认”"),
+      );
+    } catch (error) {
+      throw new Error(
+        `${String(error)}\nOrdinary photo: ${JSON.stringify(telegram.snapshot())}\nGateway tail: ${gateway.logs().slice(-12_000)}`,
+      );
+    }
+    const ordinaryConfirmationId = pendingWorkoutConfirmationIds(
+      personalDataDirectory,
+    ).find((id) => id !== strengthConfirmationId);
+    if (ordinaryConfirmationId === undefined) {
+      throw new Error(`Ordinary confirmation ID was missing: ${pendingOrdinary}`);
     }
     await restartGateway("pending ordinary workout confirmation");
     telegram.pushText("/stella-facts symbol goblet-squat N");
@@ -951,6 +961,7 @@ async function createFakeTelegramApi() {
     "base64",
   );
   const automaticImage = Buffer.concat([image, Buffer.from([0])]);
+  const ordinaryImage = Buffer.concat([image, Buffer.from([1])]);
   const server = createServer(async (request, response) => {
     try {
       if (request.url === `/file/bot${BOT_TOKEN}/photos/workout.png`) {
@@ -961,6 +972,11 @@ async function createFakeTelegramApi() {
       if (request.url === `/file/bot${BOT_TOKEN}/photos/automatic.png`) {
         response.writeHead(200, { "content-type": "image/png" });
         response.end(automaticImage);
+        return;
+      }
+      if (request.url === `/file/bot${BOT_TOKEN}/photos/ordinary.png`) {
+        response.writeHead(200, { "content-type": "image/png" });
+        response.end(ordinaryImage);
         return;
       }
       const method = request.url
@@ -990,13 +1006,28 @@ async function createFakeTelegramApi() {
       }
       if (method === "getfile") {
         const automatic = body.file_id === "automatic-workout-photo";
+        const ordinary = body.file_id === "ordinary-workout-photo";
         reply(response, {
-          file_id: automatic ? "automatic-workout-photo" : "workout-photo",
+          file_id: automatic
+            ? "automatic-workout-photo"
+            : ordinary
+              ? "ordinary-workout-photo"
+              : "workout-photo",
           file_unique_id: automatic
             ? "automatic-workout-photo-unique"
-            : "workout-photo-unique",
-          file_size: automatic ? automaticImage.length : image.length,
-          file_path: automatic ? "photos/automatic.png" : "photos/workout.png",
+            : ordinary
+              ? "ordinary-workout-photo-unique"
+              : "workout-photo-unique",
+          file_size: automatic
+            ? automaticImage.length
+            : ordinary
+              ? ordinaryImage.length
+              : image.length,
+          file_path: automatic
+            ? "photos/automatic.png"
+            : ordinary
+              ? "photos/ordinary.png"
+              : "photos/workout.png",
         });
         return;
       }
@@ -1060,19 +1091,30 @@ async function createFakeTelegramApi() {
     },
     pushPhoto(caption, options = {}) {
       const automatic = options.variant === "automatic";
+      const ordinary = options.variant === "ordinary";
       updates.push({
         update_id: updateId++,
         message: userMessage(inboundMessageId++, {
           ...(caption === undefined ? {} : { caption }),
           photo: [
             {
-              file_id: automatic ? "automatic-workout-photo" : "workout-photo",
+              file_id: automatic
+                ? "automatic-workout-photo"
+                : ordinary
+                  ? "ordinary-workout-photo"
+                  : "workout-photo",
               file_unique_id: automatic
                 ? "automatic-workout-photo-unique"
-                : "workout-photo-unique",
+                : ordinary
+                  ? "ordinary-workout-photo-unique"
+                  : "workout-photo-unique",
               width: 1,
               height: 1,
-              file_size: automatic ? automaticImage.length : image.length,
+              file_size: automatic
+                ? automaticImage.length
+                : ordinary
+                  ? ordinaryImage.length
+                  : image.length,
             },
           ],
         }, options.date),

@@ -137,12 +137,21 @@ export type PluginExtractionOutput =
       status: "confirmation";
       confirmationId: string;
       fields: WorkoutLogCandidate["uncertainFields"];
+      candidate: WorkoutLogCandidate;
+      target?: WorkoutLogTarget;
     });
 
 export type ConfirmedWorkoutLogOutput = PluginExtractionBase & {
   status: "recorded";
   observation: WorkoutLogObservation;
   progress?: TrainingRecordingProgress | undefined;
+};
+
+export type PendingWorkoutLogConfirmationOutput = {
+  readonly confirmationId: string;
+  readonly fields: WorkoutLogCandidate["uncertainFields"];
+  readonly candidate: WorkoutLogCandidate;
+  readonly target?: WorkoutLogTarget;
 };
 
 export type StellaFitnessRuntime = {
@@ -160,6 +169,10 @@ export type StellaFitnessRuntime = {
     readonly confirmationId: string;
     readonly values: Readonly<Record<string, unknown>>;
   }): Promise<ConfirmedWorkoutLogOutput>;
+  pendingWorkoutLogConfirmation(
+    confirmationId: string,
+  ): Promise<PendingWorkoutLogConfirmationOutput | undefined>;
+  cancelWorkoutLogConfirmation(confirmationId: string): Promise<boolean>;
   shutdown(): Promise<void>;
   recordBodyWeight(input: {
     text: string;
@@ -617,6 +630,57 @@ export function createStellaFitnessRuntime(options: {
       });
       return promise;
     },
+    async pendingWorkoutLogConfirmation(confirmationId) {
+      assertPersonalDataPreflight(preflight());
+      if (stopped) throw new Error("Stella Fitness runtime is shut down");
+      const pending =
+        confirmations.get(confirmationId) ??
+        await restorePendingWorkoutLogConfirmation({
+          personalDataDirectory: requiredPersonalDataDirectory(options),
+          confirmationId,
+          confirmations,
+          confirmationRestores,
+        });
+      return pending === undefined
+        ? undefined
+        : {
+            confirmationId,
+            fields: pending.candidate.uncertainFields,
+            candidate: pending.candidate,
+            ...(pending.target === undefined ? {} : { target: pending.target }),
+          };
+    },
+    async cancelWorkoutLogConfirmation(confirmationId) {
+      assertPersonalDataPreflight(preflight());
+      if (stopped) throw new Error("Stella Fitness runtime is shut down");
+      const personalDataDirectory = requiredPersonalDataDirectory(options);
+      const pending =
+        confirmations.get(confirmationId) ??
+        await restorePendingWorkoutLogConfirmation({
+          personalDataDirectory,
+          confirmationId,
+          confirmations,
+          confirmationRestores,
+        });
+      if (pending === undefined) return false;
+      const now = new Date().toISOString();
+      await persistWorkoutLogProcessingRecord({
+        personalDataDirectory,
+        record: {
+          schemaVersion: "stella-fitness/processing/workout-log/v0.1",
+          operation: "workout-log-confirmation",
+          runId: pending.runId,
+          startedAt: now,
+          completedAt: now,
+          status: "failed",
+          artifact: artifactReference(pending.artifact),
+          execution: pending.execution,
+          errorCategory: "cancelled",
+        },
+      });
+      confirmations.delete(confirmationId);
+      return true;
+    },
     async shutdown() {
       stopped = true;
       for (const entry of runs.values()) {
@@ -1012,6 +1076,8 @@ async function executeWorkoutLogIngest(options: {
       status: "confirmation",
       confirmationId,
       fields: candidate.uncertainFields,
+      candidate,
+      ...(target === undefined ? {} : { target }),
       execution: result.metadata,
       artifact,
       processing,
@@ -1117,14 +1183,17 @@ async function readPendingWorkoutLogConfirmation(
   ) {
     throw new Error("Pending workout-log confirmation is schema-invalid");
   }
-  const completed = records.some((value) =>
+  const terminal = records.some((value) =>
     isRecord(value) &&
     value.schemaVersion === "stella-fitness/processing/workout-log/v0.1" &&
     value.operation === "workout-log-confirmation" &&
     value.runId === awaiting.runId &&
-    value.status === "succeeded",
+    (
+      value.status === "succeeded" ||
+      (value.status === "failed" && value.errorCategory === "cancelled")
+    ),
   );
-  if (completed) return undefined;
+  if (terminal) return undefined;
   const artifact = await readConfirmationArtifact(
     personalDataDirectory,
     awaiting.artifact,

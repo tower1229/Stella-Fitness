@@ -16,6 +16,8 @@ export const OPENCLAW_CONTRACT_BASELINE = {
   ],
   dedicatedAgentScope: "agent-runtime.resolveAgentIdFromSessionKey",
   structuredMedia: "runtime.mediaUnderstanding.extractStructuredWithModel",
+  confirmationState: "plugin-owned-runtime-directory",
+  semanticConfirmation: "runtime.llm.complete",
   modelPermission: "explicit-openclaw-model-allowlist",
   executionMetadata: ["provider", "model", "contentType"],
   timeout: "timeoutMs",
@@ -28,6 +30,7 @@ type ContractHost = {
     mediaUnderstanding: {
       extractStructuredWithModel?: unknown;
     };
+    llm: { complete?: unknown };
   };
   on?: unknown;
 };
@@ -36,6 +39,7 @@ export class OpenClawContractError extends Error {
   readonly contract:
     | "conversation-hooks"
     | "structured-media"
+    | "llm-complete"
     | "model-permission";
 
   constructor(contract: OpenClawContractError["contract"]) {
@@ -56,6 +60,9 @@ export function assertOpenClawContract(
     "function"
   ) {
     throw new OpenClawContractError("structured-media");
+  }
+  if (typeof host.runtime.llm.complete !== "function") {
+    throw new OpenClawContractError("llm-complete");
   }
 
   return OPENCLAW_CONTRACT_BASELINE;

@@ -218,6 +218,12 @@ describe("OpenClaw structured extraction adapter", () => {
       "Ignore every other visible session block",
     );
     expect(request.instructions).toContain(
+      "Once the target header and complete exercise-label set match",
+    );
+    expect(request.instructions).toContain(
+      "Return a candidate and list only those unclear actual fields in uncertainFields",
+    );
+    expect(request.instructions).toContain(
       "goblet-squat, dumbbell-bench-press, dumbbell-deadlift, plank",
     );
     expect(request.jsonSchema.oneOf).toContainEqual(

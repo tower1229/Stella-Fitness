@@ -70,6 +70,10 @@ inbound message
 
 `before_agent_run` 是文本路由保险；`message_received` 在 agent routing 后按 session 与 message/run identity 暂存全部受支持的 Host 图片 metadata，`reply_dispatch` 一次消费一个暂存项，使未使用 Plugin conversation binding、且没有 caption 的图片仍能进入同一 Runtime 入口。ACTIVE Program 中，普通图片经分类后返回 `ignored`，继续原通用回复且不保存 Stella 数据；暂存项在消费、Plugin stop 或 shutdown 时移除。
 
+训练日志进入字段确认后，Plugin 在自管的 Runtime Directory 原子文件存储中保存当前 dedicated-agent session 到 active confirmation 的可重建关联。当前 OpenClaw 仅向 trusted bundled plugin 开放 `runtime.state.openKeyedStore`，因此可安装的第三方 Plugin 不能依赖该接口。`inbound_claim` 先把自然语言确认交给 Confirmation Coordinator：明确常见表达由确定性 parser 处理，其余只提交当前文本、权威目标摘要和有限字段标签给 `runtime.llm.complete` 做受约束意图分类。分类结果本身没有写权限；Coordinator 只能接受原 candidate 的候选值或用户明确提供的字段覆盖，字段完整后仍由 Runtime 原子验证并保存。部分接受、session 关联和分类草稿不属于 canonical 用户事实；删除 Runtime Directory 不会恢复或改变 Personal Data Directory。
+
+普通确认回复使用字段名称和自然语言，不暴露 confirmation ID 或 JSON。精确 `/stella-confirm` 继续作为兼容和故障恢复入口。用户说“全部确认”时只接受已有明确候选；`unknown` 必须继续追问，除非用户明确确认原表未填写。确认、取消或失效后清除 session 关联，wrong agent、wrong session、冲突和模型失败均 fail closed。
+
 non-bundled Plugin 所需 conversation-access 权限必须由 operator 显式启用，不得绕过。`dedicatedAgentId` 缺失、session key 缺失或 agent 不匹配时，所有写入口 fail closed；旧 Plugin conversation binding 记录不参与授权判断。
 
 ## 4. 媒体处理

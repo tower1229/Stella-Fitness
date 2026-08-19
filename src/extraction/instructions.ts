@@ -15,7 +15,8 @@ export function workoutLogExtractionInstructions(
     `Target exactly: stage ${target.stage}, week ${target.week}, ${target.weekday}, ${target.sessionType}, date ${target.date}.`,
     `The target exercise IDs are: ${target.exerciseIds.join(", ")}.`,
     "Find the target header and read only its rows until the next session header. Ignore every other visible session block and never combine their cells.",
-    "If the target block is missing, blank, illegible, or its exercise labels do not match the target, return layout target-not-visible with the corresponding reason.",
+    "Return target-not-visible only when the target header and complete exercise-label set cannot be established: the block is missing, entirely blank, globally illegible, or its exercise labels do not match the target.",
+    "Once the target header and complete exercise-label set match, never reject the whole block because individual actual cells are crossed out, blank, or unclear. Return a candidate and list only those unclear actual fields in uncertainFields; preserve every clear field.",
     FACT_EXTRACTION_RULES,
   ].join(" ");
 }

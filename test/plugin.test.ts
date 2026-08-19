@@ -1897,7 +1897,7 @@ describe("Plugin registration", () => {
     });
   });
 
-  it("asks for a clearer workout log without exposing confirmation internals", async () => {
+  it("reports the located deterministic session and asks only for uncertain fields", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const commands: Array<Record<string, unknown>> = [];
     const personalDataDirectory = configuredPersonalDirectory();
@@ -1906,9 +1906,11 @@ describe("Plugin registration", () => {
       "uncertain-workout.png",
     );
     writeFileSync(mediaPath, rawMediaUploadFixture().bytes);
-    const candidate = workoutLogCandidate() as unknown as {
+    const candidate = activeWorkoutLogCandidate() as unknown as {
       exercises: Array<{
-        load: { value: unknown; confidence: "high" | "low" };
+        rawLabel: { value: string; confidence: "high" | "low" };
+        actionQuality: { value: unknown; confidence: "high" | "low" };
+        sets: Array<{ value: unknown; confidence: "high" | "low" }>;
       }>;
       uncertainFields: Array<{
         path: string;
@@ -1916,12 +1918,24 @@ describe("Plugin registration", () => {
         candidates?: string[];
       }>;
     };
-    candidate.exercises[0]!.load = { value: null, confidence: "high" };
+    candidate.exercises[1]!.actionQuality = { value: "中", confidence: "low" };
+    candidate.exercises[3]!.sets[0] = { value: 40, confidence: "low" };
+    candidate.exercises[3]!.actionQuality = { value: null, confidence: "low" };
     candidate.uncertainFields = [
       {
-        path: "exercises[0].load.value",
-        kind: "conflict",
-        candidates: ["20 kg", "25 kg"],
+        path: "exercises[1].actionQuality.value",
+        kind: "low-confidence",
+        candidates: ["中"],
+      },
+      {
+        path: "exercises[3].sets[0].value",
+        kind: "low-confidence",
+        candidates: ["40"],
+      },
+      {
+        path: "exercises[3].actionQuality.value",
+        kind: "unknown",
+        candidates: [],
       },
     ];
     const api = compatibleApi({
@@ -1946,11 +1960,17 @@ describe("Plugin registration", () => {
     registerStellaFitnessPlugin(
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
     );
+    await activateProgramFixture({
+      personalDataDirectory: personalDataDirectory.personalDataDirectory,
+      programSpec: parse(readFileSync(programFixturePath(), "utf8")),
+      cycleStart: "2026-08-17",
+    });
 
     const pending = await hooks.get("inbound_claim")?.(
       {
-        content: "训练日志",
+        content: "",
         channel: "test-channel",
+        timestamp: Date.parse("2026-08-18T06:11:23.374Z"),
         messageId: "workout-message-2",
         runId: "workout-hook-run-2",
         metadata: { mediaPath, mediaType: "image/png" },
@@ -1958,13 +1978,540 @@ describe("Plugin registration", () => {
       { sessionKey: "agent:fitness:webchat:test" },
     );
     const pendingText = (pending as { reply: { text: string } }).reply.text;
-    expect(pendingText).toContain("尚未保存");
-    expect(pendingText).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27}|JSON|stella-confirm/iu);
+    expect(pendingText).toContain(
+      "已定位到第 1 阶段第 1 周，周一，全身训练",
+    );
+    expect(pendingText).toContain("哑铃卧推的动作质量：识别为“中”");
+    expect(pendingText).toContain("平板支撑第 1 组时长：识别为40 秒");
+    expect(pendingText).toContain("平板支撑的动作质量：无法识别");
+    expect(pendingText).not.toContain("/stella-confirm");
     expect(existsSync(join(
       personalDataDirectory.personalDataDirectory,
       "observations",
       "workout-log",
     ))).toBe(false);
+
+    await expect(hooks.get("inbound_claim")?.(
+      {
+        content: "全部确认",
+        channel: "test-channel",
+        messageId: "workout-message-2-confirmed",
+      },
+      { sessionKey: "agent:fitness:webchat:test" },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /已确认其余 2 个识别值.+还缺少：平板支撑的动作质量/su,
+        ),
+      },
+    });
+    expect(existsSync(join(
+      personalDataDirectory.personalDataDirectory,
+      "observations",
+      "workout-log",
+    ))).toBe(false);
+
+    await expect(hooks.get("inbound_claim")?.(
+      {
+        content: "平板支撑动作质量是中",
+        channel: "test-channel",
+        messageId: "workout-message-2-final-field",
+      },
+      { sessionKey: "agent:fitness:webchat:test" },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: "已记录训练：第 1 阶段第 1 周，周一，全身训练。本周已记录 1/3 次；下一次计划：2026-08-19（周三）全身训练。",
+      },
+    });
+  });
+
+  it("routes a fuzzy confirmation turn through constrained intent classification", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const personalDataDirectory = configuredPersonalDirectory();
+    const mediaPath = join(
+      personalDataDirectory.personalDataDirectory,
+      "semantic-confirmation-workout.png",
+    );
+    writeFileSync(mediaPath, rawMediaUploadFixture().bytes);
+    const candidate = activeWorkoutLogCandidate() as unknown as {
+      exercises: Array<{
+        actionQuality: { value: unknown; confidence: "high" | "low" };
+        sets: Array<{ value: unknown; confidence: "high" | "low" }>;
+      }>;
+      uncertainFields: Array<{
+        path: string;
+        kind: "unknown" | "low-confidence" | "conflict" | "confirmation-required";
+        candidates?: string[];
+      }>;
+    };
+    candidate.exercises[1]!.actionQuality = { value: "中", confidence: "low" };
+    candidate.exercises[3]!.sets[0] = { value: 40, confidence: "low" };
+    candidate.exercises[3]!.actionQuality = { value: null, confidence: "low" };
+    candidate.uncertainFields = [
+      {
+        path: "exercises[1].actionQuality.value",
+        kind: "low-confidence",
+        candidates: ["中"],
+      },
+      {
+        path: "exercises[3].sets[0].value",
+        kind: "low-confidence",
+        candidates: ["40"],
+      },
+      {
+        path: "exercises[3].actionQuality.value",
+        kind: "unknown",
+      },
+    ];
+    const llmComplete = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        kind: "accept-with-overrides",
+        confidence: "high",
+        updates: [{ fieldId: "f3", value: "中" }],
+      }),
+      provider: "operator-provider",
+      model: "operator-model",
+      agentId: "fitness",
+      usage: {},
+      audit: { caller: { kind: "plugin", id: "stella-fitness" } },
+    });
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: {
+        ...personalDataDirectory,
+        extraction: {
+          provider: "operator-provider",
+          model: "operator-model",
+        },
+      },
+      openclawConfig: permittedOpenClawConfig({ allowModel: true }),
+      extractStructuredWithModel: vi.fn().mockResolvedValue({
+        parsed: candidate,
+        provider: "operator-provider",
+        model: "operator-model",
+        contentType: "json",
+      }),
+      llmComplete,
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    await activateProgramFixture({
+      personalDataDirectory: personalDataDirectory.personalDataDirectory,
+      programSpec: parse(readFileSync(programFixturePath(), "utf8")),
+      cycleStart: "2026-08-17",
+    });
+    await hooks.get("inbound_claim")?.(
+      {
+        content: "",
+        channel: "test-channel",
+        timestamp: Date.parse("2026-08-18T06:11:23.374Z"),
+        messageId: "semantic-confirmation-photo",
+        runId: "semantic-confirmation-run",
+        metadata: { mediaPath, mediaType: "image/png" },
+      },
+      { sessionKey: "agent:fitness:webchat:semantic-confirmation" },
+    );
+
+    await expect(hooks.get("inbound_claim")?.(
+      {
+        content: "其他识别结果都没问题，平板支撑动作质量记为中",
+        channel: "test-channel",
+        messageId: "semantic-confirmation-answer",
+      },
+      { sessionKey: "agent:fitness:webchat:semantic-confirmation" },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: "已记录训练：第 1 阶段第 1 周，周一，全身训练。本周已记录 1/3 次；下一次计划：2026-08-19（周三）全身训练。",
+      },
+    });
+    expect(llmComplete).toHaveBeenCalledOnce();
+    expect(llmComplete.mock.calls[0]?.[0]).toMatchObject({
+      messages: [{
+        content: expect.stringContaining('"target":{"stage":1,"week":1'),
+      }],
+    });
+    const classificationRequest = JSON.stringify(llmComplete.mock.calls[0]?.[0]);
+    expect(classificationRequest).not.toMatch(
+      /mediaPath|semantic-confirmation-workout|conversation history/iu,
+    );
+  });
+
+  it("records all concrete candidates from an all-confirmed reply", async () => {
+    const fixture = await createPendingWorkoutConfirmation({
+      includeUnknown: false,
+      sessionKey: "agent:fitness:webchat:all-concrete",
+    });
+
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "全部确认",
+        channel: "test-channel",
+        messageId: "all-concrete-confirmation",
+      },
+      { sessionKey: fixture.sessionKey },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: "已记录训练：第 1 阶段第 1 周，周一，全身训练。本周已记录 1/3 次；下一次计划：2026-08-19（周三）全身训练。",
+      },
+    });
+  });
+
+  it("claims Telegram confirmation text at before_agent_run when no Plugin binding exists", async () => {
+    const fixture = await createPendingWorkoutConfirmation({
+      sessionKey: "agent:fitness:telegram:direct:515151",
+    });
+
+    await expect(fixture.hooks.get("before_agent_run")?.(
+      { prompt: "全部确认", messages: [] },
+      {
+        agentId: "fitness",
+        sessionKey: fixture.sessionKey,
+        runId: "telegram-confirmation-run",
+      },
+    )).resolves.toMatchObject({
+      outcome: "block",
+      reason: "stella-workout-log-confirmation-is-plugin-owned",
+      message: expect.stringContaining("还缺少：平板支撑的动作质量"),
+    });
+
+    await expect(fixture.hooks.get("before_agent_run")?.(
+      { prompt: "平板支撑动作质量是中", messages: [] },
+      {
+        agentId: "fitness",
+        sessionKey: fixture.sessionKey,
+        runId: "telegram-confirmation-final-run",
+      },
+    )).resolves.toMatchObject({
+      outcome: "block",
+      message: expect.stringContaining("已记录训练"),
+    });
+  });
+
+  it("does not resolve a natural confirmation from another session", async () => {
+    const fixture = await createPendingWorkoutConfirmation({
+      sessionKey: "agent:fitness:webchat:owned-confirmation",
+    });
+
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "全部确认",
+        channel: "test-channel",
+        messageId: "wrong-session-confirmation",
+      },
+      { sessionKey: "agent:fitness:webchat:other-confirmation" },
+    )).resolves.toBeUndefined();
+    expect(existsSync(join(
+      fixture.personalDataDirectory.personalDataDirectory,
+      "observations",
+      "workout-log",
+    ))).toBe(false);
+  });
+
+  it("records an explicitly blank unknown field after accepting candidates", async () => {
+    const fixture = await createPendingWorkoutConfirmation({
+      sessionKey: "agent:fitness:webchat:explicit-blank",
+    });
+    await fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "全部确认",
+        channel: "test-channel",
+        messageId: "explicit-blank-accept-known",
+      },
+      { sessionKey: fixture.sessionKey },
+    );
+
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "原表未填写",
+        channel: "test-channel",
+        messageId: "explicit-blank-answer",
+      },
+      { sessionKey: fixture.sessionKey },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("已记录训练") },
+    });
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "全部确认",
+        channel: "test-channel",
+        messageId: "natural-confirmation-replay",
+      },
+      { sessionKey: fixture.sessionKey },
+    )).resolves.toBeUndefined();
+  });
+
+  it("fails closed when semantic confirmation output is invalid", async () => {
+    const fixture = await createPendingWorkoutConfirmation({
+      sessionKey: "agent:fitness:webchat:invalid-semantic-output",
+      llmComplete: vi.fn().mockResolvedValue({ text: "当然，都确认。" }),
+    });
+
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "看起来都没什么问题，就照这个记吧",
+        channel: "test-channel",
+        messageId: "invalid-semantic-answer",
+      },
+      { sessionKey: fixture.sessionKey },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("没有保存") },
+    });
+    expect(existsSync(join(
+      fixture.personalDataDirectory.personalDataDirectory,
+      "observations",
+      "workout-log",
+    ))).toBe(false);
+  });
+
+  it("does not accept a model-supplied null unless the user explicitly says blank", async () => {
+    const fixture = await createPendingWorkoutConfirmation({
+      sessionKey: "agent:fitness:webchat:implicit-null",
+      llmComplete: vi.fn().mockResolvedValue({
+        text: JSON.stringify({
+          kind: "accept-with-overrides",
+          confidence: "high",
+          updates: [{ fieldId: "f3", value: null }],
+        }),
+      }),
+    });
+
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "其他都确认，最后一个也照你判断",
+        channel: "test-channel",
+        messageId: "implicit-null-answer",
+      },
+      { sessionKey: fixture.sessionKey },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("没有保存") },
+    });
+    expect(existsSync(join(
+      fixture.personalDataDirectory.personalDataDirectory,
+      "observations",
+      "workout-log",
+    ))).toBe(false);
+  });
+
+  it("allows unrelated text to continue while a confirmation is pending", async () => {
+    const llmComplete = vi.fn().mockResolvedValue({
+      text: JSON.stringify({ kind: "unrelated", confidence: "high" }),
+    });
+    const fixture = await createPendingWorkoutConfirmation({
+      sessionKey: "agent:fitness:webchat:unrelated-confirmation",
+      llmComplete,
+    });
+
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "你好",
+        channel: "test-channel",
+        messageId: "unrelated-question",
+        runId: "unrelated-question-run",
+      },
+      { sessionKey: fixture.sessionKey, runId: "unrelated-question-run" },
+    )).resolves.toBeUndefined();
+    await expect(fixture.hooks.get("before_agent_run")?.(
+      { prompt: "你好", messages: [] },
+      {
+        agentId: "fitness",
+        sessionKey: fixture.sessionKey,
+        runId: "unrelated-question-run",
+      },
+    )).resolves.toEqual({ outcome: "pass" });
+    expect(llmComplete).toHaveBeenCalledOnce();
+  });
+
+  it("terminates a cancelled confirmation without creating an Observation", async () => {
+    const fixture = await createPendingWorkoutConfirmation({
+      sessionKey: "agent:fitness:webchat:cancel-confirmation",
+      llmComplete: vi.fn().mockResolvedValue({
+        text: JSON.stringify({ kind: "cancel", confidence: "high" }),
+      }),
+    });
+    const confirmationId = pendingWorkoutLogConfirmationId(
+      fixture.personalDataDirectory.personalDataDirectory,
+    );
+
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "先别保存这次记录",
+        channel: "test-channel",
+        messageId: "cancel-confirmation-answer",
+      },
+      { sessionKey: fixture.sessionKey },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("已取消") },
+    });
+    await expect(
+      fixture.runtime?.pendingWorkoutLogConfirmation(confirmationId),
+    ).resolves.toBeUndefined();
+    expect(existsSync(join(
+      fixture.personalDataDirectory.personalDataDirectory,
+      "observations",
+      "workout-log",
+    ))).toBe(false);
+  });
+
+  it("resumes a partially accepted confirmation after Plugin restart", async () => {
+    const stateRoot = temporaryRoot();
+    const first = await createPendingWorkoutConfirmation({
+      sessionKey: "agent:fitness:webchat:restart-confirmation",
+      stateRoot,
+    });
+    await first.hooks.get("inbound_claim")?.(
+      {
+        content: "全部确认",
+        channel: "test-channel",
+        messageId: "restart-confirmation-accept-known",
+      },
+      { sessionKey: first.sessionKey },
+    );
+    await first.runtime?.shutdown();
+
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: {
+        ...first.personalDataDirectory,
+        extraction: {
+          provider: "operator-provider",
+          model: "operator-model",
+        },
+      },
+      openclawConfig: permittedOpenClawConfig({ allowModel: true }),
+      stateRoot,
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(hooks.get("inbound_claim")?.(
+      {
+        content: "平板支撑动作质量是中",
+        channel: "test-channel",
+        messageId: "restart-confirmation-final-field",
+      },
+      { sessionKey: first.sessionKey },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("已记录训练") },
+    });
+  });
+
+  it("fails closed instead of entering the ordinary model when session state is corrupt", async () => {
+    const fixture = await createPendingWorkoutConfirmation({
+      sessionKey: "agent:fitness:webchat:corrupt-confirmation",
+    });
+    const hashedSession = createHash("sha256")
+      .update(fixture.sessionKey)
+      .digest("hex");
+    writeFileSync(
+      join(
+        fixture.stateRoot,
+        "stella-fitness",
+        "workout-log-confirmation-sessions",
+        `${hashedSession}.json`,
+      ),
+      JSON.stringify({ schemaVersion: "corrupt" }),
+    );
+
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "全部确认",
+        channel: "test-channel",
+        messageId: "corrupt-confirmation-answer",
+      },
+      { sessionKey: fixture.sessionKey },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("没有保存或更新进度") },
+    });
+  });
+
+  it("keeps the exact workout-log confirmation command compatible", async () => {
+    const fixture = await createPendingWorkoutConfirmation({
+      sessionKey: "agent:fitness:webchat:exact-confirmation",
+    });
+    const confirmationId = pendingWorkoutLogConfirmationId(
+      fixture.personalDataDirectory.personalDataDirectory,
+    );
+    const command = `/stella-confirm ${confirmationId} ${JSON.stringify({
+      "exercises[1].actionQuality.value": "中",
+      "exercises[3].sets[0].value": 40,
+      "exercises[3].actionQuality.value": "中",
+    })}`;
+
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: command,
+        channel: "test-channel",
+        messageId: "exact-confirmation-answer",
+      },
+      { sessionKey: fixture.sessionKey },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("已记录训练") },
+    });
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "全部确认",
+        channel: "test-channel",
+        messageId: "exact-confirmation-replay",
+      },
+      { sessionKey: fixture.sessionKey },
+    )).resolves.toBeUndefined();
+  });
+
+  it("keeps the newest confirmation active when an older image finishes later", async () => {
+    const fixture = await createPendingWorkoutConfirmation({
+      includeUnknown: false,
+      sessionKey: "agent:fitness:webchat:ordered-confirmation",
+    });
+    const olderMediaPath = join(
+      fixture.personalDataDirectory.personalDataDirectory,
+      "older-confirmation.png",
+    );
+    writeFileSync(olderMediaPath, rawMediaUploadFixture().bytes);
+    await fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "",
+        channel: "test-channel",
+        timestamp: Date.parse("2026-08-18T06:10:00.000Z"),
+        messageId: "older-confirmation-photo",
+        runId: "older-confirmation-run",
+        metadata: { mediaPath: olderMediaPath, mediaType: "image/png" },
+      },
+      { sessionKey: fixture.sessionKey },
+    );
+
+    await fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "全部确认",
+        channel: "test-channel",
+        messageId: "ordered-confirmation-answer",
+      },
+      { sessionKey: fixture.sessionKey },
+    );
+    await expect(fixture.runtime?.trainingRecordView()).resolves.toMatchObject({
+      records: [{
+        observation: {
+          provenance: { runId: `run-${fixture.sessionKey}` },
+        },
+      }],
+    });
   });
 
   it("routes an explicitly identified workout correction through image ingress", async () => {
@@ -2237,8 +2784,10 @@ function compatibleApi(options: {
   pluginConfig?: Record<string, unknown>;
   openclawConfig?: TestOpenClawConfig;
   extractStructuredWithModel?: ReturnType<typeof vi.fn>;
+  llmComplete?: ReturnType<typeof vi.fn>;
+  stateRoot?: string;
 }) {
-  const stateRoot = temporaryRoot();
+  const stateRoot = options.stateRoot ?? temporaryRoot();
   const openclawConfig = options.openclawConfig ?? permittedOpenClawConfig();
   if (options.pluginConfig !== undefined) {
     openclawConfig.plugins.entries["stella-fitness"]!.config =
@@ -2261,6 +2810,9 @@ function compatibleApi(options: {
         extractStructuredWithModel:
           options.extractStructuredWithModel ?? vi.fn(),
       },
+      llm: {
+        complete: options.llmComplete ?? vi.fn(),
+      },
     },
     registerCommand(command: Record<string, unknown>) {
       options.commands.push(command);
@@ -2282,6 +2834,124 @@ function compatibleApi(options: {
     },
     registerService() {},
   };
+}
+
+async function createPendingWorkoutConfirmation(options?: {
+  readonly sessionKey?: string;
+  readonly llmComplete?: ReturnType<typeof vi.fn>;
+  readonly stateRoot?: string;
+  readonly personalDataDirectory?: ReturnType<typeof configuredPersonalDirectory>;
+  readonly includeUnknown?: boolean;
+}) {
+  const hooks = new Map<string, (...args: unknown[]) => unknown>();
+  const personalDataDirectory =
+    options?.personalDataDirectory ?? configuredPersonalDirectory();
+  const stateRoot = options?.stateRoot ?? temporaryRoot();
+  const mediaPath = join(
+    personalDataDirectory.personalDataDirectory,
+    `confirmation-${createHash("sha256").update(options?.sessionKey ?? "default").digest("hex").slice(0, 8)}.png`,
+  );
+  writeFileSync(mediaPath, rawMediaUploadFixture().bytes);
+  const candidate = activeWorkoutLogCandidate() as unknown as {
+    exercises: Array<{
+      actionQuality: { value: unknown; confidence: "high" | "low" };
+      sets: Array<{ value: unknown; confidence: "high" | "low" }>;
+    }>;
+    uncertainFields: Array<{
+      path: string;
+      kind: "unknown" | "low-confidence" | "conflict" | "confirmation-required";
+      candidates?: string[];
+    }>;
+  };
+  candidate.exercises[1]!.actionQuality = { value: "中", confidence: "low" };
+  candidate.exercises[3]!.sets[0] = { value: 40, confidence: "low" };
+  candidate.exercises[3]!.actionQuality = {
+    value: null,
+    confidence: options?.includeUnknown === false ? "high" : "low",
+  };
+  candidate.uncertainFields = [
+    {
+      path: "exercises[1].actionQuality.value",
+      kind: "low-confidence",
+      candidates: ["中"],
+    },
+    {
+      path: "exercises[3].sets[0].value",
+      kind: "low-confidence",
+      candidates: ["40"],
+    },
+    ...(options?.includeUnknown === false
+      ? []
+      : [{
+          path: "exercises[3].actionQuality.value",
+          kind: "unknown" as const,
+        }]),
+  ];
+  const api = compatibleApi({
+    commands: [],
+    hooks,
+    cliRegistrations: [],
+    pluginConfig: {
+      ...personalDataDirectory,
+      extraction: {
+        provider: "operator-provider",
+        model: "operator-model",
+      },
+    },
+    openclawConfig: permittedOpenClawConfig({ allowModel: true }),
+    extractStructuredWithModel: vi.fn().mockResolvedValue({
+      parsed: candidate,
+      provider: "operator-provider",
+      model: "operator-model",
+      contentType: "json",
+    }),
+    ...(options?.llmComplete === undefined
+      ? {}
+      : { llmComplete: options.llmComplete }),
+    stateRoot,
+  });
+  const runtime = registerStellaFitnessPlugin(
+    api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+  );
+  await activateProgramFixture({
+    personalDataDirectory: personalDataDirectory.personalDataDirectory,
+    programSpec: parse(readFileSync(programFixturePath(), "utf8")),
+    cycleStart: "2026-08-17",
+  });
+  const sessionKey = options?.sessionKey ?? "agent:fitness:webchat:confirmation";
+  const pending = await hooks.get("inbound_claim")?.(
+    {
+      content: "",
+      channel: "test-channel",
+      timestamp: Date.parse("2026-08-18T06:11:23.374Z"),
+      messageId: `photo-${sessionKey}`,
+      runId: `run-${sessionKey}`,
+      metadata: { mediaPath, mediaType: "image/png" },
+    },
+    { sessionKey },
+  );
+  return { hooks, personalDataDirectory, runtime, sessionKey, pending, stateRoot };
+}
+
+function pendingWorkoutLogConfirmationId(personalDataDirectory: string): string {
+  const directory = join(personalDataDirectory, "processing", "workout-log");
+  for (const file of readdirSync(directory).sort().reverse()) {
+    const value: unknown = parse(readFileSync(join(directory, file), "utf8"));
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "status" in value &&
+      value.status === "awaiting-confirmation" &&
+      "result" in value &&
+      typeof value.result === "object" &&
+      value.result !== null &&
+      "confirmationId" in value.result &&
+      typeof value.result.confirmationId === "string"
+    ) {
+      return value.result.confirmationId;
+    }
+  }
+  throw new Error("Expected a pending workout-log confirmation");
 }
 
 function allowedModelConfig() {

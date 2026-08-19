@@ -24,6 +24,8 @@ describe("OpenClaw stable contract baseline", () => {
       ],
       dedicatedAgentScope: "agent-runtime.resolveAgentIdFromSessionKey",
       structuredMedia: "runtime.mediaUnderstanding.extractStructuredWithModel",
+      confirmationState: "plugin-owned-runtime-directory",
+      semanticConfirmation: "runtime.llm.complete",
       modelPermission: "explicit-openclaw-model-allowlist",
       executionMetadata: ["provider", "model", "contentType"],
       timeout: "timeoutMs",
@@ -37,6 +39,14 @@ describe("OpenClaw stable contract baseline", () => {
 
     expect(() => assertOpenClawContract(host)).toThrow(
       new OpenClawContractError("structured-media"),
+    );
+  });
+
+  it("requires text completion for confirmation routing", () => {
+    const missingLlm = compatibleHost();
+    missingLlm.runtime.llm.complete = undefined;
+    expect(() => assertOpenClawContract(missingLlm)).toThrow(
+      new OpenClawContractError("llm-complete"),
     );
   });
 
@@ -70,6 +80,7 @@ function compatibleHost(): {
   runtime: {
     version: string;
     mediaUnderstanding: { extractStructuredWithModel?: unknown };
+    llm: { complete?: unknown };
   };
   on: ReturnType<typeof vi.fn>;
 } {
@@ -79,6 +90,7 @@ function compatibleHost(): {
       mediaUnderstanding: {
         extractStructuredWithModel: vi.fn(),
       },
+      llm: { complete: vi.fn() },
     },
     on: vi.fn(),
   };
