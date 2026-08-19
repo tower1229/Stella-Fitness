@@ -1718,6 +1718,166 @@ describe("Plugin registration", () => {
     ).toHaveLength(1);
   });
 
+  it("claims a Dashboard media-only turn before the generic agent runs", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const personalDataDirectory = configuredPersonalDirectory();
+    const stateRoot = temporaryRoot();
+    const mediaDirectory = join(stateRoot, "media", "inbound");
+    mkdirSync(mediaDirectory, { recursive: true });
+    const mediaFileName = "第一阶段---dashboard-workout.jpg";
+    writeFileSync(
+      join(mediaDirectory, mediaFileName),
+      rawMediaUploadFixture().bytes,
+    );
+    const candidate = activeWorkoutLogCandidate();
+    const extractStructuredWithModel = vi.fn().mockResolvedValue({
+      parsed: candidate,
+      provider: "operator-provider",
+      model: "operator-model",
+      contentType: "json",
+    });
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: {
+        ...personalDataDirectory,
+        extraction: { provider: "operator-provider", model: "operator-model" },
+      },
+      openclawConfig: permittedOpenClawConfig({ allowModel: true }),
+      extractStructuredWithModel,
+      stateRoot,
+    });
+    await activateProgramFixture({
+      personalDataDirectory: personalDataDirectory.personalDataDirectory,
+      programSpec: parse(readFileSync(programFixturePath(), "utf8")),
+      cycleStart: "2026-08-17",
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(hooks.get("before_agent_reply")?.(
+      {
+        cleanedBody:
+          `[media attached: media://inbound/${mediaFileName} (image/jpeg)]\n` +
+          "[User sent media without caption]",
+      },
+      {
+        sessionKey: "agent:fitness:dashboard:test",
+        runId: "dashboard-media-only-run",
+        messageProvider: "dashboard",
+      },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringContaining("已记录训练"),
+      },
+    });
+    expect(extractStructuredWithModel).toHaveBeenCalledOnce();
+    expect(extractStructuredWithModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instructions: expect.stringContaining(
+          "Target exactly: stage 1, week 1, monday, full-body, date 2026-08-17",
+        ),
+      }),
+    );
+  });
+
+  it("records a Dashboard workout when the user confirms the current candidates", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const personalDataDirectory = configuredPersonalDirectory();
+    const stateRoot = temporaryRoot();
+    const mediaDirectory = join(stateRoot, "media", "inbound");
+    mkdirSync(mediaDirectory, { recursive: true });
+    const mediaFileName = "第一阶段---dashboard-confirmation.jpg";
+    writeFileSync(
+      join(mediaDirectory, mediaFileName),
+      rawMediaUploadFixture().bytes,
+    );
+    const candidate = activeWorkoutLogCandidate() as unknown as {
+      weekday: { value: string; confidence: "high" | "low" };
+      exercises: Array<{
+        load: { value: unknown; confidence: "high" | "low" };
+      }>;
+      uncertainFields: Array<{
+        path: string;
+        kind: "unknown" | "low-confidence" | "conflict" | "confirmation-required";
+        candidates?: string[];
+      }>;
+    };
+    candidate.exercises[2]!.load.confidence = "low";
+    candidate.uncertainFields = [{
+      path: "exercises[2].load.value",
+      kind: "low-confidence",
+      candidates: ["15 kg"],
+    }];
+    const llmComplete = vi.fn().mockRejectedValue(
+      new Error("confirmation model must not be needed"),
+    );
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: {
+        ...personalDataDirectory,
+        extraction: { provider: "operator-provider", model: "operator-model" },
+      },
+      openclawConfig: permittedOpenClawConfig({ allowModel: true }),
+      extractStructuredWithModel: vi.fn().mockResolvedValue({
+        parsed: candidate,
+        provider: "operator-provider",
+        model: "operator-model",
+        contentType: "json",
+      }),
+      llmComplete,
+      stateRoot,
+    });
+    await activateProgramFixture({
+      personalDataDirectory: personalDataDirectory.personalDataDirectory,
+      programSpec: parse(readFileSync(programFixturePath(), "utf8")),
+      cycleStart: "2026-08-17",
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const sessionKey = "agent:fitness:dashboard:confirmation";
+
+    await expect(hooks.get("before_agent_reply")?.(
+      {
+        cleanedBody:
+          `[media attached: media://inbound/${mediaFileName} (image/jpeg)]\n` +
+          "[User sent media without caption]",
+      },
+      {
+        sessionKey,
+        runId: "dashboard-confirmation-photo",
+        messageProvider: "dashboard",
+      },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("哑铃硬拉的重量") },
+    });
+
+    await expect(hooks.get("before_agent_reply")?.(
+      { cleanedBody: "确认" },
+      {
+        sessionKey,
+        runId: "dashboard-confirmation-answer",
+        messageProvider: "dashboard",
+      },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("已记录训练") },
+    });
+    expect(llmComplete).not.toHaveBeenCalled();
+    expect(readdirSync(join(
+      personalDataDirectory.personalDataDirectory,
+      "observations",
+      "workout-log",
+    ))).toHaveLength(1);
+  });
+
   it("handles a routed workout-log image at reply_dispatch without Plugin binding", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const personalDataDirectory = configuredPersonalDirectory();
@@ -1984,6 +2144,7 @@ describe("Plugin registration", () => {
     expect(pendingText).toContain("哑铃卧推的动作质量：识别为“中”");
     expect(pendingText).toContain("平板支撑第 1 组时长：识别为40 秒");
     expect(pendingText).toContain("平板支撑的动作质量：无法识别");
+    expect(pendingText).toContain("直接回复“确认”");
     expect(pendingText).not.toContain("/stella-confirm");
     expect(existsSync(join(
       personalDataDirectory.personalDataDirectory,
@@ -2142,25 +2303,50 @@ describe("Plugin registration", () => {
     );
   });
 
-  it("records all concrete candidates from an all-confirmed reply", async () => {
+  it.each(["全部确认", "确认全部"])(
+    "records all concrete candidates from the compatible reply %s",
+    async (content) => {
+      const fixture = await createPendingWorkoutConfirmation({
+        includeUnknown: false,
+        sessionKey: `agent:fitness:webchat:all-concrete:${content}`,
+      });
+
+      await expect(fixture.hooks.get("inbound_claim")?.(
+        {
+          content,
+          channel: "test-channel",
+          messageId: "all-concrete-confirmation",
+        },
+        { sessionKey: fixture.sessionKey },
+      )).resolves.toMatchObject({
+        handled: true,
+        reply: {
+          text: "已记录训练：第 1 阶段第 1 周，周一，全身训练。本周已记录 1/3 次；下一次计划：2026-08-19（周三）全身训练。",
+        },
+      });
+    },
+  );
+
+  it("records all current concrete candidates from a concise confirmation", async () => {
+    const llmComplete = vi.fn();
     const fixture = await createPendingWorkoutConfirmation({
       includeUnknown: false,
-      sessionKey: "agent:fitness:webchat:all-concrete",
+      sessionKey: "agent:fitness:webchat:concise-confirmation",
+      llmComplete,
     });
 
     await expect(fixture.hooks.get("inbound_claim")?.(
       {
-        content: "全部确认",
+        content: "确认！",
         channel: "test-channel",
-        messageId: "all-concrete-confirmation",
+        messageId: "concise-confirmation",
       },
       { sessionKey: fixture.sessionKey },
     )).resolves.toMatchObject({
       handled: true,
-      reply: {
-        text: "已记录训练：第 1 阶段第 1 周，周一，全身训练。本周已记录 1/3 次；下一次计划：2026-08-19（周三）全身训练。",
-      },
+      reply: { text: expect.stringContaining("已记录训练") },
     });
+    expect(llmComplete).not.toHaveBeenCalled();
   });
 
   it("claims Telegram confirmation text at before_agent_run when no Plugin binding exists", async () => {
@@ -2220,7 +2406,7 @@ describe("Plugin registration", () => {
     });
     await fixture.hooks.get("inbound_claim")?.(
       {
-        content: "全部确认",
+        content: "确认",
         channel: "test-channel",
         messageId: "explicit-blank-accept-known",
       },
@@ -2248,6 +2434,35 @@ describe("Plugin registration", () => {
     )).resolves.toBeUndefined();
   });
 
+  it("does not claim that zero candidates were accepted", async () => {
+    const llmComplete = vi.fn();
+    const fixture = await createPendingWorkoutConfirmation({
+      onlyUnknown: true,
+      sessionKey: "agent:fitness:webchat:only-unknown",
+      llmComplete,
+    });
+
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: "确认",
+        channel: "test-channel",
+        messageId: "only-unknown-confirmation",
+      },
+      { sessionKey: fixture.sessionKey },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringContaining("没有可确认的识别值"),
+      },
+    });
+    expect(llmComplete).not.toHaveBeenCalled();
+    expect(existsSync(join(
+      fixture.personalDataDirectory.personalDataDirectory,
+      "observations",
+      "workout-log",
+    ))).toBe(false);
+  });
+
   it("fails closed when semantic confirmation output is invalid", async () => {
     const fixture = await createPendingWorkoutConfirmation({
       sessionKey: "agent:fitness:webchat:invalid-semantic-output",
@@ -2270,6 +2485,34 @@ describe("Plugin registration", () => {
       "observations",
       "workout-log",
     ))).toBe(false);
+  });
+
+  it("logs only a safe reason code when confirmation classification fails", async () => {
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    const userText = "其他都照这个保存，但平板支撑动作质量是中";
+    const fixture = await createPendingWorkoutConfirmation({
+      sessionKey: "agent:fitness:webchat:classification-failure-log",
+      llmComplete: vi.fn().mockRejectedValue(new Error("provider unavailable")),
+      logger,
+    });
+
+    await expect(fixture.hooks.get("inbound_claim")?.(
+      {
+        content: userText,
+        channel: "test-channel",
+        messageId: "classification-failure-answer",
+      },
+      { sessionKey: fixture.sessionKey },
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("没有保存") },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      "stella-fitness confirmation classification unresolved: reason=provider-error pendingFieldCount=3",
+    );
+    const logged = JSON.stringify(logger.warn.mock.calls);
+    expect(logged).not.toContain(userText);
+    expect(logged).not.toMatch(/平板支撑|动作质量|40/u);
   });
 
   it("does not accept a model-supplied null unless the user explicitly says blank", async () => {
@@ -2785,6 +3028,10 @@ function compatibleApi(options: {
   openclawConfig?: TestOpenClawConfig;
   extractStructuredWithModel?: ReturnType<typeof vi.fn>;
   llmComplete?: ReturnType<typeof vi.fn>;
+  logger?: {
+    readonly warn: ReturnType<typeof vi.fn>;
+    readonly error: ReturnType<typeof vi.fn>;
+  };
   stateRoot?: string;
 }) {
   const stateRoot = options.stateRoot ?? temporaryRoot();
@@ -2795,6 +3042,7 @@ function compatibleApi(options: {
   }
   return {
     id: "stella-fitness",
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
     registrationMode: "full",
     config: openclawConfig,
     pluginConfig: options.pluginConfig,
@@ -2842,6 +3090,11 @@ async function createPendingWorkoutConfirmation(options?: {
   readonly stateRoot?: string;
   readonly personalDataDirectory?: ReturnType<typeof configuredPersonalDirectory>;
   readonly includeUnknown?: boolean;
+  readonly onlyUnknown?: boolean;
+  readonly logger?: {
+    readonly warn: ReturnType<typeof vi.fn>;
+    readonly error: ReturnType<typeof vi.fn>;
+  };
 }) {
   const hooks = new Map<string, (...args: unknown[]) => unknown>();
   const personalDataDirectory =
@@ -2863,23 +3116,30 @@ async function createPendingWorkoutConfirmation(options?: {
       candidates?: string[];
     }>;
   };
-  candidate.exercises[1]!.actionQuality = { value: "中", confidence: "low" };
-  candidate.exercises[3]!.sets[0] = { value: 40, confidence: "low" };
+  candidate.exercises[1]!.actionQuality = {
+    value: "中",
+    confidence: options?.onlyUnknown === true ? "high" : "low",
+  };
+  candidate.exercises[3]!.sets[0] = {
+    value: 40,
+    confidence: options?.onlyUnknown === true ? "high" : "low",
+  };
   candidate.exercises[3]!.actionQuality = {
     value: null,
     confidence: options?.includeUnknown === false ? "high" : "low",
   };
   candidate.uncertainFields = [
-    {
-      path: "exercises[1].actionQuality.value",
-      kind: "low-confidence",
-      candidates: ["中"],
-    },
-    {
-      path: "exercises[3].sets[0].value",
-      kind: "low-confidence",
-      candidates: ["40"],
-    },
+    ...(options?.onlyUnknown === true
+      ? []
+      : [{
+          path: "exercises[1].actionQuality.value",
+          kind: "low-confidence" as const,
+          candidates: ["中"],
+        }, {
+          path: "exercises[3].sets[0].value",
+          kind: "low-confidence" as const,
+          candidates: ["40"],
+        }]),
     ...(options?.includeUnknown === false
       ? []
       : [{
@@ -2908,6 +3168,7 @@ async function createPendingWorkoutConfirmation(options?: {
     ...(options?.llmComplete === undefined
       ? {}
       : { llmComplete: options.llmComplete }),
+    ...(options?.logger === undefined ? {} : { logger: options.logger }),
     stateRoot,
   });
   const runtime = registerStellaFitnessPlugin(

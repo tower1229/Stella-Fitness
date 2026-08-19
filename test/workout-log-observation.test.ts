@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 describe("workout-log Observation recording", () => {
-  it("targets the latest unrecorded planned session in the upload's local week", async () => {
+  it("targets the first unrecorded planned session in the active cycle", async () => {
     const personalDataDirectory = temporaryDirectory("stella-personal-");
     const extractionRuntime = new ControlledExtractionRuntime([
       { parsed: plannedWeekOnePage(), metadata: { provider: "controlled" } },
@@ -73,6 +73,218 @@ describe("workout-log Observation recording", () => {
         }),
       }),
     ]);
+  });
+
+  it("targets Monday first when a Wednesday upload has no recorded sessions", async () => {
+    const personalDataDirectory = temporaryDirectory("stella-personal-");
+    const extractionRuntime = new ControlledExtractionRuntime([
+      { parsed: plannedWeekOnePage(), metadata: { provider: "controlled" } },
+    ]);
+    const harness = createScenarioHarness({
+      extractionRuntime,
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => temporaryDirectory("stella-runtime-"),
+      userTimezone: () => "Asia/Shanghai",
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+      cycleStart: "2026-08-17",
+    });
+
+    const result = await harness.ingestWorkoutLog({
+      intent: "auto",
+      runId: "auto-week-one-wednesday-with-monday-missing",
+      upload: {
+        ...rawMediaUploadFixture(),
+        receivedAt: "2026-08-19T02:45:00.000Z",
+      },
+      timeoutMs: 2_000,
+    });
+
+    expect(result).toMatchObject({
+      status: "recorded",
+      observation: {
+        week: { value: 1 },
+        weekday: { value: "monday" },
+      },
+    });
+    expect(extractionRuntime.requests).toEqual([
+      expect.objectContaining({
+        target: expect.objectContaining({
+          date: "2026-08-17",
+          week: 1,
+          weekday: "monday",
+        }),
+      }),
+    ]);
+  });
+
+  it("does not skip an unrecorded session from an earlier week", async () => {
+    const personalDataDirectory = temporaryDirectory("stella-personal-");
+    const extractionRuntime = new ControlledExtractionRuntime([
+      { parsed: plannedWeekOnePage(), metadata: { provider: "controlled" } },
+    ]);
+    const harness = createScenarioHarness({
+      extractionRuntime,
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => temporaryDirectory("stella-runtime-"),
+      userTimezone: () => "Asia/Shanghai",
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+      cycleStart: "2026-08-10",
+    });
+
+    const result = await harness.ingestWorkoutLog({
+      intent: "auto",
+      runId: "auto-week-two-with-week-one-missing",
+      upload: {
+        ...rawMediaUploadFixture(),
+        receivedAt: "2026-08-17T02:45:00.000Z",
+      },
+      timeoutMs: 2_000,
+    });
+
+    expect(result).toMatchObject({ status: "recorded" });
+    expect(extractionRuntime.requests[0]).toMatchObject({
+      target: {
+        date: "2026-08-10",
+        week: 1,
+        weekday: "monday",
+      },
+    });
+  });
+
+  it("targets Wednesday after Monday is recorded", async () => {
+    const personalDataDirectory = temporaryDirectory("stella-personal-");
+    const monday = plannedWeekOnePage();
+    const wednesday = plannedWeekOnePage();
+    wednesday.weekday = field("wednesday");
+    const extractionRuntime = new ControlledExtractionRuntime([
+      { parsed: monday, metadata: { provider: "controlled" } },
+      { parsed: wednesday, metadata: { provider: "controlled" } },
+    ]);
+    const harness = createScenarioHarness({
+      extractionRuntime,
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => temporaryDirectory("stella-runtime-"),
+      userTimezone: () => "Asia/Shanghai",
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+      cycleStart: "2026-08-17",
+    });
+
+    await expect(harness.ingestWorkoutLog({
+      intent: "auto",
+      runId: "auto-record-monday-first",
+      upload: {
+        ...rawMediaUploadFixture(),
+        receivedAt: "2026-08-17T02:45:00.000Z",
+      },
+      timeoutMs: 2_000,
+    })).resolves.toMatchObject({ status: "recorded" });
+
+    await expect(harness.ingestWorkoutLog({
+      intent: "auto",
+      runId: "auto-target-wednesday-second",
+      upload: {
+        ...rawMediaUploadFixture(),
+        bytes: Buffer.concat([
+          rawMediaUploadFixture().bytes,
+          Buffer.from([0]),
+        ]),
+        receivedAt: "2026-08-19T02:45:00.000Z",
+      },
+      timeoutMs: 2_000,
+    })).resolves.toMatchObject({
+      status: "recorded",
+      observation: { weekday: { value: "wednesday" } },
+    });
+    expect(extractionRuntime.requests[1]).toMatchObject({
+      target: {
+        date: "2026-08-19",
+        week: 1,
+        weekday: "wednesday",
+      },
+    });
+  });
+
+  it("returns to Monday when Wednesday was previously recorded out of order", async () => {
+    const personalDataDirectory = temporaryDirectory("stella-personal-");
+    const monday = plannedWeekOnePage();
+    const wednesday = plannedWeekOnePage();
+    wednesday.weekday = field("wednesday");
+    const extractionRuntime = new ControlledExtractionRuntime([
+      { parsed: wednesday, metadata: { provider: "controlled" } },
+      { parsed: monday, metadata: { provider: "controlled" } },
+    ]);
+    const harness = createScenarioHarness({
+      extractionRuntime,
+      personalDataDirectory: () => personalDataDirectory,
+      runtimeDirectory: () => temporaryDirectory("stella-runtime-"),
+      userTimezone: () => "Asia/Shanghai",
+      preflight: () => ({ readiness: "READY", reasons: [] }),
+    });
+    await activateProgramFixture({
+      personalDataDirectory,
+      programSpec: await programFixture(),
+      cycleStart: "2026-08-17",
+    });
+
+    await expect(harness.ingestWorkoutLog({
+      intent: "explicit",
+      runId: "explicit-out-of-order-wednesday",
+      upload: {
+        ...rawMediaUploadFixture(),
+        receivedAt: "2026-08-19T02:45:00.000Z",
+      },
+      timeoutMs: 2_000,
+    })).resolves.toMatchObject({
+      status: "recorded",
+      observation: { weekday: { value: "wednesday" } },
+    });
+
+    const recovered = await harness.ingestWorkoutLog({
+      intent: "auto",
+      runId: "auto-recover-missing-monday",
+      upload: {
+        ...rawMediaUploadFixture(),
+        receivedAt: "2026-08-19T02:46:00.000Z",
+      },
+      timeoutMs: 2_000,
+    });
+    expect(recovered).toMatchObject({
+      status: "recorded",
+      observation: { weekday: { value: "monday" } },
+      progress: {
+        week: 1,
+        recordedSessions: 2,
+        plannedSessions: 3,
+        nextSession: {
+          date: "2026-08-21",
+          weekday: "friday",
+          sessionType: "full-body",
+        },
+      },
+    });
+    const view = await harness.trainingRecordView();
+    expect(view.errors).toEqual([]);
+    expect(view.records.map(({ observation }) => observation.weekday.value).sort())
+      .toEqual(["monday", "wednesday"]);
+    expect(extractionRuntime.requests[1]).toMatchObject({
+      target: {
+        date: "2026-08-17",
+        week: 1,
+        weekday: "monday",
+      },
+    });
   });
 
   it("does not persist an automatic candidate from another visible session", async () => {

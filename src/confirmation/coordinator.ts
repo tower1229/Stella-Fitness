@@ -42,17 +42,35 @@ export type ConfirmationIntent =
     }
   | { readonly kind: "cancel" | "unrelated" | "ambiguous" };
 
+export type ConfirmationClassificationFailure =
+  | "missing-agent-id"
+  | "timeout"
+  | "provider-error"
+  | "invalid-output"
+  | "low-confidence";
+
+export type ConfirmationClassification =
+  | {
+      readonly status: "classified";
+      readonly intent: ConfirmationIntent;
+    }
+  | { readonly status: ConfirmationClassificationFailure };
+
 export type ConfirmationIntentClassifier = {
   classify(input: {
     readonly text: string;
     readonly fields: readonly ConfirmationFieldOption[];
     readonly target?: Pick<WorkoutLogTarget, "stage" | "week" | "weekday" | "sessionType">;
-  }): Promise<ConfirmationIntent>;
+  }): Promise<ConfirmationClassification>;
 };
 
 export type WorkoutLogConfirmationTurnResult =
   | { readonly status: "not-applicable" }
-  | { readonly status: "ambiguous" }
+  | {
+      readonly status: "ambiguous";
+      readonly classificationFailure?: ConfirmationClassificationFailure;
+      readonly pendingFieldCount?: number;
+    }
   | { readonly status: "cancelled" }
   | {
       readonly status: "confirmation";
@@ -138,21 +156,34 @@ export function createWorkoutLogConfirmationCoordinator(options: {
         }
         const values: Record<string, unknown> = { ...state.values };
         const localIntent = localConfirmationIntent(pending, values, input.text);
-        const intent = localIntent ?? await options.classifier.classify({
-          text: input.text,
-          fields: confirmationFieldOptions(pending),
-          ...(pending.target === undefined
-            ? {}
-            : {
-                target: {
-                  stage: pending.target.stage,
-                  week: pending.target.week,
-                  weekday: pending.target.weekday,
-                  sessionType: pending.target.sessionType,
-                },
-              }
-          ),
-        });
+        let intent: ConfirmationIntent;
+        if (localIntent !== undefined) {
+          intent = localIntent;
+        } else {
+          const classification = await options.classifier.classify({
+            text: input.text,
+            fields: confirmationFieldOptions(pending),
+            ...(pending.target === undefined
+              ? {}
+              : {
+                  target: {
+                    stage: pending.target.stage,
+                    week: pending.target.week,
+                    weekday: pending.target.weekday,
+                    sessionType: pending.target.sessionType,
+                  },
+                }
+            ),
+          });
+          if (classification.status !== "classified") {
+            return {
+              status: "ambiguous",
+              classificationFailure: classification.status,
+              pendingFieldCount: pending.fields.length,
+            };
+          }
+          intent = classification.intent;
+        }
         if (intent.kind === "unrelated") return { status: "not-applicable" };
         if (intent.kind === "ambiguous") return { status: "ambiguous" };
         if (intent.kind === "cancel") {
@@ -244,7 +275,7 @@ function localConfirmationIntent(
   values: Readonly<Record<string, unknown>>,
   text: string,
 ): ConfirmationIntent | undefined {
-  if (/^\s*(?:全部确认|确认全部)\s*[。.!]?\s*$/u.test(text)) {
+  if (/^\s*(?:确认|全部确认|确认全部)\s*[。.!！]?\s*$/u.test(text)) {
     return { kind: "accept-all" };
   }
   const remaining = pending.fields.filter((field) =>

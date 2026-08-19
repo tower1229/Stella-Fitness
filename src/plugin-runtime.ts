@@ -811,7 +811,29 @@ async function executeWorkoutLogIngest(options: {
       execution: { provider: "deduplicated" },
     });
   }
-  const duplicate = options.replacesObservationId === undefined
+  let target: WorkoutLogTarget | undefined;
+  if (options.request.intent === "auto") {
+    try {
+      target = await resolveAutomaticWorkoutTarget({
+        personalDataDirectory: options.personalDataDirectory,
+        receivedAt: options.request.upload.receivedAt,
+        userTimezone: options.userTimezone?.(),
+      });
+    } catch (error) {
+      if (error instanceof AutomaticWorkoutLogTargetError) {
+        if (error.reason === "program-not-active") {
+          return { status: "ignored", reason: error.reason };
+        }
+        if (error.reason !== "user-timezone-unavailable") {
+          return { status: "user-action-required", reason: error.reason };
+        }
+      }
+      throw error;
+    }
+  }
+  const duplicate =
+    options.replacesObservationId === undefined &&
+    options.request.intent === "explicit"
     ? await activeTrainingRecordWithArtifactSha(
         options.personalDataDirectory,
         uploadSha256,
@@ -832,26 +854,6 @@ async function executeWorkoutLogIngest(options: {
       artifact: restored.artifact,
       execution: { provider: "deduplicated" },
     });
-  }
-  let target: WorkoutLogTarget | undefined;
-  if (options.request.intent === "auto") {
-    try {
-      target = await resolveAutomaticWorkoutTarget({
-        personalDataDirectory: options.personalDataDirectory,
-        receivedAt: options.request.upload.receivedAt,
-        userTimezone: options.userTimezone?.(),
-      });
-    } catch (error) {
-      if (error instanceof AutomaticWorkoutLogTargetError) {
-        if (error.reason === "program-not-active") {
-          return { status: "ignored", reason: error.reason };
-        }
-        if (error.reason !== "user-timezone-unavailable") {
-          return { status: "user-action-required", reason: error.reason };
-        }
-      }
-      throw error;
-    }
   }
   let artifact = options.request.intent === "explicit"
     ? await persistRawWorkoutLogArtifact({
@@ -1724,7 +1726,6 @@ async function resolveAutomaticWorkoutTarget(options: {
   if (dayOffset < 0 || dayOffset >= active.program.weeks.length * 7) {
     throw new AutomaticWorkoutLogTargetError("no-due-session");
   }
-  const weekStartOffset = Math.floor(dayOffset / 7) * 7;
   const view = await rebuildTrainingRecordView(options.personalDataDirectory);
   if (view.errors.length > 0) {
     throw new AutomaticWorkoutLogTargetError("training-record-invalid");
@@ -1738,7 +1739,7 @@ async function resolveAutomaticWorkoutTarget(options: {
     ),
   );
   const candidates: PlannedSession[] = [];
-  for (let offset = weekStartOffset; offset <= dayOffset; offset += 1) {
+  for (let offset = 0; offset <= dayOffset; offset += 1) {
     const date = addIsoDays(active.state.cycle.startDate, offset);
     const session = resolvePlannedSession({
       program: active.program,
@@ -1753,7 +1754,7 @@ async function resolveAutomaticWorkoutTarget(options: {
       candidates.push(session);
     }
   }
-  const session = candidates.at(-1);
+  const session = candidates[0];
   if (session === undefined) {
     throw new AutomaticWorkoutLogTargetError("no-due-session");
   }

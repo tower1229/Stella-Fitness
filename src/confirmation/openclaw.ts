@@ -1,4 +1,5 @@
 import type {
+  ConfirmationClassification,
   ConfirmationIntent,
   ConfirmationIntentClassifier,
 } from "./coordinator.js";
@@ -24,7 +25,7 @@ export function createOpenClawConfirmationIntentClassifier(options: {
   return {
     async classify(input) {
       const agentId = options.agentId();
-      if (agentId === undefined) return { kind: "ambiguous" };
+      if (agentId === undefined) return { status: "missing-agent-id" };
       const controller = new AbortController();
       const timeout = setTimeout(
         () => controller.abort(new Error("Confirmation intent classification timed out")),
@@ -52,7 +53,9 @@ export function createOpenClawConfirmationIntentClassifier(options: {
           new Set(input.fields.map(({ fieldId }) => fieldId)),
         );
       } catch {
-        return { kind: "ambiguous" };
+        return controller.signal.aborted
+          ? { status: "timeout" }
+          : { status: "provider-error" };
       } finally {
         clearTimeout(timeout);
       }
@@ -73,54 +76,66 @@ const CONFIRMATION_INTENT_INSTRUCTIONS = [
 function parseConfirmationIntent(
   text: string,
   allowedFieldIds: ReadonlySet<string>,
-): ConfirmationIntent {
+): ConfirmationClassification {
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch {
-    return { kind: "ambiguous" };
+    return { status: "invalid-output" };
   }
   const record = asRecord(value);
   if (
     record === undefined ||
-    record.confidence !== "high" ||
     typeof record.kind !== "string" ||
     !hasOnlyKeys(record, ["kind", "confidence", "updates"])
   ) {
-    return { kind: "ambiguous" };
+    return { status: "invalid-output" };
   }
+  let intent: ConfirmationIntent;
   if (["accept-all", "cancel", "unrelated", "ambiguous"].includes(record.kind)) {
-    if (record.updates !== undefined) return { kind: "ambiguous" };
-    return { kind: record.kind as "accept-all" | "cancel" | "unrelated" | "ambiguous" };
-  }
-  if (
+    if (record.updates !== undefined) return { status: "invalid-output" };
+    intent = {
+      kind: record.kind as "accept-all" | "cancel" | "unrelated" | "ambiguous",
+    };
+  } else if (
     record.kind !== "accept-with-overrides" &&
     record.kind !== "provide-values"
   ) {
-    return { kind: "ambiguous" };
-  }
-  if (!Array.isArray(record.updates) || record.updates.length === 0) {
-    return { kind: "ambiguous" };
-  }
-  const updates: Array<{ fieldId: string; value: string | number | null }> = [];
-  for (const updateValue of record.updates) {
-    const update = asRecord(updateValue);
-    if (
-      update === undefined ||
-      !hasOnlyKeys(update, ["fieldId", "value"]) ||
-      typeof update.fieldId !== "string" ||
-      !allowedFieldIds.has(update.fieldId) ||
-      !(
-        update.value === null ||
-        typeof update.value === "string" ||
-        (typeof update.value === "number" && Number.isFinite(update.value))
-      )
-    ) {
-      return { kind: "ambiguous" };
+    return { status: "invalid-output" };
+  } else {
+    if (!Array.isArray(record.updates) || record.updates.length === 0) {
+      return { status: "invalid-output" };
     }
-    updates.push({ fieldId: update.fieldId, value: update.value });
+    const updates: Array<{ fieldId: string; value: string | number | null }> = [];
+    for (const updateValue of record.updates) {
+      const update = asRecord(updateValue);
+      if (
+        update === undefined ||
+        !hasOnlyKeys(update, ["fieldId", "value"]) ||
+        typeof update.fieldId !== "string" ||
+        !allowedFieldIds.has(update.fieldId) ||
+        !(
+          update.value === null ||
+          typeof update.value === "string" ||
+          (typeof update.value === "number" && Number.isFinite(update.value))
+        )
+      ) {
+        return { status: "invalid-output" };
+      }
+      updates.push({ fieldId: update.fieldId, value: update.value });
+    }
+    intent = { kind: record.kind, updates };
   }
-  return { kind: record.kind, updates };
+  if (record.confidence === "low") {
+    return { status: "low-confidence" };
+  }
+  if (record.confidence !== "high") {
+    return { status: "invalid-output" };
+  }
+  return {
+    status: "classified",
+    intent,
+  };
 }
 
 function hasOnlyKeys(

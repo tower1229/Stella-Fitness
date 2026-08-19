@@ -140,7 +140,15 @@ export function registerStellaFitnessPlugin(
       return formatRemainingWorkoutLogConfirmation(turn);
     }
     if (turn.status === "ambiguous") {
-      return "我没能确定你要确认或修改哪些字段，因此没有保存。请明确说“全部确认”，或直接说明字段和值。";
+      if (
+        turn.classificationFailure !== undefined &&
+        turn.pendingFieldCount !== undefined
+      ) {
+        api.logger?.warn(
+          `stella-fitness confirmation classification unresolved: reason=${turn.classificationFailure} pendingFieldCount=${turn.pendingFieldCount}`,
+        );
+      }
+      return "我没能确定你要确认或修改哪些字段，因此没有保存。请回复“确认”，或直接说明字段和值。";
     }
     if (turn.status === "cancelled") {
       return "已取消这次训练日志确认，没有保存或更新进度。";
@@ -173,6 +181,52 @@ export function registerStellaFitnessPlugin(
         `stella-fitness workout-log confirmation routing failed: ${String(error)}`,
       );
       return "训练日志确认状态无法读取，因此没有保存或更新进度。请重新发送训练日志照片。";
+    }
+  };
+  const processWorkoutLogImage = async (input: {
+    readonly event: PluginHookInboundClaimEvent;
+    readonly sessionKey?: string;
+    readonly runId?: string;
+  }): Promise<string | undefined> => {
+    const upload = await workoutLogUpload(input.event);
+    if (upload === undefined) return undefined;
+    const request = {
+      intent: workoutLogIntent(input.event),
+      runId:
+        input.runId ??
+        input.event.runId ??
+        input.event.messageId ??
+        `workout-log-${randomUUID()}`,
+      upload,
+      timeoutMs: 60_000,
+      signal: new AbortController().signal,
+    };
+    const correctionId = workoutLogCorrectionId(input.event);
+    if (correctionId !== undefined) request.intent = "explicit";
+    try {
+      const result = correctionId === undefined
+        ? await stellaRuntime.ingestWorkoutLog(request)
+        : await stellaRuntime.correctWorkoutLog({
+            ...request,
+            replacesObservationId: correctionId,
+          });
+      if (result.status === "ignored") return undefined;
+      if (result.status === "confirmation" && input.sessionKey !== undefined) {
+        await workoutLogConfirmation.bind({
+          sessionKey: input.sessionKey,
+          confirmationId: result.confirmationId,
+          issuedAt: result.artifact.provenance.receivedAt,
+          ...(input.event.messageId === undefined
+            ? {}
+            : { messageId: input.event.messageId }),
+        });
+      }
+      return formatWorkoutLogResult(result);
+    } catch (error) {
+      if (error instanceof MultiSessionWorkoutLogPageError) {
+        return "这张照片包含多次训练。请裁剪到只保留一次训练记录后重新发送。";
+      }
+      throw error;
     }
   };
   registerPrintableLogDownloadRoute(api, stellaRuntime);
@@ -554,53 +608,17 @@ export function registerStellaFitnessPlugin(
       if (!isWorkoutLogImageInput(event)) {
         return;
       }
-      const upload = await workoutLogUpload(event);
-      if (upload === undefined) {
-        return;
-      }
-      const request = {
-        intent: workoutLogIntent(event),
-        runId:
-          event.runId ??
-          event.messageId ??
-          `workout-log-${randomUUID()}`,
-        upload,
-        timeoutMs: 60_000,
-        signal: new AbortController().signal,
-      };
-      const correctionId = workoutLogCorrectionId(event);
-      if (correctionId !== undefined) request.intent = "explicit";
-      let result;
-      try {
-        result = correctionId === undefined
-          ? await stellaRuntime.ingestWorkoutLog(request)
-          : await stellaRuntime.correctWorkoutLog({
-              ...request,
-              replacesObservationId: correctionId,
-            });
-      } catch (error) {
-        if (error instanceof MultiSessionWorkoutLogPageError) {
-          return {
-            handled: true,
-            reply: {
-              text: "这张照片包含多次训练。请裁剪到只保留一次训练记录后重新发送。",
-            },
-          };
-        }
-        throw error;
-      }
-      if (result.status === "ignored") return;
-      if (result.status === "confirmation" && context.sessionKey !== undefined) {
-        await workoutLogConfirmation.bind({
-          sessionKey: context.sessionKey,
-          confirmationId: result.confirmationId,
-          issuedAt: result.artifact.provenance.receivedAt,
-          ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
-        });
-      }
+      const replyText = await processWorkoutLogImage({
+        event,
+        ...(context.sessionKey === undefined
+          ? {}
+          : { sessionKey: context.sessionKey }),
+        ...(context.runId === undefined ? {} : { runId: context.runId }),
+      });
+      if (replyText === undefined) return;
       return {
         handled: true,
-        reply: { text: formatWorkoutLogResult(result) },
+        reply: { text: replyText },
       };
     },
     { priority: 100, timeoutMs: 65_000 },
@@ -620,36 +638,12 @@ export function registerStellaFitnessPlugin(
       const pendingMedia = pending.splice(matchingIndex < 0 ? 0 : matchingIndex, 1)[0];
       if (pending.length === 0) pendingMediaBySession.delete(sessionKey);
       if (pendingMedia === undefined) return;
-      const upload = await workoutLogUpload(pendingMedia);
-      if (upload === undefined) return;
-      let replyText: string;
-      try {
-        const result = await stellaRuntime.ingestWorkoutLog({
-          intent: workoutLogIntent(pendingMedia),
-          runId: event.runId ?? `workout-log-${randomUUID()}`,
-          upload,
-          timeoutMs: 60_000,
-          signal: new AbortController().signal,
-        });
-        if (result.status === "ignored") return;
-        if (result.status === "confirmation") {
-          await workoutLogConfirmation.bind({
-            sessionKey,
-            confirmationId: result.confirmationId,
-            issuedAt: result.artifact.provenance.receivedAt,
-            ...(pendingMedia.messageId === undefined
-              ? {}
-              : { messageId: pendingMedia.messageId }),
-          });
-        }
-        replyText = formatWorkoutLogResult(result);
-      } catch (error) {
-        if (error instanceof MultiSessionWorkoutLogPageError) {
-          replyText = "这张照片包含多次训练。请裁剪到只保留一次训练记录后重新发送。";
-        } else {
-          throw error;
-        }
-      }
+      const replyText = await processWorkoutLogImage({
+        event: pendingMedia,
+        sessionKey,
+        ...(event.runId === undefined ? {} : { runId: event.runId }),
+      });
+      if (replyText === undefined) return;
       const queuedFinal = context.dispatcher.sendFinalReply({ text: replyText });
       context.dispatcher.markComplete();
       context.recordProcessed("completed", { reason: "stella-fitness-media" });
@@ -822,6 +816,24 @@ export function registerStellaFitnessPlugin(
     "before_agent_reply",
     async (event, context) => {
       if (!isDedicatedAgentContext(context, api)) return;
+      const dashboardMedia = dashboardMediaEvent({
+        text: event.cleanedBody,
+        stateDirectory: api.runtime.state.resolveStateDir(process.env),
+        channel: context.messageProvider ?? "dashboard",
+        ...(context.runId === undefined ? {} : { runId: context.runId }),
+      });
+      if (dashboardMedia !== undefined) {
+        const replyText = await processWorkoutLogImage({
+          event: dashboardMedia,
+          ...(context.sessionKey === undefined
+            ? {}
+            : { sessionKey: context.sessionKey }),
+          ...(context.runId === undefined ? {} : { runId: context.runId }),
+        });
+        if (replyText !== undefined) {
+          return { handled: true, reply: { text: replyText } };
+        }
+      }
       const receivedAt = new Date().toISOString();
       const confirmationReply = await tryWorkoutLogConfirmationText({
         ...(context.sessionKey === undefined ? {} : { sessionKey: context.sessionKey }),
@@ -982,6 +994,43 @@ function hasHostMediaMarker(text: string): boolean {
   return /(?:\[media attached(?:\s+\d+\/\d+)?:|<media:[^>]+>|(?:^|\n)\s*MEDIA:)/iu.test(
     text,
   );
+}
+
+function dashboardMediaEvent(input: {
+  readonly text: string;
+  readonly stateDirectory: string;
+  readonly channel: string;
+  readonly runId?: string;
+}): PluginHookInboundClaimEvent | undefined {
+  const match = /\[media attached(?:\s+\d+\/\d+)?:\s*media:\/\/inbound\/([^\]\r\n]+?)\s+\((image\/(?:jpeg|png|webp))\)\]/iu.exec(
+    input.text,
+  );
+  if (match === null) return undefined;
+  let fileName: string;
+  try {
+    fileName = decodeURIComponent(match[1]!);
+  } catch {
+    return undefined;
+  }
+  if (
+    fileName.length === 0 ||
+    fileName === "." ||
+    fileName === ".." ||
+    basename(fileName) !== fileName
+  ) {
+    return undefined;
+  }
+  return {
+    content: input.text,
+    channel: input.channel,
+    isGroup: false,
+    timestamp: Date.now(),
+    ...(input.runId === undefined ? {} : { runId: input.runId }),
+    metadata: {
+      mediaPath: join(input.stateDirectory, "media", "inbound", fileName),
+      mediaType: match[2]!.toLowerCase(),
+    },
+  };
 }
 
 function workoutLogConfirmationInput(
@@ -1340,7 +1389,7 @@ function formatWorkoutLogResult(
     ...result.fields.map((field) =>
       `- ${formatWorkoutLogConfirmationField(result.candidate, field)}`
     ),
-    "你可以直接回复“全部确认”，或用自然语言指出要修改、补充的字段。",
+    "你可以直接回复“确认”，或用自然语言指出要修改、补充的字段。",
   ].join("\n");
 }
 
@@ -1349,6 +1398,20 @@ function formatRemainingWorkoutLogConfirmation(result: {
   readonly fields: WorkoutLogCandidate["uncertainFields"];
   readonly acceptedCount: number;
 }): string {
+  if (result.acceptedCount === 0) {
+    return [
+      `这些字段没有可确认的识别值：${result.fields.map((field) =>
+        workoutLogFieldLabel(
+          result.candidate,
+          parseWorkoutLogFieldPath(field.path),
+        )
+      ).join("、")}。`,
+      ...result.fields.map((field) =>
+        `- ${formatWorkoutLogConfirmationField(result.candidate, field)}`
+      ),
+      "请直接回复缺少的实际值；如果原表确实未填写，请明确回复“未填写”。",
+    ].join("\n");
+  }
   return [
     `已确认其余 ${result.acceptedCount} 个识别值，但还缺少：${result.fields.map((field) =>
       workoutLogFieldLabel(

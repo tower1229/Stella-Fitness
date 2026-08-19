@@ -221,7 +221,7 @@ export async function verifyTelegramChannelFlow(options) {
     let pendingStrength;
     try {
       pendingStrength = await telegram.waitForText((text) =>
-        text.includes("尚未保存") && text.includes("直接回复“全部确认”"),
+        text.includes("尚未保存") && text.includes("直接回复“确认”"),
       );
     } catch (error) {
       throw new Error(
@@ -235,7 +235,7 @@ export async function verifyTelegramChannelFlow(options) {
       throw new Error(`Strength confirmation ID was missing: ${pendingStrength}`);
     }
     const strengthConfirmationCursor = telegram.messageCount();
-    telegram.pushText("全部确认");
+    telegram.pushText("确认");
     let recorded;
     try {
       recorded = await telegram.waitForTextAfter(
@@ -257,7 +257,7 @@ export async function verifyTelegramChannelFlow(options) {
       pendingOrdinary = await telegram.waitForTextAfter(
         ordinaryPendingCursor,
         (text) =>
-          text.includes("尚未保存") && text.includes("直接回复“全部确认”"),
+          text.includes("尚未保存") && text.includes("直接回复“确认”"),
       );
     } catch (error) {
       throw new Error(

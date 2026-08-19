@@ -26,8 +26,11 @@ describe("OpenClaw confirmation intent classifier", () => {
     });
 
     await expect(classifier.classify(input)).resolves.toEqual({
-      kind: "accept-with-overrides",
-      updates: [{ fieldId: "f1", value: "中" }],
+      status: "classified",
+      intent: {
+        kind: "accept-with-overrides",
+        updates: [{ fieldId: "f1", value: "中" }],
+      },
     });
     expect(complete).toHaveBeenCalledWith(expect.objectContaining({
       agentId: "fitness",
@@ -37,26 +40,46 @@ describe("OpenClaw confirmation intent classifier", () => {
   });
 
   it.each([
-    { kind: "provide-values", confidence: "high", updates: [{ fieldId: "f9", value: "中" }] },
-    { kind: "accept-all", confidence: "high", extra: true },
-    { kind: "provide-values", confidence: "low", updates: [{ fieldId: "f1", value: "中" }] },
-    { kind: "provide-values", confidence: "high", updates: [{ fieldId: "f1", value: { invented: true } }] },
-  ])("fails closed on invalid constrained output %#", async (output) => {
+    {
+      output: { kind: "provide-values", confidence: "high", updates: [{ fieldId: "f9", value: "中" }] },
+      status: "invalid-output",
+    },
+    {
+      output: { kind: "accept-all", confidence: "high", extra: true },
+      status: "invalid-output",
+    },
+    {
+      output: { kind: "provide-values", confidence: "low", updates: [{ fieldId: "f1", value: "中" }] },
+      status: "low-confidence",
+    },
+    {
+      output: { kind: "accept-all", confidence: "low", extra: true },
+      status: "invalid-output",
+    },
+    {
+      output: { kind: "invented", confidence: "low" },
+      status: "invalid-output",
+    },
+    {
+      output: { kind: "provide-values", confidence: "high", updates: [{ fieldId: "f1", value: { invented: true } }] },
+      status: "invalid-output",
+    },
+  ])("fails closed with a specific reason for constrained output %#", async ({ output, status }) => {
     const classifier = createOpenClawConfirmationIntentClassifier({
       complete: vi.fn().mockResolvedValue({ text: JSON.stringify(output) }),
       agentId: () => "fitness",
     });
 
-    await expect(classifier.classify(input)).resolves.toEqual({ kind: "ambiguous" });
+    await expect(classifier.classify(input)).resolves.toEqual({ status });
   });
 
-  it("fails closed on provider failure and timeout", async () => {
+  it("distinguishes provider failure, timeout, and missing agent configuration", async () => {
     const providerFailure = createOpenClawConfirmationIntentClassifier({
       complete: vi.fn().mockRejectedValue(new Error("provider failed")),
       agentId: () => "fitness",
     });
     await expect(providerFailure.classify(input)).resolves.toEqual({
-      kind: "ambiguous",
+      status: "provider-error",
     });
 
     const timeout = createOpenClawConfirmationIntentClassifier({
@@ -66,6 +89,14 @@ describe("OpenClaw confirmation intent classifier", () => {
       agentId: () => "fitness",
       timeoutMs: 1,
     });
-    await expect(timeout.classify(input)).resolves.toEqual({ kind: "ambiguous" });
+    await expect(timeout.classify(input)).resolves.toEqual({ status: "timeout" });
+
+    const missingAgent = createOpenClawConfirmationIntentClassifier({
+      complete: vi.fn(),
+      agentId: () => undefined,
+    });
+    await expect(missingAgent.classify(input)).resolves.toEqual({
+      status: "missing-agent-id",
+    });
   });
 });

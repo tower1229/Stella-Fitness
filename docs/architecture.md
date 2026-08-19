@@ -72,7 +72,7 @@ inbound message
 
 训练日志进入字段确认后，Plugin 在自管的 Runtime Directory 原子文件存储中保存当前 dedicated-agent session 到 active confirmation 的可重建关联。当前 OpenClaw 仅向 trusted bundled plugin 开放 `runtime.state.openKeyedStore`，因此可安装的第三方 Plugin 不能依赖该接口。`inbound_claim` 先把自然语言确认交给 Confirmation Coordinator：明确常见表达由确定性 parser 处理，其余只提交当前文本、权威目标摘要和有限字段标签给 `runtime.llm.complete` 做受约束意图分类。分类结果本身没有写权限；Coordinator 只能接受原 candidate 的候选值或用户明确提供的字段覆盖，字段完整后仍由 Runtime 原子验证并保存。部分接受、session 关联和分类草稿不属于 canonical 用户事实；删除 Runtime Directory 不会恢复或改变 Personal Data Directory。
 
-普通确认回复使用字段名称和自然语言，不暴露 confirmation ID 或 JSON。精确 `/stella-confirm` 继续作为兼容和故障恢复入口。用户说“全部确认”时只接受已有明确候选；`unknown` 必须继续追问，除非用户明确确认原表未填写。确认、取消或失效后清除 session 关联，wrong agent、wrong session、冲突和模型失败均 fail closed。
+普通确认回复使用字段名称和自然语言，不暴露 confirmation ID 或 JSON。精确 `/stella-confirm` 继续作为兼容和故障恢复入口。当前 session 存在待确认状态时，“确认”“全部确认”和“确认全部”由 Coordinator 确定性解释为接受当前提示中的已有候选；`unknown` 必须继续追问，除非用户明确确认原表未填写。明确字段值仍由确定性 parser 处理，只有修改说明、取消或混合表达等复杂输入才交给 `runtime.llm.complete` 做受约束分类。分类缺少 agent、超时、Provider 失败、非法输出或低置信时均 fail closed，Plugin 只记录不含用户原文和候选值的原因码。确认、取消或失效后清除 session 关联，wrong agent、wrong session 和冲突同样 fail closed。
 
 non-bundled Plugin 所需 conversation-access 权限必须由 operator 显式启用，不得绕过。`dedicatedAgentId` 缺失、session key 缺失或 agent 不匹配时，所有写入口 fail closed；旧 Plugin conversation binding 记录不参与授权判断。
 
@@ -105,7 +105,8 @@ uncertain_fields[]
 
 规则：
 
-- 自动模式使用 `agents.defaults.userTimezone` 将上传时间换算为本地日期，只选择该 Program 周内截至该日最近、尚未记录的 Planned Session，不跨周且不选择未来日；
+- 自动模式使用 `agents.defaults.userTimezone` 将上传时间换算为本地日期，从当前 Program 周期开始按计划顺序选择截至该日最早、尚未记录的 Planned Session；它读取 Personal Data Directory 中的 canonical Observation 来跳过已记录槽位，不跨周期且不选择未来日；
+- 自动模式先解析确定性目标再处理图片去重；同一张工作簿照片可按进度依次抽取不同 session，不能因文件 SHA 相同而返回其他训练槽位的 Observation；显式录入和纠错仍保留原有幂等语义；
 - 模型同时完成固定工作簿分类与目标区块抽取；只读权威标题至下一标题之间的区块，忽略照片中的其他 session；
 - candidate 的阶段、周次、星期、session 类型和动作集合必须与权威目标完全一致，否则不保存、不计入完成度；
 - 空白 actual 保持空白；
@@ -115,7 +116,7 @@ uncertain_fields[]
 - recovery session 不因普通布局标题丢失计划身份；
 - 备注按原始用户记录保存，不作表现、心理或健康解释。
 
-Observation 仍是唯一训练事实。“本周已记录 X/Y 次”和下一 Planned Session 每次都从 Training Record View 与 ProgramSpec 派生，不保存独立进度游标。
+Observation 仍是唯一训练事实。“本周已记录 X/Y 次”和下一 Planned Session 每次都从 Training Record View 与 ProgramSpec 派生，不保存独立进度游标。Training Record View 按 Program Context 与训练槽位组成的逻辑身份去重，不按图片 SHA 合并不同槽位；同一张工作簿照片可以形成多个不同 Planned Session 的 Observation。
 
 ## 6. 体重输入
 

@@ -74,7 +74,6 @@ export async function rebuildTrainingRecordView(
     .map(({ observation }) => observation)
     .filter(({ id }) => !replacedIds.has(id))
     .sort(compareObservations);
-  const seenArtifacts = new Set<string>();
   const seenLogicalWorkouts = new Set<string>();
   const records: TrainingRecordView["records"][number][] = [];
   for (const observation of active) {
@@ -92,13 +91,9 @@ export async function rebuildTrainingRecordView(
       });
       continue;
     }
-    if (
-      seenArtifacts.has(observation.source.sha256) ||
-      seenLogicalWorkouts.has(logicalIdentity)
-    ) {
+    if (seenLogicalWorkouts.has(logicalIdentity)) {
       continue;
     }
-    seenArtifacts.add(observation.source.sha256);
     seenLogicalWorkouts.add(logicalIdentity);
     records.push({
       observation,
