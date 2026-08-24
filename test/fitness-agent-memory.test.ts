@@ -63,7 +63,7 @@ describe("Fitness Agent-scoped conversational memory", () => {
     const originalDefaults = structuredClone(config.agents.defaults);
     const originalMain = structuredClone(config.agents.list[0]);
     const mutateConfigFile = vi.fn(async (input: {
-      mutate(draft: typeof config): boolean | void;
+      mutate(draft: typeof config): string | void;
     }) => {
       const result = input.mutate(config);
       return { result, nextConfig: config };
@@ -162,7 +162,7 @@ describe("Fitness Agent-scoped conversational memory", () => {
       },
     } satisfies OpenClawConfig;
     const mutateConfigFile = vi.fn(async (input: {
-      mutate(draft: typeof config): boolean | void;
+      mutate(draft: typeof config): string | void;
     }) => ({ result: input.mutate(config), nextConfig: config }));
     const api = {
       runtime: {
@@ -181,6 +181,9 @@ describe("Fitness Agent-scoped conversational memory", () => {
     expect(config.agents.defaults.memorySearch.extraPaths).toEqual([
       "/host/shared-context",
     ]);
+    expect((config as OpenClawConfig).agents?.list?.[0]?.memorySearch)
+      .toMatchObject({ enabled: false });
+    expect(resolveMemorySearchConfig(config, "fitness")).toBeNull();
   });
 
   it("returns a natural degraded result when public Host memory config behavior is unavailable", async () => {

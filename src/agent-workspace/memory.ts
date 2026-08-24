@@ -35,14 +35,29 @@ export async function configureFitnessAgentMemory(options: {
   const workspace = resolve(options.workspace);
   let config: OpenClawConfig;
   try {
-    const mutation = await options.api.runtime.config.mutateConfigFile<boolean>({
+    const mutation = await options.api.runtime.config.mutateConfigFile<
+      "configured" | "blocked-default-paths" | "missing-agent"
+    >({
       afterWrite: { mode: "auto" },
       mutate(draft) {
         const list = draft.agents?.list ?? [];
         const index = list.findIndex((agent) => agent.id === options.agentId);
-        if (index < 0) return false;
+        if (index < 0) return "missing-agent";
         const current = list[index]!;
         const memorySearch = current.memorySearch ?? {};
+        if ((draft.agents?.defaults?.memorySearch?.extraPaths?.length ?? 0) > 0) {
+          const next = {
+            ...current,
+            memorySearch: { ...memorySearch, enabled: false },
+          };
+          draft.agents = {
+            ...draft.agents,
+            list: list.map((agent, agentIndex) =>
+              agentIndex === index ? next : agent
+            ),
+          };
+          return "blocked-default-paths";
+        }
         const qmd = memorySearch.qmd ?? {};
         const sources: Array<"memory" | "sessions"> = ["memory", "sessions"];
         const extraPaths = uniquePaths([
@@ -69,13 +84,15 @@ export async function configureFitnessAgentMemory(options: {
             agentIndex === index ? next : agent
           ),
         };
-        return true;
+        return "configured";
       },
     });
-    if (mutation.result !== true) {
+    if (mutation.result !== "configured") {
       return {
         status: "degraded",
-        reasonCode: "AGENT_MEMORY_CONFIG_UNAVAILABLE",
+        reasonCode: mutation.result === "blocked-default-paths"
+          ? "AGENT_MEMORY_CAPABILITY_UNAVAILABLE"
+          : "AGENT_MEMORY_CONFIG_UNAVAILABLE",
       };
     }
     config = mutation.nextConfig;
