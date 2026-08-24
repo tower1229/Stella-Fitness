@@ -337,7 +337,7 @@ export async function verifyTelegramChannelFlow(options) {
     await telegram.waitForTextAfter(
       replayedAutomaticCursor,
       (text) =>
-        text === "本周截至当前没有尚未记录的计划训练；不会选择未来训练日或其他周。",
+        text === "已记录训练：第 1 阶段第 1 周，周一，全身训练。本周已记录 1/3 次；下一次计划：2026-07-15（周三）全身训练。",
     );
     if (workoutObservationCount(personalDataDirectory) !== automaticObservationCount) {
       throw new Error("Replayed captionless workout log created another Observation");
