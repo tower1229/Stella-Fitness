@@ -329,17 +329,18 @@ export async function verifyTelegramChannelFlow(options) {
     );
     const automaticObservationCount = workoutObservationCount(personalDataDirectory);
     await restartGateway("captionless automatic workout log");
-    const duplicateAutomaticCursor = telegram.messageCount();
+    const replayedAutomaticCursor = telegram.messageCount();
     telegram.pushPhoto(undefined, {
       variant: "automatic",
       date: Math.floor(Date.parse("2026-07-13T08:00:00.000Z") / 1_000),
     });
     await telegram.waitForTextAfter(
-      duplicateAutomaticCursor,
-      (text) => text.includes("本周已记录 1/3 次"),
+      replayedAutomaticCursor,
+      (text) =>
+        text === "本周截至当前没有尚未记录的计划训练；不会选择未来训练日或其他周。",
     );
     if (workoutObservationCount(personalDataDirectory) !== automaticObservationCount) {
-      throw new Error("Captionless workout log was duplicated after Gateway restart");
+      throw new Error("Replayed captionless workout log created another Observation");
     }
     const expectedRecoveredWeightFacts = await requestTelegramText(
       telegram,
