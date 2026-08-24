@@ -36,7 +36,7 @@ export async function configureFitnessAgentMemory(options: {
   let config: OpenClawConfig;
   try {
     const mutation = await options.api.runtime.config.mutateConfigFile<
-      "configured" | "blocked-default-paths" | "missing-agent"
+      "configured" | "blocked-default-scope" | "missing-agent"
     >({
       afterWrite: { mode: "auto" },
       mutate(draft) {
@@ -45,7 +45,11 @@ export async function configureFitnessAgentMemory(options: {
         if (index < 0) return "missing-agent";
         const current = list[index]!;
         const memorySearch = current.memorySearch ?? {};
-        if ((draft.agents?.defaults?.memorySearch?.extraPaths?.length ?? 0) > 0) {
+        const defaultMemory = draft.agents?.defaults?.memorySearch;
+        if (
+          (defaultMemory?.extraPaths?.length ?? 0) > 0 ||
+          (defaultMemory?.qmd?.extraCollections?.length ?? 0) > 0
+        ) {
           const next = {
             ...current,
             memorySearch: { ...memorySearch, enabled: false },
@@ -56,7 +60,7 @@ export async function configureFitnessAgentMemory(options: {
               agentIndex === index ? next : agent
             ),
           };
-          return "blocked-default-paths";
+          return "blocked-default-scope";
         }
         const qmd = memorySearch.qmd ?? {};
         const sources: Array<"memory" | "sessions"> = ["memory", "sessions"];
@@ -90,7 +94,7 @@ export async function configureFitnessAgentMemory(options: {
     if (mutation.result !== "configured") {
       return {
         status: "degraded",
-        reasonCode: mutation.result === "blocked-default-paths"
+        reasonCode: mutation.result === "blocked-default-scope"
           ? "AGENT_MEMORY_CAPABILITY_UNAVAILABLE"
           : "AGENT_MEMORY_CONFIG_UNAVAILABLE",
       };

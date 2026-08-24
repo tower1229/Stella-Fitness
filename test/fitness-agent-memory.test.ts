@@ -186,6 +186,46 @@ describe("Fitness Agent-scoped conversational memory", () => {
     expect(resolveMemorySearchConfig(config, "fitness")).toBeNull();
   });
 
+  it("degrades instead of inheriting a Host-wide QMD collection", async () => {
+    const config = {
+      agents: {
+        defaults: {
+          memorySearch: {
+            qmd: {
+              extraCollections: [{
+                path: "/private/main-agent/sessions",
+                name: "main-sessions",
+              }],
+            },
+          },
+        },
+        list: [{ id: "fitness", workspace: "/private/fitness-workspace" }],
+      },
+    } satisfies OpenClawConfig;
+    const mutateConfigFile = vi.fn(async (input: {
+      mutate(draft: typeof config): string | void;
+    }) => ({ result: input.mutate(config), nextConfig: config }));
+    const api = {
+      runtime: {
+        config: { current: () => config, mutateConfigFile },
+      },
+    } as unknown as OpenClawPluginApi;
+
+    await expect(configureFitnessAgentMemory({
+      api,
+      agentId: "fitness",
+      workspace: "/private/fitness-workspace",
+    })).resolves.toEqual({
+      status: "degraded",
+      reasonCode: "AGENT_MEMORY_CAPABILITY_UNAVAILABLE",
+    });
+    expect(config.agents.defaults.memorySearch.qmd.extraCollections).toEqual([{
+      path: "/private/main-agent/sessions",
+      name: "main-sessions",
+    }]);
+    expect(resolveMemorySearchConfig(config, "fitness")).toBeNull();
+  });
+
   it("returns a natural degraded result when public Host memory config behavior is unavailable", async () => {
     const api = {
       runtime: { config: { current: () => ({ agents: { list: [] } }) } },
