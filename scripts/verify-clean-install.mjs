@@ -105,6 +105,7 @@ try {
     "stella-12rm",
     "stella-activate",
     "stella-confirm",
+    "stella-context",
     "stella-facts",
     "stella-prerequisite",
     "stella-print",
