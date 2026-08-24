@@ -174,10 +174,20 @@ function recordStatusClaimsAreTraceable(
     const claimsMissing = zeroRecords ||
       /(?:未找到|没有找到|暂无|没有).{0,12}(?:训练)?记录/u.test(sentence);
     if (!claimsRecorded && !claimsMissing) continue;
-    const identified = relevant.filter((session) =>
-      sentence.includes(session.date) ||
-      sentence.includes(sessionTypeName(session.sessionType))
+    const mentionedDates = relevant.filter(({ date }) =>
+      sentence.includes(date)
     );
+    const mentionedTypes = relevant.filter(({ sessionType }) =>
+      sentence.includes(sessionTypeName(sessionType))
+    );
+    const identified = mentionedDates.length > 0 && mentionedTypes.length > 0
+      ? relevant.filter(({ date, sessionType }) =>
+        sentence.includes(date) &&
+        sentence.includes(sessionTypeName(sessionType))
+      )
+      : mentionedDates.length > 0
+        ? mentionedDates
+        : mentionedTypes;
     const claims = identified.length > 0
       ? identified
       : relevant.length === 1
@@ -212,11 +222,7 @@ function relevantRecordStatuses(
           record: "recorded",
         }];
   }
-  const dates = turn.intent.kind === "today"
-    ? new Set([facts.asOf.localDate])
-    : turn.intent.kind === "week"
-      ? datesInCurrentWeek(facts.asOf.localDate)
-      : undefined;
+  const dates = datesForIntent(turn.intent, facts.asOf.localDate);
   const due = dates === undefined
     ? facts.dueSessions
     : facts.dueSessions.filter(({ date }) => dates.has(date));
@@ -257,9 +263,8 @@ function containsRequestedFact(
       : reply.includes(facts.position.phase) &&
         new RegExp(`第\\s*${facts.position.week}\\s*周`, "u").test(reply);
   }
-  const dates = turn.intent.kind === "today"
-    ? new Set([facts.asOf.localDate])
-    : datesInCurrentWeek(facts.asOf.localDate);
+  const dates = datesForIntent(turn.intent, facts.asOf.localDate);
+  if (dates === undefined) return false;
   const sessions = facts.dueSessions.filter(({ date }) => dates.has(date));
   if (sessions.length === 0) return /没有计划训练/u.test(reply);
   return sessions.some((session) =>
@@ -290,9 +295,8 @@ function factsForIntent(
       pendingConfirmations: facts.pendingConfirmations,
     };
   }
-  const dates = intent.kind === "today"
-    ? new Set([facts.asOf.localDate])
-    : datesInCurrentWeek(facts.asOf.localDate);
+  const dates = datesForIntent(intent, facts.asOf.localDate);
+  if (dates === undefined) return facts;
   return {
     asOf: facts.asOf,
     sessions: facts.dueSessions.filter(({ date }) => dates.has(date)),
@@ -378,6 +382,15 @@ function datesInCurrentWeek(localDate: string): ReadonlySet<string> {
     dates.add(date.toISOString().slice(0, 10));
   }
   return dates;
+}
+
+function datesForIntent(
+  intent: FitnessQueryIntent,
+  localDate: string,
+): ReadonlySet<string> | undefined {
+  if (intent.kind === "today") return new Set([localDate]);
+  if (intent.kind === "week") return datesInCurrentWeek(localDate);
+  return undefined;
 }
 
 function sessionTypeName(sessionType: string): string {

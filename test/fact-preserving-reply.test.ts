@@ -126,4 +126,29 @@ describe("Fact-Preserving Reply", () => {
     expect(turn.systemContext).not.toContain("2026-08-26");
     expect(turn.fallback).toBe("今天（2026-08-24）的全身训练已找到记录。");
   });
+
+  it("does not borrow a recorded status from another date with the same session type", () => {
+    const state: CurrentFitnessState = {
+      ...activeState,
+      dueSessions: [
+        ...activeState.dueSessions,
+        {
+          date: "2026-08-24",
+          weekday: "monday",
+          sessionType: "full-body",
+          record: "recorded",
+        },
+      ],
+    };
+    const turn = createFactPreservingReplyTurn({
+      input: "目前训练进度",
+      intent: { kind: "current-state", source: "deterministic" },
+      facts: state,
+    });
+
+    expect(validateFactPreservingReply(
+      "当前第 2 周 phase-1。2026-08-17 的全身训练已有记录。",
+      turn,
+    )).toEqual({ valid: false, reason: "untraceable-exact-fact" });
+  });
 });
