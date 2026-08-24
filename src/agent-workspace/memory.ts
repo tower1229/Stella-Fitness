@@ -4,7 +4,10 @@ import type {
   OpenClawConfig,
   OpenClawPluginApi,
 } from "openclaw/plugin-sdk/plugin-entry";
-import { resolveMemorySearchConfig } from "openclaw/plugin-sdk/memory-core";
+import {
+  getMemoryCapabilityRegistration,
+  resolveMemorySearchConfig,
+} from "openclaw/plugin-sdk/memory-core";
 
 export type FitnessAgentMemoryResult =
   | { readonly status: "ready" }
@@ -30,13 +33,14 @@ export async function configureFitnessAgentMemory(options: {
     };
   }
   const workspace = resolve(options.workspace);
+  let config: OpenClawConfig;
   try {
-    await options.api.runtime.config.mutateConfigFile({
+    const mutation = await options.api.runtime.config.mutateConfigFile<boolean>({
       afterWrite: { mode: "auto" },
       mutate(draft) {
         const list = draft.agents?.list ?? [];
         const index = list.findIndex((agent) => agent.id === options.agentId);
-        if (index < 0) return;
+        if (index < 0) return false;
         const current = list[index]!;
         const memorySearch = current.memorySearch ?? {};
         const qmd = memorySearch.qmd ?? {};
@@ -65,8 +69,16 @@ export async function configureFitnessAgentMemory(options: {
             agentIndex === index ? next : agent
           ),
         };
+        return true;
       },
     });
+    if (mutation.result !== true) {
+      return {
+        status: "degraded",
+        reasonCode: "AGENT_MEMORY_CONFIG_UNAVAILABLE",
+      };
+    }
+    config = mutation.nextConfig;
   } catch {
     return {
       status: "degraded",
@@ -74,7 +86,6 @@ export async function configureFitnessAgentMemory(options: {
     };
   }
 
-  const config = options.api.runtime.config.current() as OpenClawConfig;
   let resolved: ReturnType<typeof resolveMemorySearchConfig>;
   try {
     resolved = resolveMemorySearchConfig(config, options.agentId);
@@ -100,6 +111,46 @@ export async function configureFitnessAgentMemory(options: {
       reasonCode: "AGENT_MEMORY_CAPABILITY_UNAVAILABLE",
     };
   }
+  const runtime = getMemoryCapabilityRegistration()?.capability.runtime;
+  if (runtime === undefined) {
+    return {
+      status: "degraded",
+      reasonCode: "AGENT_MEMORY_CAPABILITY_UNAVAILABLE",
+    };
+  }
+  try {
+    const { manager } = await runtime.getMemorySearchManager({
+      cfg: config,
+      agentId: options.agentId,
+      purpose: "status",
+    });
+    if (manager === null) {
+      return {
+        status: "degraded",
+        reasonCode: "AGENT_MEMORY_CAPABILITY_UNAVAILABLE",
+      };
+    }
+    const embedding = await manager.probeEmbeddingAvailability();
+    const vector = await manager.probeVectorAvailability();
+    if (!embedding.ok || !vector) {
+      return {
+        status: "degraded",
+        reasonCode: "AGENT_MEMORY_CAPABILITY_UNAVAILABLE",
+      };
+    }
+    await manager.sync?.({ reason: "stella-fitness-capability-preflight" });
+    await manager.search("stella-fitness-capability-preflight", {
+      maxResults: 1,
+      minScore: 0,
+      sessionKey: `agent:${options.agentId}:stella-fitness-capability-preflight`,
+      sources: ["memory", "sessions"],
+    });
+  } catch {
+    return {
+      status: "degraded",
+      reasonCode: "AGENT_MEMORY_CAPABILITY_UNAVAILABLE",
+    };
+  }
   return { status: "ready" };
 }
 
@@ -109,5 +160,7 @@ function uniquePaths(paths: readonly string[]): string[] {
 
 function samePaths(actual: readonly string[], required: readonly string[]): boolean {
   const paths = new Set(actual.map((path) => resolve(path)));
-  return required.every((path) => paths.has(resolve(path)));
+  const requiredPaths = new Set(required.map((path) => resolve(path)));
+  return paths.size === requiredPaths.size &&
+    [...requiredPaths].every((path) => paths.has(path));
 }

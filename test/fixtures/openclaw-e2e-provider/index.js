@@ -77,6 +77,31 @@ export default definePluginEntry({
         },
       },
     });
+    api.registerMemoryEmbeddingProvider({
+      id: "stella-e2e",
+      defaultModel: "fixture-embedding-v1",
+      transport: "local",
+      resolveIndexIdentity() {
+        return {
+          model: "fixture-embedding-v1",
+          cacheKeyData: { fixture: "stella-fitness-e2e-v1" },
+        };
+      },
+      async create() {
+        return {
+          provider: {
+            id: "stella-e2e",
+            model: "fixture-embedding-v1",
+            embedQuery: async (text) => deterministicEmbedding(text),
+            embedBatch: async (texts) => texts.map(deterministicEmbedding),
+          },
+          runtime: {
+            id: "stella-e2e",
+            cacheKeyData: { fixture: "stella-fitness-e2e-v1" },
+          },
+        };
+      },
+    });
     let extractionCount = 0;
     api.registerMediaUnderstandingProvider({
       id: "stella-e2e",
@@ -99,6 +124,23 @@ export default definePluginEntry({
     });
   },
 });
+
+function deterministicEmbedding(input) {
+  const text = typeof input === "string"
+    ? input
+    : [input.text, ...(input.parts ?? []).map((part) =>
+      part.type === "text" ? part.text : ""
+    )].join(" ");
+  const vector = Array.from({ length: 64 }, () => 0);
+  for (const character of text.normalize("NFKC").toLowerCase()) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    vector[codePoint % vector.length] += 1;
+  }
+  const magnitude = Math.sqrt(
+    vector.reduce((sum, value) => sum + value * value, 0),
+  ) || 1;
+  return vector.map((value) => value / magnitude);
+}
 
 function field(value, confidence = "high") {
   return { value, confidence };

@@ -1422,7 +1422,7 @@ function appendConversationalMemoryStatus(
   if (result === undefined) return contextStatus;
   return result.status === "ready"
     ? `${contextStatus}\nconversational-memory: ready - Agent-scoped memory and sessions are enabled`
-    : `${contextStatus}\nconversational-memory: degraded - ${result.reasonCode}`;
+    : `${contextStatus}\nconversational-memory: degraded - Cross-session history is unavailable; deterministic Fitness features remain available`;
 }
 
 function sameIdentityRevision(

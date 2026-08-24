@@ -27,6 +27,7 @@ describe("OpenClaw stable contract baseline", () => {
       dedicatedAgentScope: "routing.parseAgentSessionKey+resolveAgentRoute",
       agentMemory: [
         "memory-core.resolveMemorySearchConfig",
+        "memory-core.getMemoryCapabilityRegistration",
         "agent-scoped-memory-source",
         "agent-scoped-session-source",
       ],

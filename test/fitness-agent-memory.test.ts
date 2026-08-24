@@ -4,16 +4,22 @@ import type {
   OpenClawConfig,
   OpenClawPluginApi,
 } from "openclaw/plugin-sdk/plugin-entry";
-import { resolveMemorySearchConfig } from "openclaw/plugin-sdk/memory-core";
+import {
+  clearMemoryPluginState,
+  registerMemoryCapability,
+  resolveMemorySearchConfig,
+} from "openclaw/plugin-sdk/memory-core";
 import {
   parseAgentSessionKey,
   resolveAgentRoute,
 } from "openclaw/plugin-sdk/routing";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { configureFitnessAgentMemory } from "../src/agent-workspace/memory.js";
 
 describe("Fitness Agent-scoped conversational memory", () => {
+  afterEach(() => clearMemoryPluginState());
+
   it("enables only the dedicated Agent's own memory and sessions through public Host config", async () => {
     const workspace = "/private/fitness-workspace";
     const config = {
@@ -21,7 +27,6 @@ describe("Fitness Agent-scoped conversational memory", () => {
         defaults: {
           memorySearch: {
             enabled: false,
-            extraPaths: ["/host/shared-context"],
           },
         },
         list: [{
@@ -58,10 +63,39 @@ describe("Fitness Agent-scoped conversational memory", () => {
     const originalDefaults = structuredClone(config.agents.defaults);
     const originalMain = structuredClone(config.agents.list[0]);
     const mutateConfigFile = vi.fn(async (input: {
-      mutate(draft: typeof config): void;
+      mutate(draft: typeof config): boolean | void;
     }) => {
-      input.mutate(config);
-      return { result: undefined };
+      const result = input.mutate(config);
+      return { result, nextConfig: config };
+    });
+    const sync = vi.fn(async () => undefined);
+    const search = vi.fn(async () => []);
+    registerMemoryCapability("fitness-memory-test", {
+      runtime: {
+        async getMemorySearchManager() {
+          return {
+            manager: {
+              search,
+              async readFile() {
+                return { text: "", path: "USER.md" };
+              },
+              status() {
+                return { backend: "builtin", provider: "fixture" };
+              },
+              sync,
+              async probeEmbeddingAvailability() {
+                return { ok: true, checked: true };
+              },
+              async probeVectorAvailability() {
+                return true;
+              },
+            },
+          };
+        },
+        resolveMemoryBackendConfig() {
+          return { backend: "builtin" };
+        },
+      },
     });
     const api = {
       runtime: {
@@ -109,6 +143,44 @@ describe("Fitness Agent-scoped conversational memory", () => {
     expect(resolveMemorySearchConfig(config, "main")?.sources).not.toContain(
       "sessions",
     );
+    expect(sync).toHaveBeenCalledWith({
+      reason: "stella-fitness-capability-preflight",
+    });
+    expect(search).toHaveBeenCalledWith(
+      "stella-fitness-capability-preflight",
+      expect.objectContaining({ sources: ["memory", "sessions"] }),
+    );
+  });
+
+  it("degrades instead of inheriting a Host-wide extra search path", async () => {
+    const config = {
+      agents: {
+        defaults: {
+          memorySearch: { extraPaths: ["/host/shared-context"] },
+        },
+        list: [{ id: "fitness", workspace: "/private/fitness-workspace" }],
+      },
+    } satisfies OpenClawConfig;
+    const mutateConfigFile = vi.fn(async (input: {
+      mutate(draft: typeof config): boolean | void;
+    }) => ({ result: input.mutate(config), nextConfig: config }));
+    const api = {
+      runtime: {
+        config: { current: () => config, mutateConfigFile },
+      },
+    } as unknown as OpenClawPluginApi;
+
+    await expect(configureFitnessAgentMemory({
+      api,
+      agentId: "fitness",
+      workspace: "/private/fitness-workspace",
+    })).resolves.toEqual({
+      status: "degraded",
+      reasonCode: "AGENT_MEMORY_CAPABILITY_UNAVAILABLE",
+    });
+    expect(config.agents.defaults.memorySearch.extraPaths).toEqual([
+      "/host/shared-context",
+    ]);
   });
 
   it("returns a natural degraded result when public Host memory config behavior is unavailable", async () => {

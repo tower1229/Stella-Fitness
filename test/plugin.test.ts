@@ -3468,10 +3468,10 @@ function compatibleApi(options: {
       config: {
         current: () => openclawConfig,
         async mutateConfigFile(input: {
-          readonly mutate: (draft: TestOpenClawConfig) => void;
+          readonly mutate: (draft: TestOpenClawConfig) => unknown;
         }) {
-          input.mutate(openclawConfig);
-          return { result: undefined };
+          const result = input.mutate(openclawConfig);
+          return { result, nextConfig: openclawConfig };
         },
       },
       agent: {
