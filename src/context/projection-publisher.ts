@@ -19,6 +19,7 @@ import type {
   WorkoutExerciseActual,
   WorkoutLogObservation,
 } from "../domain/observation.js";
+import { rebuildCourseStart12RMHistory } from "../program/journey.js";
 import { readActiveProgramIfPresent } from "../program/state.js";
 import { rebuildBodyWeightView } from "../storage/body-weight.js";
 import { rebuildTrainingRecordView } from "../storage/training-record.js";
@@ -98,6 +99,11 @@ type FitnessHistoryDocument = {
 type FitnessProjectionSnapshot = {
   readonly sourceRevision: string;
   readonly sourceAsOf: string;
+  readonly sourceInventory: readonly {
+    readonly path: string;
+    readonly checksum: string;
+    readonly asOf?: string;
+  }[];
   readonly sourceReferences: readonly ProjectionSourceReference[];
   readonly desiredSet: {
     readonly schema_version: typeof DESIRED_SET_SCHEMA;
@@ -122,6 +128,7 @@ export async function publishFitnessContextProjection(options: {
   readonly testHooks?: {
     readonly afterLock?: () => Promise<void> | void;
     readonly crashAfterPhase?: FitnessProjectionPublishPhase;
+    readonly crashDuringCandidateWrite?: boolean;
     readonly now?: () => Date;
     readonly isProcessAlive?: (pid: number) => boolean;
     readonly afterSourceSnapshot?: () => Promise<void> | void;
@@ -150,12 +157,12 @@ export async function publishFitnessContextProjection(options: {
     ...(options.testHooks?.isProcessAlive === undefined
       ? {}
       : { isProcessAlive: options.testHooks.isProcessAlive }),
-    publication,
   });
   let preserveLock = false;
   try {
     await options.testHooks?.afterLock?.();
     crashAtPhase(options.testHooks?.crashAfterPhase, "locked");
+    await assertSourceInventoryUnchanged(paths.fitnessData, snapshot.sourceInventory);
     const revisionsRoot = join(publicationRoot, "revisions");
     const revisionDirectory = join(revisionsRoot, publication.projectionRevision);
     await mkdir(revisionsRoot, { recursive: true, mode: 0o700 });
@@ -166,6 +173,7 @@ export async function publishFitnessContextProjection(options: {
       revisionDirectory,
       publication,
       ownerToken: lock.ownerToken,
+      crashDuringCandidateWrite: options.testHooks?.crashDuringCandidateWrite === true,
       async candidateWritten() {
         await setPublishLockPhase(lock, "candidate-written");
         crashAtPhase(options.testHooks?.crashAfterPhase, "candidate-written");
@@ -174,15 +182,16 @@ export async function publishFitnessContextProjection(options: {
     await setPublishLockPhase(lock, "revision-renamed");
     crashAtPhase(options.testHooks?.crashAfterPhase, "revision-renamed");
     const activePath = join(publicationRoot, "active.json");
-    const currentPointer = await readFile(activePath).catch((error: unknown) => {
-      if (isMissing(error)) return undefined;
-      throw error;
-    });
+    const currentPointer = await readOptionalSafePublishedFile(
+      activePath,
+      publicationRoot,
+    );
     const pointerBytes = buildActivePointer({
       instanceId: paths.instanceId,
       publication: committed,
       changedAt: generatedAt,
     });
+    await assertSourceInventoryUnchanged(paths.fitnessData, snapshot.sourceInventory);
     if (currentPointer !== undefined) parseActivePointer(currentPointer);
     if (currentPointer === undefined || !pointerTargets(currentPointer, committed)) {
       await atomicWriteFile(activePath, pointerBytes);
@@ -237,7 +246,6 @@ async function acquirePublishLock(options: {
   readonly projectionRevision: string;
   readonly now?: () => Date;
   readonly isProcessAlive?: (pid: number) => boolean;
-  readonly publication: ProjectionPublication;
 }): Promise<HeldPublishLock> {
   const path = join(options.publicationRoot, ".publish.lock");
   const ownerToken = randomUUID();
@@ -261,7 +269,6 @@ async function acquirePublishLock(options: {
       await recoverPublishLock({
         path,
         publicationRoot: options.publicationRoot,
-        publication: options.publication,
         now,
         isProcessAlive: options.isProcessAlive ?? processIsAlive,
       });
@@ -303,7 +310,6 @@ async function releasePublishLock(lock: HeldPublishLock): Promise<void> {
 async function recoverPublishLock(options: {
   readonly path: string;
   readonly publicationRoot: string;
-  readonly publication: ProjectionPublication;
   readonly now: Date;
   readonly isProcessAlive: (pid: number) => boolean;
 }): Promise<void> {
@@ -313,19 +319,23 @@ async function recoverPublishLock(options: {
   if (lease.getTime() > options.now.getTime() || options.isProcessAlive(record.owner_pid)) {
     throw new Error("FITNESS_PROJECTION_LOCKED");
   }
-  if (
-    record.target_source_revision !== options.publication.manifest.source.revision ||
-    record.target_projection_revision !== options.publication.projectionRevision
-  ) {
-    throw new Error("FITNESS_PROJECTION_RECOVERY_BLOCKED");
-  }
   const revisionsRoot = join(options.publicationRoot, "revisions");
   const revisionDirectory = join(revisionsRoot, record.target_projection_revision);
   const candidate = join(
     revisionsRoot,
     `.tmp-${record.target_projection_revision}-${record.owner_token}`,
   );
-  if (record.phase === "candidate-written") {
+  const candidateExists = pathExists(candidate);
+  if (candidateExists && record.phase === "candidate-written") {
+    await readStoredPublication(
+      candidate,
+      record.target_projection_revision,
+      record.target_source_revision,
+    ).catch(() => {
+      throw new Error("FITNESS_PROJECTION_RECOVERY_BLOCKED");
+    });
+  }
+  if (candidateExists) {
     await removeRecoveryCandidate(candidate, revisionsRoot);
   }
   if (
@@ -333,13 +343,18 @@ async function recoverPublishLock(options: {
     record.phase === "pointer-replaced" ||
     record.phase === "committed"
   ) {
-    const existing = await readExistingPublication(
+    const existing = await readStoredPublication(
       revisionDirectory,
-      options.publication,
-    );
-    if (existing === undefined) throw new Error("FITNESS_PROJECTION_RECOVERY_BLOCKED");
+      record.target_projection_revision,
+      record.target_source_revision,
+    ).catch(() => {
+      throw new Error("FITNESS_PROJECTION_RECOVERY_BLOCKED");
+    });
     if (record.phase === "pointer-replaced" || record.phase === "committed") {
-      const pointer = await readFile(join(options.publicationRoot, "active.json"));
+      const pointer = await readSafePublishedFile(
+        join(options.publicationRoot, "active.json"),
+        options.publicationRoot,
+      );
       if (!pointerTargets(pointer, existing)) {
         throw new Error("FITNESS_PROJECTION_RECOVERY_BLOCKED");
       }
@@ -353,6 +368,16 @@ async function recoverPublishLock(options: {
   }
   await rm(options.path);
   await syncDirectory(options.publicationRoot);
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw error;
+  }
 }
 
 async function removeRecoveryCandidate(path: string, revisionsRoot: string): Promise<void> {
@@ -428,7 +453,7 @@ async function buildFitnessProjectionSnapshot(
   const activeProgram = await readActiveProgramIfPresent({ personalDataDirectory });
   const bodyWeight = await rebuildBodyWeightView(personalDataDirectory);
   const trainingRecord = await rebuildTrainingRecordView(personalDataDirectory);
-  const strengthTests = await rebuildStrengthTestHistory(personalDataDirectory);
+  const strengthTests = await rebuildCourseStart12RMHistory(personalDataDirectory);
   if (
     bodyWeight.errors.length > 0 ||
     trainingRecord.errors.length > 0 ||
@@ -438,7 +463,9 @@ async function buildFitnessProjectionSnapshot(
   }
   const references: Array<Omit<ProjectionSourceReference, "revision">> = [];
   const documents: FitnessHistoryDocument[] = [];
-  const sourceTimes: string[] = [];
+  const sourceTimes = initialInventory.flatMap(({ asOf }) =>
+    asOf === undefined ? [] : [asOf]
+  );
   if (activeProgram !== undefined) {
     const stateId = activeProgram.state.id;
     for (const [kind, relativeSourcePath] of [
@@ -572,6 +599,7 @@ async function buildFitnessProjectionSnapshot(
   return {
     sourceRevision,
     sourceAsOf,
+    sourceInventory: initialInventory,
     sourceReferences: references.map((reference) => ({
       ...reference,
       revision: sourceRevision,
@@ -586,152 +614,62 @@ async function buildFitnessProjectionSnapshot(
   };
 }
 
+async function assertSourceInventoryUnchanged(
+  personalDataDirectory: string,
+  expected: FitnessProjectionSnapshot["sourceInventory"],
+): Promise<void> {
+  const current = await canonicalSourceInventory(personalDataDirectory);
+  if (!canonicalizeJcs(current).equals(canonicalizeJcs(expected))) {
+    throw new Error("FITNESS_PROJECTION_SOURCE_CHANGED");
+  }
+}
+
 async function canonicalSourceInventory(
   personalDataDirectory: string,
-): Promise<readonly { readonly path: string; readonly checksum: string }[]> {
-  const roots = [
-    join(personalDataDirectory, "program"),
+): Promise<readonly {
+  readonly path: string;
+  readonly checksum: string;
+  readonly asOf?: string;
+}[]> {
+  const canonicalFiles = [
+    join(personalDataDirectory, "program", "spec.json"),
+    join(personalDataDirectory, "program", "state.json"),
+  ].filter(pathExists);
+  const observationRoots = [
     join(personalDataDirectory, "observations", "body-weight"),
     join(personalDataDirectory, "observations", "special-session"),
     join(personalDataDirectory, "observations", "workout-log"),
   ];
-  const files: string[] = [];
-  for (const root of roots) {
-    await collectCanonicalJsonFiles(root, personalDataDirectory, files);
+  for (const root of observationRoots) {
+    await collectCanonicalJsonFiles(root, personalDataDirectory, canonicalFiles);
   }
-  const inventory: Array<{ path: string; checksum: string }> = [];
-  for (const path of files.sort()) {
+  const inventory: Array<{ path: string; checksum: string; asOf?: string }> = [];
+  for (const path of canonicalFiles.sort()) {
+    const bytes = await readSafeCanonicalFile(path, personalDataDirectory);
+    const asOf = sourceFileAsOf(bytes);
     inventory.push({
       path: relative(personalDataDirectory, path).split(sep).join("/"),
-      checksum: checksum(await readSafeCanonicalFile(path, personalDataDirectory)),
+      checksum: checksum(bytes),
+      ...(asOf === undefined ? {} : { asOf }),
     });
   }
   return inventory;
 }
 
-type StrengthTestHistoryObservation = {
-  readonly id: string;
-  readonly exerciseId: string;
-  readonly occurredAt: string;
-  readonly result: {
-    readonly test: "12RM";
-    readonly unit: "kg";
-    readonly value: number;
-  };
-  readonly provenance: {
-    readonly kind:
-      | "course-start-12rm-recording"
-      | "course-start-12rm-correction"
-      | "course-start-12rm-deletion";
-    readonly recordedAt: string;
-    readonly replacesObservationId?: string;
-  };
-};
-
-async function rebuildStrengthTestHistory(personalDataDirectory: string): Promise<{
-  readonly active: readonly StrengthTestHistoryObservation[];
-  readonly recordedAt: readonly string[];
-  readonly errors: readonly string[];
-}> {
-  const directory = join(personalDataDirectory, "observations", "special-session");
-  const entries = await readdir(directory, { withFileTypes: true }).catch(
-    (error: unknown) => {
-      if (isMissing(error)) return [];
-      throw error;
-    },
-  );
-  const observations: StrengthTestHistoryObservation[] = [];
-  const errors: string[] = [];
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    try {
-      const bytes = await readSafeCanonicalFile(
-        join(directory, entry.name),
-        personalDataDirectory,
-      );
-      const observation = parseStrengthTestObservation(bytes);
-      if (entry.name !== `${observation.id}.json`) {
-        throw new Error("FITNESS_PROJECTION_SOURCE_INVALID");
-      }
-      observations.push(observation);
-    } catch {
-      errors.push(entry.name);
-    }
-  }
-  const replacements = new Map<string, StrengthTestHistoryObservation>();
-  for (const observation of observations) {
-    const replacedId = observation.provenance.replacesObservationId;
-    if (replacedId === undefined) continue;
-    if (replacements.has(replacedId)) {
-      errors.push(`${replacedId}:multiple-replacements`);
-    }
-    replacements.set(replacedId, observation);
-  }
-  const replacedIds = new Set(replacements.keys());
-  const validIds = new Set(observations.filter((observation) =>
-    validStrengthTestLineage(observation, observations, new Set())
-  ).map(({ id }) => id));
-  if (validIds.size !== observations.length) errors.push("invalid-lineage");
-  const active = observations.filter((observation) =>
-    !replacedIds.has(observation.id) &&
-    observation.provenance.kind !== "course-start-12rm-deletion" &&
-    validIds.has(observation.id)
-  );
-  return {
-    active: active.sort((left, right) => left.id.localeCompare(right.id)),
-    recordedAt: observations.map(({ provenance }) => provenance.recordedAt),
-    errors,
-  };
-}
-
-function validStrengthTestLineage(
-  observation: StrengthTestHistoryObservation,
-  observations: readonly StrengthTestHistoryObservation[],
-  visited: Set<string>,
-): boolean {
-  if (visited.has(observation.id)) return false;
-  visited.add(observation.id);
-  const replacedId = observation.provenance.replacesObservationId;
-  if (replacedId === undefined) {
-    return observation.provenance.kind === "course-start-12rm-recording";
-  }
-  const replaced = observations.find(({ id }) => id === replacedId);
-  return replaced !== undefined &&
-    replaced.exerciseId === observation.exerciseId &&
-    validStrengthTestLineage(replaced, observations, visited);
-}
-
-function parseStrengthTestObservation(bytes: Buffer): StrengthTestHistoryObservation {
-  const value: unknown = JSON.parse(bytes.toString("utf8"));
-  if (
-    !isRecord(value) ||
-    value.schemaVersion !== "stella-fitness/observation/course-start-12rm/v0.1" ||
-    typeof value.id !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value.id) ||
-    value.kind !== "course-start-12rm" ||
-    typeof value.exerciseId !== "string" ||
-    typeof value.occurredAt !== "string" ||
-    !isRecord(value.result) ||
-    value.result.test !== "12RM" ||
-    value.result.unit !== "kg" ||
-    typeof value.result.value !== "number" ||
-    !Number.isFinite(value.result.value) ||
-    value.result.value <= 0 ||
-    !isRecord(value.provenance) ||
-    ![
-      "course-start-12rm-recording",
-      "course-start-12rm-correction",
-      "course-start-12rm-deletion",
-    ].includes(String(value.provenance.kind)) ||
-    typeof value.provenance.recordedAt !== "string" ||
-    (value.provenance.kind !== "course-start-12rm-recording" &&
-      typeof value.provenance.replacesObservationId !== "string")
-  ) {
+function sourceFileAsOf(bytes: Buffer): string | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
     throw new Error("FITNESS_PROJECTION_SOURCE_INVALID");
   }
-  canonicalTimestamp(value.occurredAt);
-  canonicalTimestamp(value.provenance.recordedAt);
-  return value as unknown as StrengthTestHistoryObservation;
+  if (!isRecord(value) || !isRecord(value.provenance)) return undefined;
+  const timestamps = [
+    value.provenance.recordedAt,
+    value.provenance.cycleStartConfirmedAt,
+  ].filter((timestamp): timestamp is string => typeof timestamp === "string")
+    .map(canonicalTimestamp);
+  return timestamps.sort().at(-1);
 }
 
 async function collectCanonicalJsonFiles(
@@ -941,6 +879,7 @@ async function writeImmutableRevision(options: {
   readonly revisionDirectory: string;
   readonly publication: ProjectionPublication;
   readonly ownerToken: string;
+  readonly crashDuringCandidateWrite: boolean;
   readonly candidateWritten: () => Promise<void>;
 }): Promise<ProjectionPublication> {
   const candidate = join(
@@ -949,8 +888,11 @@ async function writeImmutableRevision(options: {
   );
   try {
     await mkdir(join(candidate, "payloads"), { recursive: true, mode: 0o700 });
-    for (const payload of options.publication.payloads) {
+    for (const [index, payload] of options.publication.payloads.entries()) {
       await durableWrite(join(candidate, payload.path), payload.bytes);
+      if (index === 0 && options.crashDuringCandidateWrite) {
+        throw new SimulatedProjectionCrash("locked");
+      }
     }
     await durableWrite(join(candidate, MANIFEST_FILE), options.publication.manifestBytes);
     await syncDirectory(join(candidate, "payloads"));
@@ -980,54 +922,188 @@ async function readExistingPublication(
   revisionDirectory: string,
   expected: ProjectionPublication,
 ): Promise<ProjectionPublication | undefined> {
-  const manifestBytes = await readFile(join(revisionDirectory, MANIFEST_FILE)).catch(
-    (error: unknown) => {
-      if (isMissing(error)) return undefined;
-      throw error;
-    },
+  if (!pathExists(join(revisionDirectory, MANIFEST_FILE))) return undefined;
+  const stored = await readStoredPublication(
+    revisionDirectory,
+    expected.projectionRevision,
+    expected.manifest.source.revision,
   );
-  if (manifestBytes === undefined) return undefined;
-  const manifest = JSON.parse(manifestBytes.toString("utf8")) as ProjectionManifest;
-  if (!canonicalizeJcs(manifest).equals(manifestBytes)) {
-    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
-  }
+  const manifest = stored.manifest;
   const { generated_at: _storedGeneratedAt, ...storedSemantic } = manifest;
   const { generated_at: _expectedGeneratedAt, ...expectedSemantic } = expected.manifest;
   if (
-    !canonicalizeJcs(storedSemantic).equals(canonicalizeJcs(expectedSemantic)) ||
-    canonicalTimestamp(manifest.generated_at) !== manifest.generated_at
+    !canonicalizeJcs(storedSemantic).equals(canonicalizeJcs(expectedSemantic))
   ) {
     throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
   }
-  for (const payload of expected.payloads) {
-    const bytes = await readSafePublishedFile(
+  return stored;
+}
+
+async function readStoredPublication(
+  revisionDirectory: string,
+  expectedProjectionRevision: string,
+  expectedSourceRevision: string,
+): Promise<ProjectionPublication> {
+  assertStoredRevisionDirectory(revisionDirectory, expectedProjectionRevision);
+  await assertStoredRevisionTree(revisionDirectory);
+  const manifestBytes = await readSafePublishedFile(
+    join(revisionDirectory, MANIFEST_FILE),
+    revisionDirectory,
+  );
+  const manifest = parseStoredManifest(manifestBytes);
+  if (
+    manifest.projection_revision !== expectedProjectionRevision ||
+    manifest.source.revision !== expectedSourceRevision
+  ) {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
+  const desiredBytes = await readSafePublishedFile(
+    join(revisionDirectory, PAYLOAD_PATH),
+    revisionDirectory,
+  );
+  const desiredSet = parseStoredDesiredSet(desiredBytes);
+  const rebuilt = buildProjectionPublication({
+    instanceId: manifest.instance_id,
+    sourceRevision: manifest.source.revision,
+    sourceAsOf: manifest.source.as_of,
+    sourceReferences: manifest.source_references,
+    desiredSet,
+    generatedAt: manifest.generated_at,
+  });
+  if (!rebuilt.manifestBytes.equals(manifestBytes)) {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
+  for (const payload of rebuilt.payloads) {
+    const stored = await readSafePublishedFile(
       join(revisionDirectory, payload.path),
       revisionDirectory,
     );
-    if (checksum(bytes) !== payload.checksum) {
+    if (!stored.equals(payload.bytes)) {
       throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
     }
   }
   const activePath = join(dirname(dirname(revisionDirectory)), "active.json");
-  const active = await readFile(activePath).catch((error: unknown) => {
-    if (isMissing(error)) return undefined;
-    throw error;
-  });
+  const active = await readOptionalSafePublishedFile(
+    activePath,
+    dirname(dirname(revisionDirectory)),
+  );
   if (active !== undefined) {
     const pointer = parseActivePointer(active);
     if (
-      pointer.projection_revision === expected.projectionRevision &&
-      pointer.manifest_checksum !== checksum(manifestBytes)
+      pointer.projection_revision === rebuilt.projectionRevision &&
+      !pointerTargets(active, rebuilt)
     ) {
       throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
     }
   }
-  return {
-    ...expected,
-    manifest,
-    manifestBytes,
-    manifestChecksum: checksum(manifestBytes),
-  };
+  return rebuilt;
+}
+
+function assertStoredRevisionDirectory(
+  revisionDirectory: string,
+  expectedProjectionRevision: string,
+): void {
+  const revisionsRoot = dirname(revisionDirectory);
+  const rootMetadata = lstatSync(revisionsRoot);
+  const revisionMetadata = lstatSync(revisionDirectory);
+  if (
+    rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory() ||
+    revisionMetadata.isSymbolicLink() || !revisionMetadata.isDirectory()
+  ) {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
+  const name = basename(revisionDirectory);
+  if (
+    name !== expectedProjectionRevision &&
+    !name.startsWith(`.tmp-${expectedProjectionRevision}-`)
+  ) {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
+  if (!realpathSync(revisionDirectory).startsWith(`${realpathSync(revisionsRoot)}${sep}`)) {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
+}
+
+async function assertStoredRevisionTree(revisionDirectory: string): Promise<void> {
+  const rootEntries = await readdir(revisionDirectory, { withFileTypes: true });
+  if (
+    rootEntries.map(({ name }) => name).sort().join(",") !== "manifest.json,payloads" ||
+    rootEntries.some((entry) =>
+      entry.name === MANIFEST_FILE ? !entry.isFile() : !entry.isDirectory()
+    )
+  ) {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
+  const payloadDirectory = join(revisionDirectory, "payloads");
+  const payloadMetadata = lstatSync(payloadDirectory);
+  const payloadEntries = await readdir(payloadDirectory, { withFileTypes: true });
+  if (
+    payloadMetadata.isSymbolicLink() || !payloadMetadata.isDirectory() ||
+    payloadEntries.map(({ name }) => name).sort().join(",") !==
+      "fitness-history.json,fitness-history.md" ||
+    payloadEntries.some((entry) => !entry.isFile())
+  ) {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
+}
+
+function parseStoredManifest(bytes: Buffer): ProjectionManifest {
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
+  if (
+    !isRecord(value) || !canonicalizeJcs(value).equals(bytes) ||
+    value.schema_version !== "stella.context-projection-manifest/v1" ||
+    value.producer_id !== PRODUCER_ID || value.consumer_id !== CONSUMER_ID ||
+    typeof value.instance_id !== "string" ||
+    typeof value.projection_revision !== "string" ||
+    !isRecord(value.source) || typeof value.source.revision !== "string" ||
+    typeof value.source.as_of !== "string" ||
+    !Array.isArray(value.source_references) ||
+    value.source_references.some((reference) =>
+      !isRecord(reference) || typeof reference.id !== "string" ||
+      typeof reference.path !== "string" || typeof reference.revision !== "string" ||
+      typeof reference.checksum !== "string"
+    ) ||
+    typeof value.generated_at !== "string"
+  ) {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
+  canonicalTimestamp(value.source.as_of);
+  canonicalTimestamp(value.generated_at);
+  return value as unknown as ProjectionManifest;
+}
+
+function parseStoredDesiredSet(
+  bytes: Buffer,
+): FitnessProjectionSnapshot["desiredSet"] {
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
+  if (
+    !isRecord(value) || !canonicalizeJcs(value).equals(bytes) ||
+    value.schema_version !== DESIRED_SET_SCHEMA || value.authoritative !== false ||
+    typeof value.source_revision !== "string" || typeof value.source_as_of !== "string" ||
+    !Array.isArray(value.documents) || value.documents.some((document) =>
+      !isRecord(document) || typeof document.id !== "string" ||
+      !["body-weight", "program", "strength-test", "workout"].includes(
+        String(document.category),
+      ) ||
+      !Array.isArray(document.source_reference_ids) ||
+      document.source_reference_ids.some((id) => typeof id !== "string") ||
+      !isRecord(document.facts)
+    )
+  ) {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
+  canonicalTimestamp(value.source_as_of);
+  return value as unknown as FitnessProjectionSnapshot["desiredSet"];
 }
 
 function buildActivePointer(options: {
@@ -1207,6 +1283,18 @@ async function readSafePublishedFile(path: string, root: string): Promise<Buffer
     throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
   }
   return await readFile(path);
+}
+
+async function readOptionalSafePublishedFile(
+  path: string,
+  root: string,
+): Promise<Buffer | undefined> {
+  try {
+    return await readSafePublishedFile(path, root);
+  } catch (error) {
+    if (isMissing(error)) return undefined;
+    throw error;
+  }
 }
 
 function parseBodyWeightObservation(

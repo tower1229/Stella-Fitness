@@ -2047,6 +2047,67 @@ function assertSameInitial12RM(
   }
 }
 
+export async function rebuildCourseStart12RMHistory(
+  personalDataDirectory: string,
+): Promise<{
+  readonly active: readonly CourseStart12RMObservation[];
+  readonly recordedAt: readonly string[];
+  readonly errors: readonly { readonly file: string; readonly message: string }[];
+}> {
+  const history = await readInitial12RMObservations(personalDataDirectory);
+  const errors = [...history.errors];
+  const byId = new Map(history.observations.map((observation) => [
+    observation.id,
+    observation,
+  ]));
+  for (const observation of history.observations) {
+    let current = observation;
+    const visited = new Set<string>();
+    let valid = true;
+    while (current.provenance.kind !== "course-start-12rm-recording") {
+      if (visited.has(current.id)) {
+        valid = false;
+        break;
+      }
+      visited.add(current.id);
+      const replaced = byId.get(current.provenance.replacesObservationId);
+      if (replaced === undefined || replaced.exerciseId !== observation.exerciseId) {
+        valid = false;
+        break;
+      }
+      current = replaced;
+    }
+    if (!valid) {
+      errors.push({
+        file: join(INITIAL_12RM_DIRECTORY, `${observation.id}.json`),
+        message: "Course-start 12RM Observation has invalid replacement lineage",
+      });
+    }
+  }
+  const roots = history.observations.filter(({ provenance }) =>
+    provenance.kind === "course-start-12rm-recording"
+  );
+  const active: CourseStart12RMObservation[] = [];
+  try {
+    for (const root of roots) {
+      const resolved = resolveInitial12RMReference(history.observations, root.id);
+      if (resolved !== undefined && !active.some(({ id }) => id === resolved.id)) {
+        active.push(resolved);
+      }
+    }
+  } catch (error) {
+    errors.push({
+      file: INITIAL_12RM_DIRECTORY,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return {
+    active: active.sort((left, right) => left.id.localeCompare(right.id)),
+    recordedAt: history.observations.map(({ provenance }) => provenance.recordedAt),
+    errors,
+  };
+}
+
 async function readInitial12RMObservations(personalDataDirectory: string): Promise<{
   readonly observations: readonly CourseStart12RMObservation[];
   readonly errors: readonly { readonly file: string; readonly message: string }[];

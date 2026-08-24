@@ -1,4 +1,5 @@
 import {
+  cpSync,
   linkSync,
   mkdtempSync,
   mkdirSync,
@@ -20,6 +21,7 @@ import { parseWorkoutLogCandidate } from "../src/extraction/candidate.js";
 import { readActiveProgram } from "../src/program/state.js";
 import {
   persistBodyWeightCorrection,
+  persistBodyWeightDeletion,
   persistBodyWeightObservation,
 } from "../src/storage/body-weight.js";
 import { persistWorkoutLogObservation } from "../src/storage/workout-log.js";
@@ -404,6 +406,123 @@ describe("Fitness Projection Publisher", () => {
       .toEqual([]);
   });
 
+  it("revalidates the source after taking the exclusive lock", async () => {
+    const repository = temporaryRepository();
+    const personalDataDirectory = join(repository, "stella", "fitness");
+    const observation = await persistBodyWeightObservation({
+      personalDataDirectory,
+      amount: 68.4,
+      unit: "kg",
+      occurredAt: "2026-08-23T23:00:00.000Z",
+      recordedAt: "2026-08-24T00:00:00.000Z",
+      source: { kind: "user-text", text: "68.4 kg" },
+    });
+    const observationPath = join(
+      personalDataDirectory,
+      "observations",
+      "body-weight",
+      `${observation.id}.json`,
+    );
+
+    await expect(publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      testHooks: {
+        afterLock() {
+          const changed = JSON.parse(readFileSync(observationPath, "utf8")) as {
+            source: { text: string };
+          };
+          changed.source.text = "source changed after lock";
+          writeFileSync(observationPath, `${JSON.stringify(changed, null, 2)}\n`);
+        },
+      },
+    })).rejects.toThrow("FITNESS_PROJECTION_SOURCE_CHANGED");
+    expect(readdirSync(join(repository, "stella", "projections", "stella")))
+      .toEqual([]);
+  });
+
+  it("recovers an old renamed revision before publishing changed source", async () => {
+    const repository = temporaryRepository();
+    const personalDataDirectory = join(repository, "stella", "fitness");
+    const original = await persistBodyWeightObservation({
+      personalDataDirectory,
+      amount: 68.4,
+      unit: "kg",
+      occurredAt: "2026-08-23T23:00:00.000Z",
+      recordedAt: "2026-08-24T00:00:00.000Z",
+      source: { kind: "user-text", text: "68.4 kg" },
+    });
+    await expect(publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      generatedAt: "2026-08-24T00:01:00.000Z",
+      testHooks: {
+        crashAfterPhase: "revision-renamed",
+        now: () => new Date("2026-08-24T01:00:00.000Z"),
+      },
+    })).rejects.toThrow("SIMULATED_FITNESS_PROJECTION_CRASH:revision-renamed");
+    await persistBodyWeightCorrection({
+      personalDataDirectory,
+      replacesObservationId: original.id,
+      amount: 68.8,
+      unit: "kg",
+      source: { kind: "user-text", text: "68.8 kg" },
+      recordedAt: "2026-08-24T01:00:00.000Z",
+    });
+
+    const recovered = await publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      generatedAt: "2026-08-24T01:01:00.000Z",
+      testHooks: {
+        now: () => new Date("2026-08-24T01:01:00.000Z"),
+        isProcessAlive: () => false,
+      },
+    });
+
+    expect(recovered).toMatchObject({ status: "published", reusedRevision: false });
+    expect(readdirSync(join(
+      repository,
+      "stella",
+      "projections",
+      "stella",
+      "revisions",
+    ))).toHaveLength(2);
+  });
+
+  it("removes a partial candidate left while the lock phase is still locked", async () => {
+    const repository = temporaryRepository();
+    const personalDataDirectory = join(repository, "stella", "fitness");
+    await persistBodyWeightObservation({
+      personalDataDirectory,
+      amount: 68.4,
+      unit: "kg",
+      occurredAt: "2026-08-23T23:00:00.000Z",
+      recordedAt: "2026-08-24T00:00:00.000Z",
+      source: { kind: "user-text", text: "68.4 kg" },
+    });
+    await expect(publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      testHooks: {
+        crashDuringCandidateWrite: true,
+        now: () => new Date("2026-08-24T01:00:00.000Z"),
+      },
+    })).rejects.toThrow("SIMULATED_FITNESS_PROJECTION_CRASH:locked");
+
+    const recovered = await publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      testHooks: {
+        now: () => new Date("2026-08-24T01:01:00.000Z"),
+        isProcessAlive: () => false,
+      },
+    });
+
+    expect(readdirSync(join(
+      repository,
+      "stella",
+      "projections",
+      "stella",
+      "revisions",
+    ))).toEqual([recovered.projectionRevision]);
+  });
+
   it.each(["symlink", "hardlink", "oversize"] as const)(
     "rejects a %s canonical source before publication",
     async (attack) => {
@@ -444,6 +563,44 @@ describe("Fitness Projection Publisher", () => {
       );
     },
   );
+
+  it("rejects a detached cyclic 12RM correction lineage", async () => {
+    const repository = temporaryRepository();
+    const directory = join(
+      repository,
+      "stella",
+      "fitness",
+      "observations",
+      "special-session",
+    );
+    mkdirSync(directory, { recursive: true });
+    const firstId = "00000000-0000-4000-8000-000000000201";
+    const secondId = "00000000-0000-4000-8000-000000000202";
+    for (const [id, replacesObservationId, minute] of [
+      [firstId, secondId, "00"],
+      [secondId, firstId, "01"],
+    ] as const) {
+      writeFileSync(join(directory, `${id}.json`), `${JSON.stringify({
+        schemaVersion: "stella-fitness/observation/course-start-12rm/v0.1",
+        id,
+        kind: "course-start-12rm",
+        exerciseId: "goblet-squat",
+        result: { test: "12RM", unit: "kg", value: 32 },
+        occurredAt: `2026-08-24T00:${minute}:00.000Z`,
+        source: { kind: "user-text", text: "32 kg" },
+        provenance: {
+          kind: "course-start-12rm-correction",
+          confirmationId: `00000000-0000-4000-8000-0000000003${minute}`,
+          recordedAt: `2026-08-24T00:${minute}:00.000Z`,
+          replacesObservationId,
+        },
+      }, null, 2)}\n`);
+    }
+
+    await expect(publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+    })).rejects.toThrow("FITNESS_PROJECTION_SOURCE_INVALID");
+  });
 
   it("rejects projection path escape and immutable revision tamper", async () => {
     const escapedRepository = temporaryRepository();
@@ -492,6 +649,66 @@ describe("Fitness Projection Publisher", () => {
     })).rejects.toThrow("FITNESS_PROJECTION_REVISION_TAMPERED");
   });
 
+  it.each([
+    "revision-symlink",
+    "manifest-hardlink",
+    "active-symlink",
+    "active-hardlink",
+  ] as const)(
+    "rejects the %s immutable-boundary attack",
+    async (attack) => {
+      const repository = temporaryRepository();
+      const personalDataDirectory = join(repository, "stella", "fitness");
+      await persistBodyWeightObservation({
+        personalDataDirectory,
+        amount: 68.4,
+        unit: "kg",
+        occurredAt: "2026-08-23T23:00:00.000Z",
+        recordedAt: "2026-08-24T00:00:00.000Z",
+        source: { kind: "user-text", text: "68.4 kg" },
+      });
+      const published = await publishFitnessContextProjection({
+        openclawConfig: locatorConfig(repository),
+        generatedAt: "2026-08-24T00:01:00.000Z",
+      });
+      const revisionDirectory = join(
+        repository,
+        "stella",
+        "projections",
+        "stella",
+        "revisions",
+        published.projectionRevision,
+      );
+      const publicationRoot = join(repository, "stella", "projections", "stella");
+      if (attack === "revision-symlink") {
+        const outside = mkdtempSync(join(tmpdir(), "stella-revision-outside-"));
+        temporaryRoots.push(outside);
+        cpSync(revisionDirectory, outside, { recursive: true });
+        rmSync(revisionDirectory, { recursive: true });
+        symlinkSync(outside, revisionDirectory);
+      } else if (attack === "manifest-hardlink") {
+        const manifestPath = join(revisionDirectory, "manifest.json");
+        const outside = join(repository, "manifest-hardlink.json");
+        linkSync(manifestPath, outside);
+      } else {
+        const activePath = join(publicationRoot, "active.json");
+        const outside = join(repository, `${attack}.json`);
+        if (attack === "active-symlink") {
+          writeFileSync(outside, readFileSync(activePath));
+          unlinkSync(activePath);
+          symlinkSync(outside, activePath);
+        } else {
+          linkSync(activePath, outside);
+        }
+      }
+
+      await expect(publishFitnessContextProjection({
+        openclawConfig: locatorConfig(repository),
+        generatedAt: "2026-08-24T00:01:00.000Z",
+      })).rejects.toThrow("FITNESS_PROJECTION_REVISION_TAMPERED");
+    },
+  );
+
   it("replaces the prior domain desired set after a canonical correction", async () => {
     const repository = temporaryRepository();
     const personalDataDirectory = join(repository, "stella", "fitness");
@@ -534,6 +751,50 @@ describe("Fitness Projection Publisher", () => {
     expect(second.projectionRevision).not.toBe(first.projectionRevision);
     expect(secondPayload).toContain(`body-weight:${correction.id}`);
     expect(secondPayload).not.toContain(`body-weight:${original.id}`);
+  });
+
+  it("publishes an empty complete desired set after the last fact is deleted", async () => {
+    const repository = temporaryRepository();
+    const personalDataDirectory = join(repository, "stella", "fitness");
+    const original = await persistBodyWeightObservation({
+      personalDataDirectory,
+      amount: 68.4,
+      unit: "kg",
+      occurredAt: "2026-08-23T23:00:00.000Z",
+      recordedAt: "2026-08-24T00:00:00.000Z",
+      source: { kind: "user-text", text: "68.4 kg" },
+    });
+    const first = await publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      generatedAt: "2026-08-24T00:01:00.000Z",
+    });
+    await persistBodyWeightDeletion({
+      personalDataDirectory,
+      observationId: original.id,
+      source: { kind: "user-text", text: "删除体重" },
+      recordedAt: "2026-08-24T01:00:00.000Z",
+    });
+
+    const second = await publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      generatedAt: "2026-08-24T01:01:00.000Z",
+    });
+    const payload = JSON.parse(readFileSync(join(
+      repository,
+      "stella",
+      "projections",
+      "stella",
+      "revisions",
+      second.projectionRevision,
+      "payloads",
+      "fitness-history.json",
+    ), "utf8")) as { source_as_of: string; documents: readonly unknown[] };
+
+    expect(second.projectionRevision).not.toBe(first.projectionRevision);
+    expect(payload).toMatchObject({
+      source_as_of: "2026-08-24T01:00:00.000Z",
+      documents: [],
+    });
   });
 });
 
