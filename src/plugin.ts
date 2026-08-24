@@ -107,6 +107,12 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
 export default plugin;
 
+export {
+  publishFitnessContextProjection,
+  type FitnessProjectionPublishPhase,
+  type FitnessProjectionPublishResult,
+} from "./context/projection-publisher.js";
+
 export function registerStellaFitnessPlugin(
   api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
 ): StellaFitnessRuntime | undefined {
