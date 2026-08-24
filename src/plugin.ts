@@ -16,6 +16,9 @@ import {
   FitnessContextContractError,
   resolveStellaPersonalDataPaths,
 } from "./context/runtime-contract.js";
+import { createFitnessAgentWorkspaceManager } from "./agent-workspace/manager.js";
+import { createOpenClawFitnessAgentWorkspaceHost } from "./agent-workspace/openclaw.js";
+import { createManagedArtifactToolPolicy } from "./agent-workspace/policy.js";
 import { createWorkoutLogConfirmationCoordinator } from "./confirmation/coordinator.js";
 import { createOpenClawConfirmationIntentClassifier } from "./confirmation/openclaw.js";
 import { createRuntimeDirectoryConfirmationSessionStore } from "./confirmation/runtime-store.js";
@@ -49,6 +52,16 @@ const PRINTABLE_LOG_DOWNLOAD_ROUTE =
 const PRINTABLE_LOG_DOWNLOAD_TTL_MS = 10 * 60 * 1_000;
 const PRINTABLE_LOG_FILE_NAME = "zhuoshu-workout-log.xlsx";
 const printableLogDownloadTokens = new Map<string, number>();
+const FITNESS_WORKSPACE_ARTIFACTS = [{
+  path: "AGENTS.md",
+  managedContent: [
+    "# Stella Fitness domain boundary",
+    "",
+    "Stella Fitness is recording-only. It records and reports user facts without training supervision, diagnosis, nutrition advice, or health-risk decisions.",
+    "Plugin-managed sections are read-only. User-authored instructions belong only in the marked user section.",
+    "",
+  ].join("\n"),
+}] as const;
 const BODY_WEIGHT_RECORDING_INPUT =
   /^\s*(?:(?:\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))?|今天|昨天|前天|today|yesterday)\s*)?(?:我\s*)?(?:记录\s*)?(?:体重|body\s*weight|weight)\s*(?:是|为|:|：)?\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?(?:\s*(?:或|还是|or)\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?)?\s*[。.!]?\s*$/iu;
 const INITIAL_12RM_ALIASES = {
@@ -104,6 +117,7 @@ export function registerStellaFitnessPlugin(
   const preflight = createPreflightRunner(api);
   statusText = () => createStatusResponse(preflight()).text;
   preflight();
+  registerFitnessAgentWorkspace(api);
   const stellaRuntime = createStellaFitnessRuntime({
     extractionRuntime: createCurrentExtractionRuntime(api),
     personalDataDirectory: () =>
@@ -909,6 +923,108 @@ export function registerStellaFitnessPlugin(
     { priority: 100, timeoutMs: 6_000 },
   );
   return stellaRuntime;
+}
+
+function registerFitnessAgentWorkspace(
+  api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
+): void {
+  const host = createOpenClawFitnessAgentWorkspaceHost(api);
+  const manager = createFitnessAgentWorkspaceManager({
+    runtimeDirectory: join(
+      api.runtime.state.resolveStateDir(process.env),
+      PLUGIN_ID,
+    ),
+    host,
+  });
+  api.registerTrustedToolPolicy(createManagedArtifactToolPolicy({ host }));
+  api.registerService({
+    id: "stella-fitness-agent-workspace",
+    async start() {
+      const startedAt = Date.now();
+      const agentId = resolveDedicatedAgentId(
+        currentPluginConfig(currentOpenClawConfig(api)),
+      );
+      if (agentId === undefined) return;
+      try {
+        const result = await manager.sync({
+          agentId,
+          artifacts: FITNESS_WORKSPACE_ARTIFACTS,
+        });
+        api.logger?.info(
+          `agentId=${result.agentId} status=${result.status} reasonCode=${result.reasonCode ?? "NONE"} count=${FITNESS_WORKSPACE_ARTIFACTS.length} durationMs=${Date.now() - startedAt}`,
+        );
+      } catch {
+        api.logger?.error(
+          `agentId=${agentId} status=failed reasonCode=WORKSPACE_INITIALIZATION_FAILED count=${FITNESS_WORKSPACE_ARTIFACTS.length} durationMs=${Date.now() - startedAt}`,
+        );
+      }
+    },
+  });
+  api.registerCommand({
+    name: "stella-workspace",
+    description: "Inspect or explicitly adopt the dedicated Fitness Agent workspace",
+    acceptsArgs: true,
+    requireAuth: true,
+    handler: async (context) => {
+      const agentId = resolveDedicatedAgentId(
+        currentPluginConfig(currentOpenClawConfig(api)),
+      );
+      if (agentId === undefined) {
+        return { text: "请先配置 Stella Fitness dedicatedAgentId。" };
+      }
+      const args = context.args?.trim().split(/\s+/u).filter(Boolean) ?? [];
+      const action = args[0]?.toLowerCase() ?? "status";
+      const result = action === "sync"
+        ? await manager.sync({ agentId, artifacts: FITNESS_WORKSPACE_ARTIFACTS })
+        : action === "adopt" && args[1]?.toLowerCase() === "merge"
+          ? await manager.adopt({
+              agentId,
+              artifacts: FITNESS_WORKSPACE_ARTIFACTS,
+              choice: "merge",
+            })
+          : action === "adopt" && args[1]?.toLowerCase() === "skip"
+            ? await manager.adopt({
+                agentId,
+                artifacts: FITNESS_WORKSPACE_ARTIFACTS,
+                choice: "skip",
+              })
+            : action === "adopt" &&
+                args[1]?.toLowerCase() === "alternate" &&
+                args[2] !== undefined
+              ? await manager.adopt({
+                  agentId,
+                  artifacts: FITNESS_WORKSPACE_ARTIFACTS,
+                  choice: { alternateAgentId: args[2] },
+                })
+              : await manager.initialize({
+                  agentId,
+                  artifacts: FITNESS_WORKSPACE_ARTIFACTS,
+                });
+      return { text: formatWorkspaceResult(result) };
+    },
+  });
+}
+
+function formatWorkspaceResult(result: {
+  readonly agentId: string;
+  readonly status: string;
+  readonly reasonCode?: string;
+  readonly ownershipRevision?: number;
+}): string {
+  if (result.status === "adoption-required") {
+    return result.reasonCode === "ADOPTION_SKIPPED"
+      ? "已跳过现有 Fitness workspace adoption；没有修改任何 Agent 文件。"
+      : "发现未受 Stella Fitness 管理的既有 workspace。请选择：`/stella-workspace adopt merge`、`/stella-workspace adopt alternate <agent-id>` 或 `/stella-workspace adopt skip`。";
+  }
+  if (result.status === "conflicted") {
+    return "Fitness workspace ownership 冲突，已停止覆盖。请先检查本地 Context Diagnostics。";
+  }
+  if (result.status === "blocked") {
+    return result.reasonCode === "IDENTITY_CORE_REQUIRED"
+      ? "Host 未生成可验证的 IDENTITY 与 SOUL bootstrap，因此没有创建或修改 Fitness workspace。"
+      : "OpenClaw 当前未提供所需的公开 Agent files/bootstrap 能力，因此没有创建或修改 Fitness workspace。";
+  }
+  return `Fitness Agent workspace 已就绪：Agent ID ${result.agentId}，ownership revision ${result.ownershipRevision ?? 0}。`;
 }
 
 function registerPrintableLogDownloadRoute(
