@@ -24,7 +24,12 @@ describe("OpenClaw stable contract baseline", () => {
         "reply_payload_sending",
         "reply_dispatch",
       ],
-      dedicatedAgentScope: "agent-runtime.resolveAgentIdFromSessionKey",
+      dedicatedAgentScope: "routing.parseAgentSessionKey+resolveAgentRoute",
+      agentMemory: [
+        "memory-core.resolveMemorySearchConfig",
+        "agent-scoped-memory-source",
+        "agent-scoped-session-source",
+      ],
       structuredMedia: "runtime.mediaUnderstanding.extractStructuredWithModel",
       confirmationState: "plugin-owned-runtime-directory",
       semanticConfirmation: "runtime.llm.complete",

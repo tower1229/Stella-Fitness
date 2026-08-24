@@ -10,7 +10,13 @@ import {
   type PluginHookInboundClaimEvent,
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
-import { resolveAgentIdFromSessionKey } from "openclaw/plugin-sdk/agent-runtime";
+import {
+  isAcpSessionKey,
+  isCronSessionKey,
+  isSubagentSessionKey,
+  parseAgentSessionKey,
+  resolveAgentRoute,
+} from "openclaw/plugin-sdk/routing";
 import { assertOperatorModelPermission } from "./contracts/openclaw.js";
 import {
   createRuntimeIdentityContextConsumer,
@@ -23,6 +29,10 @@ import {
 } from "./context/identity-bootstrap.js";
 import { stellaIdentityProjectionContract } from "./context/stella-identity-contract.js";
 import { createFitnessAgentWorkspaceManager } from "./agent-workspace/manager.js";
+import {
+  configureFitnessAgentMemory,
+  type FitnessAgentMemoryResult,
+} from "./agent-workspace/memory.js";
 import { createOpenClawFitnessAgentWorkspaceHost } from "./agent-workspace/openclaw.js";
 import { createManagedArtifactToolPolicy } from "./agent-workspace/policy.js";
 import { createWorkoutLogConfirmationCoordinator } from "./confirmation/coordinator.js";
@@ -1234,6 +1244,17 @@ function registerFitnessAgentWorkspace(
     | { readonly status: "blocked" | "adoption-required" | "conflicted" | "failed";
         readonly reasonCode?: string }
     | undefined;
+  let memory: FitnessAgentMemoryResult | undefined;
+  const configureMemory = async (
+    result: { readonly status: string; readonly agentId: string; readonly workspace?: string },
+  ): Promise<void> => {
+    if (result.status !== "ready" || result.workspace === undefined) return;
+    memory = await configureFitnessAgentMemory({
+      api,
+      agentId: result.agentId,
+      workspace: result.workspace,
+    });
+  };
   const rememberPublication = (
     result: { readonly status: string; readonly reasonCode?: string },
     candidate: Extract<FitnessIdentityBootstrapCandidate, { readonly status: "ready" }>,
@@ -1272,6 +1293,7 @@ function registerFitnessAgentWorkspace(
           artifacts: candidate.artifacts,
         });
         rememberPublication(result, candidate);
+        await configureMemory(result);
         api.logger?.info(
           `agentId=${result.agentId} status=${result.status} reasonCode=${result.reasonCode ?? "NONE"} count=${candidate.artifacts.length} durationMs=${Date.now() - startedAt}`,
         );
@@ -1326,9 +1348,10 @@ function registerFitnessAgentWorkspace(
                 })
               : await manager.sync({ agentId, artifacts: candidate.artifacts });
       rememberPublication(result, candidate);
+      await configureMemory(result);
       return {
         text: result.status === "ready"
-          ? `${formatWorkspaceResult(result)}\n\n${candidate.disclosure}`
+          ? `${formatWorkspaceResult(result)}\n${formatConversationalMemoryResult(memory)}\n\n${candidate.disclosure}`
           : formatWorkspaceResult(result),
       };
     },
@@ -1340,7 +1363,7 @@ function registerFitnessAgentWorkspace(
       const current = currentCandidate();
       return current.status === "ready" &&
           sameIdentityRevision(current, publication.candidate)
-        ? current.disclosure
+        ? `${current.disclosure}\n${formatConversationalMemoryResult(memory)}`
         : undefined;
     },
     statusSummary() {
@@ -1349,24 +1372,57 @@ function registerFitnessAgentWorkspace(
         if (publication?.status === "ready") {
           return `context-sync: stale - last published as-of ${publication.candidate.asOf} (${candidate.reasonCode})`;
         }
-        return `context-sync: degraded - Runtime Identity Context is unavailable (${candidate.reasonCode})`;
+        return appendConversationalMemoryStatus(
+          `context-sync: degraded - Runtime Identity Context is unavailable (${candidate.reasonCode})`,
+          memory,
+        );
       }
       if (publication?.status === "ready") {
         if (!sameIdentityRevision(candidate, publication.candidate)) {
-          return `context-sync: stale - published as-of ${publication.candidate.asOf}; verified update pending sync`;
+          return appendConversationalMemoryStatus(
+            `context-sync: stale - published as-of ${publication.candidate.asOf}; verified update pending sync`,
+            memory,
+          );
         }
-        return `context-sync: ${candidate.freshness === "active" ? "ready" : "stale"} - as-of ${candidate.asOf}`;
+        return appendConversationalMemoryStatus(
+          `context-sync: ${candidate.freshness === "active" ? "ready" : "stale"} - as-of ${candidate.asOf}`,
+          memory,
+        );
       }
       if (publication !== undefined) {
         const state = publication.status === "conflicted" ||
             publication.status === "adoption-required"
           ? "conflicted"
           : "degraded";
-        return `context-sync: ${state} - ${publication.reasonCode ?? "WORKSPACE_PUBLICATION_INCOMPLETE"}`;
+        return appendConversationalMemoryStatus(
+          `context-sync: ${state} - ${publication.reasonCode ?? "WORKSPACE_PUBLICATION_INCOMPLETE"}`,
+          memory,
+        );
       }
-      return "context-sync: uninitialized - verified Runtime Identity Context is available; run /stella-workspace sync";
+      return appendConversationalMemoryStatus(
+        "context-sync: uninitialized - verified Runtime Identity Context is available; run /stella-workspace sync",
+        memory,
+      );
     },
   };
+}
+
+function formatConversationalMemoryResult(
+  result: FitnessAgentMemoryResult | undefined,
+): string {
+  return result?.status === "ready"
+    ? "跨会话 Fitness 对话记忆已就绪；它只提供非权威的交流连续性，精确训练状态仍实时读取。"
+    : "跨会话历史目前不可用；我仍可使用确定性 Fitness 功能，但不会假装记得完整历史。";
+}
+
+function appendConversationalMemoryStatus(
+  contextStatus: string,
+  result: FitnessAgentMemoryResult | undefined,
+): string {
+  if (result === undefined) return contextStatus;
+  return result.status === "ready"
+    ? `${contextStatus}\nconversational-memory: ready - Agent-scoped memory and sessions are enabled`
+    : `${contextStatus}\nconversational-memory: degraded - ${result.reasonCode}`;
 }
 
 function sameIdentityRevision(
@@ -2421,42 +2477,82 @@ function requireDedicatedAgent(
 }
 
 function isDedicatedAgentContext(
-  context: { readonly agentId?: string; readonly sessionKey?: string } | undefined,
+  context:
+    | {
+        readonly agentId?: string;
+        readonly sessionKey?: string;
+        readonly trigger?: string;
+      }
+    | undefined,
   api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
 ): boolean {
   const dedicatedAgentId = resolveDedicatedAgentId(
     currentPluginConfig(currentOpenClawConfig(api)),
   );
   if (dedicatedAgentId === undefined) return false;
-  return context?.agentId === dedicatedAgentId ||
-    resolveAgentIdFromSessionKey(context?.sessionKey) === dedicatedAgentId;
+  if (
+    context?.trigger !== undefined &&
+    /(?:^|[_:-])(?:callback|cron|heartbeat|index|probe|system)(?:$|[_:-])/iu
+      .test(context.trigger)
+  ) return false;
+  if (context?.agentId !== undefined && context.agentId !== dedicatedAgentId) {
+    return false;
+  }
+  if (context?.sessionKey !== undefined) {
+    return isPrivateFitnessSessionKey(context.sessionKey, dedicatedAgentId);
+  }
+  return context?.agentId === dedicatedAgentId;
 }
 
 function isDedicatedInboundContext(
-  event: Pick<PluginHookInboundClaimEvent, "accountId" | "channel">,
-  context: { readonly agentId?: string; readonly sessionKey?: string } | undefined,
+  event: Pick<
+    PluginHookInboundClaimEvent,
+    "accountId" | "channel" | "conversationId" | "isGroup" | "senderId"
+  >,
+  context:
+    | {
+        readonly agentId?: string;
+        readonly channelId?: string;
+        readonly conversationId?: string;
+        readonly senderId?: string;
+        readonly sessionKey?: string;
+        readonly trigger?: string;
+      }
+    | undefined,
   api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
 ): boolean {
+  if (event.isGroup === true) return false;
   if (isDedicatedAgentContext(context, api)) return true;
   const openclawConfig = currentOpenClawConfig(api);
   const dedicatedAgentId = resolveDedicatedAgentId(
     currentPluginConfig(openclawConfig),
   );
-  if (dedicatedAgentId === undefined || !Array.isArray(openclawConfig.bindings)) {
-    return false;
-  }
-  const accountId = event.accountId ?? "default";
-  return openclawConfig.bindings.some((value) => {
-    const binding = asRecord(value);
-    const match = asRecord(binding?.match);
-    if (binding?.agentId !== dedicatedAgentId || match?.channel !== event.channel) {
-      return false;
-    }
-    if (Object.keys(match).some((key) => key !== "channel" && key !== "accountId")) {
-      return false;
-    }
-    return match.accountId === undefined || match.accountId === accountId;
+  if (dedicatedAgentId === undefined) return false;
+  const peerId = event.senderId ?? context?.senderId ?? event.conversationId ??
+    context?.conversationId ?? context?.channelId ?? "private";
+  const route = resolveAgentRoute({
+    cfg: openclawConfig as OpenClawConfig,
+    channel: event.channel,
+    ...(event.accountId === undefined ? {} : { accountId: event.accountId }),
+    peer: { kind: "direct", id: peerId },
   });
+  return route.agentId === dedicatedAgentId && route.matchedBy !== "default" &&
+    isPrivateFitnessSessionKey(route.sessionKey, dedicatedAgentId);
+}
+
+function isPrivateFitnessSessionKey(
+  sessionKey: string,
+  dedicatedAgentId: string,
+): boolean {
+  if (
+    isSubagentSessionKey(sessionKey) ||
+    isCronSessionKey(sessionKey) ||
+    isAcpSessionKey(sessionKey)
+  ) return false;
+  const parsed = parseAgentSessionKey(sessionKey);
+  if (parsed?.agentId !== dedicatedAgentId) return false;
+  return !/(?:^|:)(?:callback|channel|cron|group|index|probe|room|shared|subagent|acp)(?:$|:)/iu
+    .test(parsed.rest);
 }
 
 function resolveDedicatedAgentId(
