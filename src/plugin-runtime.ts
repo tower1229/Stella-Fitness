@@ -64,6 +64,17 @@ import {
   type ProgramFactsQuery,
 } from "./program/facts.js";
 import {
+  buildCurrentFitnessState,
+  CurrentFitnessTimeZoneError,
+  type CurrentFitnessState,
+} from "./program/current-fitness-state.js";
+import {
+  looksLikeExactFitnessQuery,
+  parseDeterministicFitnessQuery,
+  type FitnessQueryClassifier,
+  type FitnessQueryIntent,
+} from "./query/intent.js";
+import {
   getPrintableLogWorkbook,
 } from "./reporting/printable-log.js";
 import {
@@ -201,9 +212,9 @@ export type StellaFitnessRuntime = {
   >;
   bodyWeightTimeline(): Promise<BodyWeightView>;
   trainingRecordView(): Promise<TrainingRecordView>;
-  programJourneyStatus(input?: { readonly date?: string }): ReturnType<
-    ReturnType<typeof createProgramJourney>["status"]
-  >;
+  programJourneyStatus(
+    input?: Parameters<ReturnType<typeof createProgramJourney>["status"]>[0],
+  ): ReturnType<ReturnType<typeof createProgramJourney>["status"]>;
   acknowledgePrerequisite(input: {
     readonly prerequisiteId: string;
     readonly acknowledgedAt: string;
@@ -249,6 +260,20 @@ export type StellaFitnessRuntime = {
   programFacts(query: ProgramFactsQuery): ReturnType<typeof queryProgramFacts>;
   printableLog(): ReturnType<typeof getPrintableLogWorkbook>;
   weightFacts(): ReturnType<ReturnType<typeof createProgramJourney>["weightFacts"]>;
+  queryFitness(input: {
+    readonly text: string;
+    readonly receivedAt: string;
+  }): Promise<
+    | {
+        readonly status: "answered";
+        readonly intent: FitnessQueryIntent & {
+          readonly source: "deterministic" | "classifier";
+        };
+        readonly facts: CurrentFitnessState;
+      }
+    | { readonly status: "clarification"; readonly question: string }
+    | { readonly status: "not-applicable" }
+  >;
 };
 
 const MAX_CACHED_RUNS = 256;
@@ -292,6 +317,7 @@ export function createStellaFitnessRuntime(options: {
   personalDataDirectory?: () => string | undefined;
   runtimeDirectory?: () => string | undefined;
   userTimezone?: () => string | undefined;
+  queryClassifier?: FitnessQueryClassifier;
   mediaSanitizer?: MediaSanitizer;
   preflight: () => ConfigurationPreflightResult;
 }): StellaFitnessRuntime {
@@ -501,6 +527,48 @@ export function createStellaFitnessRuntime(options: {
     async weightFacts() {
       await journey().migrateLegacyProgramStateReferences();
       return await journey().weightFacts();
+    },
+    async queryFitness(input) {
+      const deterministicIntent = parseDeterministicFitnessQuery(input.text);
+      let intent = deterministicIntent;
+      let source: "deterministic" | "classifier" = "deterministic";
+      if (intent === undefined) {
+        const classification = await options.queryClassifier?.classify({
+          text: input.text,
+        });
+        if (classification?.status === "classified") {
+          intent = classification.intent;
+          source = "classifier";
+        } else {
+          return looksLikeExactFitnessQuery(input.text)
+            ? {
+                status: "clarification",
+                question: "你是想查看目前的训练计划与记录状态吗？",
+              }
+            : { status: "not-applicable" };
+        }
+      }
+      assertPersonalDataPreflight(preflight());
+      try {
+        return {
+          status: "answered",
+          intent: { ...intent, source },
+          facts: await buildCurrentFitnessState({
+            personalDataDirectory: requiredPersonalDataDirectory(options),
+            timeZone: options.userTimezone?.(),
+            receivedAt: input.receivedAt,
+            programJourneyStatus: (journeyInput) => journey().status(journeyInput),
+          }),
+        };
+      } catch (error) {
+        if (error instanceof CurrentFitnessTimeZoneError) {
+          return {
+            status: "clarification",
+            question: "请先确认你的 IANA 时区，我才能确定“今天”“本周”和“目前”的日期边界。",
+          };
+        }
+        throw error;
+      }
     },
     resolvePlannedSession(input) {
       return resolvePlannedSession({
@@ -1149,20 +1217,7 @@ async function readPendingWorkoutLogConfirmation(
   personalDataDirectory: string,
   confirmationId: string,
 ): Promise<PendingWorkoutLogConfirmation | undefined> {
-  const directory = join(personalDataDirectory, "processing", "workout-log");
-  const files = await readdir(directory).catch((error: unknown) => {
-    if (isMissingFile(error)) return [];
-    throw error;
-  });
-  const records = await Promise.all(
-    files
-      .filter((file) => file.endsWith(".json"))
-      .sort()
-      .map(async (file) => {
-        const value: unknown = JSON.parse(await readFile(join(directory, file), "utf8"));
-        return value;
-      }),
-  );
+  const records = await readWorkoutLogProcessingRecords(personalDataDirectory);
   const awaiting = records.find((value) =>
     isRecord(value) &&
     value.schemaVersion === "stella-fitness/processing/workout-log/v0.1" &&
@@ -1217,6 +1272,24 @@ async function readPendingWorkoutLogConfirmation(
       : {}),
     ...(replacesObservationId === undefined ? {} : { replacesObservationId }),
   };
+}
+
+async function readWorkoutLogProcessingRecords(
+  personalDataDirectory: string,
+): Promise<unknown[]> {
+  const directory = join(personalDataDirectory, "processing", "workout-log");
+  const files = await readdir(directory).catch((error: unknown) => {
+    if (isMissingFile(error)) return [];
+    throw error;
+  });
+  return await Promise.all(
+    files
+      .filter((file) => file.endsWith(".json"))
+      .sort()
+      .map(async (file) =>
+        JSON.parse(await readFile(join(directory, file), "utf8")) as unknown
+      ),
+  );
 }
 
 async function readConfirmationArtifact(

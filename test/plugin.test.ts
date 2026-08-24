@@ -539,6 +539,85 @@ describe("Plugin registration", () => {
     });
   });
 
+  it("claims a natural Current Fitness State query before model execution", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: directories,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const inbound = hooks.get("inbound_claim")!;
+    const bound = { sessionKey: "agent:fitness:webchat:current-state" };
+    const setupMessages = [
+      "我已准备好可拆卸哑铃",
+      "我已准备好引体向上杆",
+      "我已打印训练日志",
+      "我已了解训练记录协议",
+      "体重 67 kg",
+      [
+        "高脚杯深蹲 12RM 29 kg",
+        "哑铃卧推 12RM 29 kg",
+        "哑铃硬拉 12RM 29 kg",
+      ].join("\n"),
+      "本周开始",
+    ];
+    for (const [index, content] of setupMessages.entries()) {
+      await inbound({
+        content,
+        channel: "webchat",
+        messageId: `current-state-setup-${index}`,
+        timestamp: `2026-08-10T0${index}:00:00.000Z`,
+        isGroup: false,
+      }, bound);
+    }
+
+    const result = await inbound(
+      {
+        content: "目前训练进度",
+        channel: "webchat",
+        isGroup: false,
+        timestamp: Date.parse("2026-08-11T16:30:00.000Z"),
+      },
+      bound,
+    );
+
+    expect(result).toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringContaining("当前是第 1 周（phase-1）"),
+      },
+    });
+    expect(result).toMatchObject({
+      reply: {
+        text: expect.stringContaining(
+          "未找到 2026-08-10 计划训练的记录；这不表示你没有训练",
+        ),
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /schemaVersion|observationId|stateId|\/program\/|PREREQUISITES_REQUIRED/u,
+    );
+
+    await expect(inbound(
+      {
+        content: "今天练什么",
+        channel: "webchat",
+        isGroup: false,
+        timestamp: Date.parse("2026-08-16T16:30:00.000Z"),
+      },
+      bound,
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: { text: expect.stringContaining("第 2 周") },
+    });
+  });
+
   it("handles dedicated-agent Journey input at the run gate when the reply hook is skipped", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const directories = configuredPersonalDirectory();
@@ -2571,7 +2650,13 @@ describe("Plugin registration", () => {
         runId: "unrelated-question-run",
       },
     )).resolves.toEqual({ outcome: "pass" });
-    expect(llmComplete).toHaveBeenCalledOnce();
+    expect(llmComplete.mock.calls.filter(
+      ([request]) => request.purpose ===
+        "stella-fitness-workout-log-confirmation-intent",
+    )).toHaveLength(1);
+    expect(llmComplete.mock.calls.filter(
+      ([request]) => request.purpose === "stella-fitness-query-intent",
+    )).toHaveLength(2);
   });
 
   it("terminates a cancelled confirmation without creating an Observation", async () => {

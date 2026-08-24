@@ -22,6 +22,7 @@ import {
 } from "./extraction/candidate.js";
 import { createOpenClawExtractionRuntime } from "./extraction/openclaw.js";
 import type { ExtractionRuntime } from "./extraction/runtime.js";
+import { createOpenClawFitnessQueryClassifier } from "./query/openclaw.js";
 import {
   runConfigurationPreflight,
   type ConfigurationPreflightResult,
@@ -36,6 +37,7 @@ import {
   type Initial12RMExerciseId,
   type RequiredPrerequisiteId,
 } from "./program/journey.js";
+import { localDateInTimeZone } from "./program/current-fitness-state.js";
 import { createStatusResponse } from "./status.js";
 
 const STATUS_INPUT = "stella status";
@@ -109,6 +111,12 @@ export function registerStellaFitnessPlugin(
     runtimeDirectory: () =>
       join(api.runtime.state.resolveStateDir(process.env), PLUGIN_ID),
     userTimezone: () => currentOpenClawConfig(api).agents?.defaults?.userTimezone,
+    queryClassifier: createOpenClawFitnessQueryClassifier({
+      complete: (input) => api.runtime.llm.complete(input),
+      agentId: () => resolveDedicatedAgentId(
+        currentPluginConfig(currentOpenClawConfig(api)),
+      ),
+    }),
     preflight,
   });
   const pendingMediaBySession = new Map<string, PluginHookInboundClaimEvent[]>();
@@ -596,7 +604,7 @@ export function registerStellaFitnessPlugin(
           return { handled: true, reply: { text: replyText } };
         }
       }
-      {
+      if (event.metadata === undefined) {
         const text = [event.content, event.body, event.bodyForAgent]
           .find((value): value is string => typeof value === "string") ?? "";
         const { receivedAt, source } = inboundSource(event);
@@ -705,7 +713,10 @@ export function registerStellaFitnessPlugin(
       }
       const factQuery = parseNaturalProgramFactsQuery(
         text,
-        receivedAt.slice(0, 10),
+        confirmedFitnessLocalDate(
+          receivedAt,
+          currentOpenClawConfig(api).agents?.defaults?.userTimezone,
+        ),
       );
       if (isOutOfScopeProgramQuestion(text)) {
         const result = await stellaRuntime.programFacts({
@@ -718,6 +729,11 @@ export function registerStellaFitnessPlugin(
         return { text: formatWeightFacts(await stellaRuntime.weightFacts()) };
       }
       if (factQuery !== undefined) {
+        if (factQuery.kind === "timezone-required") {
+          return {
+            text: "请先确认你的 IANA 时区，我才能确定“今天”和“本周”的日期边界。",
+          };
+        }
         return {
           text: await formatAvailableProgramFacts(stellaRuntime, factQuery),
         };
@@ -746,6 +762,10 @@ export function registerStellaFitnessPlugin(
         };
       }
       if (!isBodyWeightInput(text)) {
+        const fitnessQuery = await stellaRuntime.queryFitness({ text, receivedAt });
+        if (fitnessQuery.status !== "not-applicable") {
+          return { text: formatCurrentFitnessQuery(fitnessQuery) };
+        }
         if (isQuestion(text)) {
           const result = await stellaRuntime.programFacts({
             kind: "unsupported",
@@ -907,6 +927,56 @@ export function registerStellaFitnessPlugin(
     { priority: 100, timeoutMs: 6_000 },
   );
   return stellaRuntime;
+}
+
+function formatCurrentFitnessQuery(
+  result: Exclude<
+    Awaited<ReturnType<StellaFitnessRuntime["queryFitness"]>>,
+    { readonly status: "not-applicable" }
+  >,
+): string {
+  if (result.status === "clarification") return result.question;
+  const facts = result.facts;
+  if (facts.kind === "program-journey") {
+    return [
+      `当前没有已激活的 ${facts.program.id} 训练周期。`,
+      ...(facts.pendingConfirmations === 0
+        ? []
+        : [`另有 ${facts.pendingConfirmations} 项内容等待确认。`]),
+      facts.nextStep.message,
+    ].join("\n");
+  }
+  if (facts.kind === "conflict") return facts.message;
+  const lines = [
+    `${facts.program.id} ${facts.program.version}，周期从 ${facts.program.cycleStart} 开始。`,
+    facts.position === undefined
+      ? `当前日期 ${facts.asOf.localDate} 不在这个训练周期内。`
+      : `当前是第 ${facts.position.week} 周（${facts.position.phase}）。`,
+  ];
+  const recordedDue = facts.dueSessions.filter(({ record }) =>
+    record === "recorded"
+  ).length;
+  lines.push(
+    `截至 ${facts.asOf.localDate}，计划训练 ${facts.dueSessions.length} 次，找到记录 ${recordedDue} 次。`,
+  );
+  if (facts.latestRecord === undefined) {
+    lines.push("目前没有找到这个周期的有效训练记录。");
+  } else {
+    lines.push(
+      `最近一条有效记录是 ${facts.latestRecord.date} 的${sessionTypeName(facts.latestRecord.sessionType)}。`,
+    );
+  }
+  if (facts.pendingConfirmations > 0) {
+    lines.push(`另有 ${facts.pendingConfirmations} 项内容等待确认。`);
+  }
+  if (facts.nextStep.kind === "review-unrecorded-session") {
+    lines.push(
+      `未找到 ${facts.nextStep.date} 计划训练的记录；这不表示你没有训练。`,
+    );
+  } else {
+    lines.push(facts.nextStep.message);
+  }
+  return lines.join("\n");
 }
 
 function registerPrintableLogDownloadRoute(
@@ -2056,8 +2126,8 @@ function parseFactsCommand(args: string | undefined):
 
 function parseNaturalProgramFactsQuery(
   text: string,
-  date: string,
-): AvailableProgramFactsQuery | undefined {
+  date: string | undefined,
+): AvailableProgramFactsQuery | { readonly kind: "timezone-required" } | undefined {
   const symbol = /(?:当前|current)?\s*([AN])\s*(?:是多少|是|重量|load|weight|\?|？)/iu.exec(text)?.[1]
     ?.toUpperCase() as "A" | "N" | undefined;
   const exerciseId = INITIAL_12RM_EXERCISES.find((id) =>
@@ -2069,17 +2139,36 @@ function parseNaturalProgramFactsQuery(
   if (
     /(?:本周|这周|本星期|这星期)(?:的)?(?:训练|课程|计划|安排|练什么)|(?:给出|查看|看看|显示|告诉我|列出)(?:一下)?(?:本周|这周|本星期|这星期)(?:的)?(?:训练|课程|计划|安排)|this\s+week(?:'s)?\s+(?:workout|session|plan|schedule)/iu.test(text)
   ) {
-    return { kind: "week", date };
+    return date === undefined
+      ? { kind: "timezone-required" }
+      : { kind: "week", date };
   }
   if (/(?:下次(?:应该)?练什么|下次(?:训练|课程|计划)|next\s+(?:workout|session))/iu.test(text)) {
-    return { kind: "next", date };
+    return date === undefined
+      ? { kind: "timezone-required" }
+      : { kind: "next", date };
   }
   if (
     /(?:今天(?:应该)?练什么|today(?:'s)?\s+(?:workout|session)|当前(?:阶段|第几周|周次|训练日|动作|组次|次数|持续时间|休息|处方)|训练日(?:是什么|是哪天|安排|\?|？)|(?:动作|组次|次数|持续时间|休息|处方)(?:是什么|有哪些|分别是什么|\?|？)|prescription|rest)/iu.test(text)
   ) {
-    return { kind: "today", date };
+    return date === undefined
+      ? { kind: "timezone-required" }
+      : { kind: "today", date };
   }
   return undefined;
+}
+
+function confirmedFitnessLocalDate(
+  timestamp: string,
+  timeZone: string | undefined,
+): string | undefined {
+  if (timeZone === undefined || timeZone.trim().length === 0) return undefined;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(0);
+    return localDateInTimeZone(timestamp, timeZone);
+  } catch {
+    return undefined;
+  }
 }
 
 function isOutOfScopeProgramQuestion(text: string): boolean {

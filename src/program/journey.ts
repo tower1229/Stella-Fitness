@@ -122,6 +122,7 @@ export type ProgramJourneyStatus = {
   readonly missingInitial12RMExerciseIds: readonly Initial12RMExerciseId[];
   readonly errors: readonly { readonly file: string; readonly message: string }[];
   readonly requiredCheckpointWeek?: 4 | 8 | 12;
+  readonly pendingConfirmationCount?: number;
 };
 
 type JourneyConfirmationField = {
@@ -270,7 +271,10 @@ export function createProgramJourney(options: {
         });
       });
     },
-    async status(input: { readonly date?: string } = {}): Promise<ProgramJourneyStatus> {
+    async status(input: {
+      readonly date?: string;
+      readonly includePendingConfirmations?: true;
+    } = {}): Promise<ProgramJourneyStatus> {
       assertJourneyPreflight(options.preflight());
       const setup = await ensureSetup(personalDataDirectory);
       const active = await readActiveProgramIfPresent({ personalDataDirectory });
@@ -297,12 +301,24 @@ export function createProgramJourney(options: {
       const missingInitial12RMExerciseIds = INITIAL_12RM_EXERCISES.filter((id) => {
         return activeInitialByExercise.get(id) === undefined;
       });
+      const pendingConfirmations = input.includePendingConfirmations === true
+        ? await pendingJourneyConfirmations(personalDataDirectory)
+        : undefined;
       const common = {
         schemaVersion: "stella-fitness/program-journey-status/v0.1" as const,
         program: { id: "zhuoshu-12-week", version: "0.2.0" },
         missingPrerequisiteIds,
         missingInitial12RMExerciseIds,
-        errors: [...bodyWeightView.errors, ...initial.errors],
+        errors: [
+          ...bodyWeightView.errors,
+          ...initial.errors,
+          ...(pendingConfirmations?.errors ?? []),
+        ],
+        ...(pendingConfirmations !== undefined
+          ? {
+              pendingConfirmationCount: pendingConfirmations.count,
+            }
+          : {}),
       };
       if (missingPrerequisiteIds.length > 0) {
         return {
@@ -1491,6 +1507,35 @@ async function readJourneyConfirmation(
     }
     throw error;
   }));
+}
+
+async function pendingJourneyConfirmations(
+  personalDataDirectory: string,
+): Promise<{
+  readonly count: number;
+  readonly errors: readonly { readonly file: string; readonly message: string }[];
+}> {
+  const directory = join(personalDataDirectory, JOURNEY_CONFIRMATION_DIRECTORY);
+  const files = await readdir(directory).catch((error: unknown) => {
+    if (isMissing(error)) return [];
+    throw error;
+  });
+  let count = 0;
+  const errors: { file: string; message: string }[] = [];
+  for (const file of files.filter((name) => name.endsWith(".json")).sort()) {
+    try {
+      const confirmation = parseJourneyConfirmation(
+        await readFile(join(directory, file), "utf8"),
+      );
+      if (confirmation.resolution === undefined) count += 1;
+    } catch (error) {
+      errors.push({
+        file: join(JOURNEY_CONFIRMATION_DIRECTORY, file),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { count, errors };
 }
 
 async function writeJourneyConfirmation(

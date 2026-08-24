@@ -70,6 +70,8 @@ Program Engine 不评价处方质量。遇到 `status: unresolved` 或无效关�
 
 首版只有一个默认 Built-in Program，不提供计划选择器，也不要求用户输入 ProgramSpec 路径。持久化 Program Journey 必须依次暴露 `PREREQUISITES_REQUIRED`、`BASELINE_WEIGHT_REQUIRED`、`INITIAL_12RM_REQUIRED`、`READY_TO_ACTIVATE`、`ACTIVE` 或 `PHASE_CHECKPOINT_REQUIRED` 中唯一明确的下一步。Active Program State 只能在 prerequisites、baseline 和三个动作各自的 `A` 完整后，以星期一 cycle start 创建。
 
+Current Fitness State 把 `program/state.json` 视为现有单一 Active Program Context。迁移或外部 Provider 如需提供额外候选，只能放在 `program/active-contexts/<context-id>/`，并同时提供严格匹配目录名的 `active.json`（`stella-fitness/active-program-context/v0.1`、`active: true`）、`state.json` 和 `spec.json`；目录存在本身不表示 active。查询发现两个或更多显式 active context 时必须报告冲突，不按修改时间选择。
+
 ## 6. 训练日志抽取
 
 v1 只优先支持用户提供的原课程三阶段 XLSX 固定布局。
