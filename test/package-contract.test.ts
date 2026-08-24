@@ -38,6 +38,9 @@ describe("installable Plugin package contract", () => {
     expect(manifest).toMatchObject({
       id: "stella-fitness",
       activation: { onStartup: true },
+      contracts: {
+        trustedToolPolicies: ["stella-fitness-managed-artifacts"],
+      },
       configSchema: {
         type: "object",
         additionalProperties: false,

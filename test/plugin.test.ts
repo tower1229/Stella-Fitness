@@ -2929,6 +2929,7 @@ describe("Plugin registration", () => {
       }),
     ).rejects.toThrow("STRUCTURED_MEDIA_REQUIRED");
     expect(commands.map(({ name }) => name)).toEqual([
+      "stella-workspace",
       "stella-status",
       "stella-start",
       "stella-prerequisite",
@@ -3080,6 +3081,7 @@ function compatibleApi(options: {
     on(name: string, handler: (...args: unknown[]) => unknown) {
       options.hooks.set(name, handler);
     },
+    registerTrustedToolPolicy() {},
     registerService() {},
   };
 }
