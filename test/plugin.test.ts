@@ -1047,17 +1047,23 @@ describe("Plugin registration", () => {
       reply: { text: "2026-08-18 不是周一。请选择一个周一作为正式开始日期。" },
     });
 
-    await expect(hooks.get("before_agent_reply")?.(
-      { cleanedBody: "下周开始" },
-      { ...bound, messageProvider: "webchat", runId: "natural-activation-next-week" },
-    )).resolves.toMatchObject({
-      handled: true,
-      reply: {
-        text: expect.stringMatching(
-          /训练计划已确认，将从 2026-08-24（周一）开始。.+第 1 周/su,
-        ),
-      },
-    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-17T08:00:00.000Z"));
+    try {
+      await expect(hooks.get("before_agent_reply")?.(
+        { cleanedBody: "下周开始" },
+        { ...bound, messageProvider: "webchat", runId: "natural-activation-next-week" },
+      )).resolves.toMatchObject({
+        handled: true,
+        reply: {
+          text: expect.stringMatching(
+            /训练计划已确认，将从 2026-08-24（周一）开始。.+第 1 周/su,
+          ),
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
     const state = JSON.parse(readFileSync(
       join(directories.personalDataDirectory, "program", "state.json"),
       "utf8",
@@ -2929,6 +2935,7 @@ describe("Plugin registration", () => {
       }),
     ).rejects.toThrow("STRUCTURED_MEDIA_REQUIRED");
     expect(commands.map(({ name }) => name)).toEqual([
+      "stella-workspace",
       "stella-status",
       "stella-start",
       "stella-prerequisite",
@@ -3080,6 +3087,7 @@ function compatibleApi(options: {
     on(name: string, handler: (...args: unknown[]) => unknown) {
       options.hooks.set(name, handler);
     },
+    registerTrustedToolPolicy() {},
     registerService() {},
   };
 }

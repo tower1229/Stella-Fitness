@@ -111,6 +111,7 @@ try {
     "stella-start",
     "stella-status",
     "stella-weight",
+    "stella-workspace",
   ];
   if (JSON.stringify(commands) !== JSON.stringify(expectedCommands)) {
     throw new Error(
