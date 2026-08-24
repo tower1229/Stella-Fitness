@@ -71,7 +71,7 @@ function parseReceipt(value: unknown): NaturalRecordingReceipt {
     typeof value.issuedAt !== "string" ||
     typeof value.expiresAt !== "string" ||
     Number.isNaN(Date.parse(value.expiresAt)) ||
-    typeof value.canonicalBase !== "string" ||
+    typeof value.canonicalFitnessStateDigest !== "string" ||
     !sameFields(value.fields, fitnessWriteCandidateFields(candidate)) ||
     (value.source.channel !== undefined && typeof value.source.channel !== "string") ||
     (value.source.messageId !== undefined && typeof value.source.messageId !== "string") ||
@@ -90,7 +90,7 @@ function parseReceipt(value: unknown): NaturalRecordingReceipt {
     },
     issuedAt: value.issuedAt,
     expiresAt: value.expiresAt,
-    canonicalBase: value.canonicalBase,
+    canonicalFitnessStateDigest: value.canonicalFitnessStateDigest,
   };
 }
 

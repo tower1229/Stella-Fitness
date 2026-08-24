@@ -75,6 +75,27 @@ describe("confirmed natural-language recording", () => {
     });
   });
 
+  it("clarifies a low-confidence recording intent that has no complete candidate", async () => {
+    const coordinator = createNaturalRecordingCoordinator({
+      store: memoryStore(),
+      classifier: {
+        classify: vi.fn().mockResolvedValue({ status: "low-confidence" }),
+      },
+      canonicalFitnessStateDigest: async () => "base-a",
+      promote: vi.fn(),
+    });
+
+    await expect(coordinator.start({
+      sessionKey: "agent:fitness:webchat:unclear-write",
+      text: "也许记一下吧",
+      receivedAt: "2026-08-24T08:10:00.000+08:00",
+      source: {},
+    })).resolves.toMatchObject({
+      status: "clarification",
+      message: expect.stringContaining("没有保存"),
+    });
+  });
+
   it("persists no fact until confirmation and binds the receipt to source and canonical base", async () => {
     let canonicalBase = "base-a";
     const promote = vi.fn().mockResolvedValue("已记录体重 68 kg。");
@@ -114,7 +135,7 @@ describe("confirmed natural-language recording", () => {
       text: "确认",
     })).resolves.toMatchObject({
       status: "confirmation",
-      reason: "canonical-base-drift",
+      reason: "canonical-fitness-state-drift",
       message: expect.stringContaining("数据已变化"),
     });
     expect(promote).not.toHaveBeenCalled();
@@ -129,7 +150,7 @@ describe("confirmed natural-language recording", () => {
     expect(promote).toHaveBeenCalledWith(expect.objectContaining({
       candidate: expect.objectContaining({ amount: 68, unit: "kg" }),
       sourceMessage: "帮我记一下，刚才大概 68 公斤",
-      canonicalBase: "base-b",
+      canonicalFitnessStateDigest: "base-b",
     }));
   });
 

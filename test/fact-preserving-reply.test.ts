@@ -67,6 +67,8 @@ describe("Fact-Preserving Reply", () => {
     ["最近练了俯卧撑。", "untraceable-exact-fact"],
     ["目前没有待确认内容。", "untraceable-exact-fact"],
     ["你的体重是 2 kg。", "untraceable-exact-fact"],
+    ["当前第 2 周 phase-1，体重 2 公斤，今天恢复训练。", "untraceable-exact-fact"],
+    ["当前是第 2 周（力量阶段）。", "untraceable-exact-fact"],
     ["好的。", "missing-requested-fact"],
     ["建议你明天补练。", "recording-only-boundary"],
   ] as const)("rejects an unsafe draft and uses a deterministic fallback: %s", (draft, reason) => {

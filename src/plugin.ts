@@ -283,7 +283,7 @@ export function registerStellaFitnessPlugin(
       receivedAt: input.receivedAt,
       source: input.source,
     });
-    return started.status === "confirmation" ? started.message : undefined;
+    return started.status === "not-applicable" ? undefined : started.message;
   };
   const confirmationAttemptsByRun = new Set<string>();
   const resolveWorkoutLogConfirmationText = async (input: {

@@ -21,7 +21,7 @@ export type NaturalRecordingReceipt = {
   };
   readonly issuedAt: string;
   readonly expiresAt: string;
-  readonly canonicalBase: string;
+  readonly canonicalFitnessStateDigest: string;
 };
 
 export type NaturalRecordingReceiptStore = {
@@ -34,7 +34,7 @@ type ConfirmationResult = {
   readonly status: "confirmation";
   readonly message: string;
   readonly reason?:
-    | "canonical-base-drift"
+    | "canonical-fitness-state-drift"
     | "candidate-modified"
     | "receipt-expired";
 };
@@ -53,11 +53,21 @@ export function createNaturalRecordingCoordinator(options: {
       readonly text: string;
       readonly receivedAt: string;
       readonly source: NaturalRecordingReceipt["source"];
-    }): Promise<ConfirmationResult | { readonly status: "not-applicable" }> {
+    }): Promise<
+      | ConfirmationResult
+      | { readonly status: "not-applicable" }
+      | { readonly status: "clarification"; readonly message: string }
+    > {
       const classification = await options.classifier.classify({
         text: input.text,
         receivedAt: input.receivedAt,
       });
+      if (classification.status === "low-confidence") {
+        return {
+          status: "clarification",
+          message: "我不确定你是否要记录健身事实，因此没有保存。请明确说“记录”，并提供要记录的字段和值。",
+        };
+      }
       if (classification.status !== "candidate") {
         return { status: "not-applicable" };
       }
@@ -67,7 +77,7 @@ export function createNaturalRecordingCoordinator(options: {
         source: input.source,
         issuedAt: input.receivedAt,
         expiresAt: receiptExpiry(now()),
-        canonicalBase: await options.canonicalFitnessStateDigest(),
+        canonicalFitnessStateDigest: await options.canonicalFitnessStateDigest(),
       });
       await options.store.write(sessionKeyHash(input.sessionKey), receipt);
       return { status: "confirmation", message: confirmationMessage(receipt.candidate) };
@@ -98,7 +108,7 @@ export function createNaturalRecordingCoordinator(options: {
         const updated = createReceipt({
           ...receipt,
           expiresAt: receiptExpiry(submittedAt),
-          canonicalBase: await options.canonicalFitnessStateDigest(),
+          canonicalFitnessStateDigest: await options.canonicalFitnessStateDigest(),
         });
         await options.store.write(key, updated);
         return {
@@ -127,7 +137,7 @@ export function createNaturalRecordingCoordinator(options: {
           source: input.source ?? receipt.source,
           issuedAt: receipt.issuedAt,
           expiresAt: receiptExpiry(submittedAt),
-          canonicalBase: await options.canonicalFitnessStateDigest(),
+          canonicalFitnessStateDigest: await options.canonicalFitnessStateDigest(),
         });
         await options.store.write(key, updated);
         return {
@@ -137,16 +147,16 @@ export function createNaturalRecordingCoordinator(options: {
         };
       }
       const currentBase = await options.canonicalFitnessStateDigest();
-      if (currentBase !== receipt.canonicalBase) {
+      if (currentBase !== receipt.canonicalFitnessStateDigest) {
         const updated = createReceipt({
           ...receipt,
           expiresAt: receiptExpiry(submittedAt),
-          canonicalBase: currentBase,
+          canonicalFitnessStateDigest: currentBase,
         });
         await options.store.write(key, updated);
         return {
           status: "confirmation",
-          reason: "canonical-base-drift",
+          reason: "canonical-fitness-state-drift",
           message: `相关健身数据已变化。${confirmationMessage(updated.candidate)}`,
         };
       }

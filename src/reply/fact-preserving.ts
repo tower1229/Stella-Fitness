@@ -83,7 +83,7 @@ export function validateFactPreservingReply(
   if (/(?:完成(?:了)?|做完(?:了)?|漏练|没(?:有)?训练|未训练)/u.test(normalized)) {
     return invalid("unsupported-completion-claim");
   }
-  if (/\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅)\b/iu.test(normalized)) {
+  if (/\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅)(?![\p{L}])/iu.test(normalized)) {
     return invalid("untraceable-exact-fact");
   }
   if (
@@ -114,6 +114,31 @@ export function validateFactPreservingReply(
       turn.facts.position?.phase.toLowerCase() !== statedPhase)
   ) {
     return invalid("untraceable-exact-fact");
+  }
+  const statedStage = /第\s*(\d+)\s*阶段/u.exec(normalized)?.[1];
+  if (
+    statedStage !== undefined &&
+    (turn.facts.kind !== "active" ||
+      turn.facts.position?.phase !== `phase-${statedStage}`)
+  ) {
+    return invalid("untraceable-exact-fact");
+  }
+  if (
+    /[\p{Script=Han}]{1,8}阶段/u.test(normalized) &&
+    statedStage === undefined
+  ) {
+    return invalid("untraceable-exact-fact");
+  }
+  for (const label of new Set(Object.values(SESSION_TYPE_NAMES))) {
+    const allowedTypes = Object.entries(SESSION_TYPE_NAMES)
+      .filter(([, candidateLabel]) => candidateLabel === label)
+      .map(([sessionType]) => sessionType);
+    if (
+      normalized.includes(label) &&
+      !allowedTypes.some((sessionType) => serializedFacts.includes(sessionType))
+    ) {
+      return invalid("untraceable-exact-fact");
+    }
   }
   for (const [label, exerciseId] of Object.entries(EXERCISE_NAMES)) {
     if (normalized.includes(label) && !serializedFacts.includes(exerciseId)) {
