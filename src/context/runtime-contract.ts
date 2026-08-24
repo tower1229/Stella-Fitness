@@ -11,7 +11,8 @@ import { isAbsolute, join, relative, sep } from "node:path";
 
 const LOCATOR_SCHEMA = "stella.personal-data-locator/v1";
 const INSTANCE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
-const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const CHECKSUM_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+const PROJECTION_REVISION_PATTERN = /^projection-[a-f0-9]{64}$/u;
 
 export type FitnessContextContractErrorCode =
   | "LOCATOR_REQUIRED"
@@ -53,7 +54,7 @@ export type StellaPersonalDataPaths = {
 
 export type RuntimeProjectionBinding = {
   readonly instanceId: string;
-  readonly producerId: "cognitive-runtime";
+  readonly producerId: "stella-runtime";
   readonly consumerId: "stella-fitness";
 };
 
@@ -63,12 +64,18 @@ export type RuntimeProjectionPointer =
       readonly status: "active" | "stale";
       readonly projectionRevision: string;
       readonly manifestChecksum: string;
+      readonly sourceRevision?: string;
+      readonly asOf?: string;
     };
 
 export type RuntimeProjectionManifest = {
   readonly sourceRevision: string;
   readonly asOf: string;
-  readonly identityContextPath: string;
+  readonly identityContextPath?: string;
+  readonly identityContextCandidatePaths?: readonly string[];
+  readonly categories?: readonly ("background" | "identity")[];
+  readonly sourceReferenceIds?: readonly string[];
+  readonly materialIdentityUpdate?: boolean;
   readonly declaredFiles: readonly {
     readonly relativePath: string;
     readonly checksum: string;
@@ -98,7 +105,7 @@ export type RuntimeProjectionContract<IdentityContext> = {
     bytes: Buffer,
     binding: RuntimeProjectionBinding,
     manifest: RuntimeProjectionManifest,
-  ): IdentityContext;
+  ): IdentityContext | undefined;
 };
 
 export type RuntimeIdentityContextResult<IdentityContext> =
@@ -110,6 +117,7 @@ export type RuntimeIdentityContextResult<IdentityContext> =
       readonly asOf: string;
       readonly manifestChecksum: string;
       readonly identityContext: IdentityContext;
+      readonly materialIdentityUpdate?: boolean;
     };
 
 export type ResilientRuntimeIdentityContextResult<IdentityContext> =
@@ -319,20 +327,24 @@ function consumeRevision<IdentityContext>(
     contract.limits.manifestBytes,
     readFile,
   );
-  if (sha256(manifestBytes) !== pointer.manifestChecksum) {
+  if (checksum(manifestBytes) !== pointer.manifestChecksum) {
     throw contractError("CHECKSUM_MISMATCH");
   }
   const manifest = contract.parseManifest(manifestBytes, binding, pointer);
   if (
     manifest.sourceRevision.length === 0 ||
     manifest.asOf.length === 0 ||
-    !isSafeRelativeFile(manifest.identityContextPath) ||
     manifest.declaredFiles.length < 1 ||
     manifest.declaredFiles.length > contract.limits.payloadFiles
   ) {
     throw contractError("PROJECTION_FILE_INVALID");
   }
   const declared = new Set<string>(["manifest.json"]);
+  const identityCandidates = new Set(
+    manifest.identityContextCandidatePaths ??
+      (manifest.identityContextPath === undefined ? [] : [manifest.identityContextPath]),
+  );
+  if (identityCandidates.size < 1) throw contractError("PROJECTION_FILE_INVALID");
   let identityContext: IdentityContext | undefined;
   for (const payload of manifest.declaredFiles) {
     validatePayload(payload, contract.limits.payloadBytes);
@@ -346,12 +358,19 @@ function consumeRevision<IdentityContext>(
       Math.min(payload.byteLength, contract.limits.payloadBytes),
       readFile,
     );
-    if (bytes.byteLength !== payload.byteLength || sha256(bytes) !== payload.checksum) {
+    if (bytes.byteLength !== payload.byteLength || checksum(bytes) !== payload.checksum) {
       throw contractError("CHECKSUM_MISMATCH");
     }
-    if (payload.relativePath === manifest.identityContextPath) {
-      identityContext = contract.parseIdentityContext(bytes, binding, manifest);
+    if (identityCandidates.has(payload.relativePath)) {
+      const parsed = contract.parseIdentityContext(bytes, binding, manifest);
+      if (parsed !== undefined) {
+        if (identityContext !== undefined) throw contractError("PROJECTION_FILE_INVALID");
+        identityContext = parsed;
+      }
     }
+  }
+  if ([...identityCandidates].some((path) => !declared.has(path))) {
+    throw contractError("PROJECTION_FILE_INVALID");
   }
   if (identityContext === undefined) throw contractError("PROJECTION_FILE_INVALID");
   assertNoUndeclaredFiles(root, declared);
@@ -362,6 +381,9 @@ function consumeRevision<IdentityContext>(
     asOf: manifest.asOf,
     manifestChecksum: pointer.manifestChecksum,
     identityContext,
+    ...(manifest.materialIdentityUpdate === undefined
+      ? {}
+      : { materialIdentityUpdate: manifest.materialIdentityUpdate }),
   };
 }
 
@@ -369,8 +391,8 @@ function validatePointer(
   pointer: Extract<RuntimeProjectionPointer, { readonly status: "active" | "stale" }>,
 ): void {
   if (
-    !SHA256_PATTERN.test(pointer.projectionRevision) ||
-    !SHA256_PATTERN.test(pointer.manifestChecksum)
+    !PROJECTION_REVISION_PATTERN.test(pointer.projectionRevision) ||
+    !CHECKSUM_PATTERN.test(pointer.manifestChecksum)
   ) {
     throw contractError("PROJECTION_FILE_INVALID");
   }
@@ -382,7 +404,7 @@ function validatePayload(
 ): void {
   if (
     !isSafeRelativeFile(payload.relativePath) ||
-    !SHA256_PATTERN.test(payload.checksum) ||
+    !CHECKSUM_PATTERN.test(payload.checksum) ||
     !Number.isSafeInteger(payload.byteLength) ||
     payload.byteLength < 1
   ) {
@@ -540,7 +562,7 @@ function assertNoUndeclaredFiles(root: string, declared: ReadonlySet<string>): v
 function projectionBinding(instanceId: string): RuntimeProjectionBinding {
   return {
     instanceId,
-    producerId: "cognitive-runtime",
+    producerId: "stella-runtime",
     consumerId: "stella-fitness",
   };
 }
@@ -654,6 +676,10 @@ function isPermissionError(error: unknown): boolean {
 
 function sha256(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function checksum(value: Uint8Array): string {
+  return `sha256:${sha256(value)}`;
 }
 
 function contractError(

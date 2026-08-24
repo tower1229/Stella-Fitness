@@ -13,9 +13,15 @@ import {
 import { resolveAgentIdFromSessionKey } from "openclaw/plugin-sdk/agent-runtime";
 import { assertOperatorModelPermission } from "./contracts/openclaw.js";
 import {
+  createRuntimeIdentityContextConsumer,
   FitnessContextContractError,
   resolveStellaPersonalDataPaths,
 } from "./context/runtime-contract.js";
+import {
+  buildFitnessIdentityBootstrapCandidate,
+  type FitnessIdentityBootstrapCandidate,
+} from "./context/identity-bootstrap.js";
+import { stellaIdentityProjectionContract } from "./context/stella-identity-contract.js";
 import { createFitnessAgentWorkspaceManager } from "./agent-workspace/manager.js";
 import { createOpenClawFitnessAgentWorkspaceHost } from "./agent-workspace/openclaw.js";
 import { createManagedArtifactToolPolicy } from "./agent-workspace/policy.js";
@@ -54,16 +60,6 @@ const PRINTABLE_LOG_DOWNLOAD_ROUTE =
 const PRINTABLE_LOG_DOWNLOAD_TTL_MS = 10 * 60 * 1_000;
 const PRINTABLE_LOG_FILE_NAME = "zhuoshu-workout-log.xlsx";
 const printableLogDownloadTokens = new Map<string, number>();
-const FITNESS_WORKSPACE_ARTIFACTS = [{
-  path: "AGENTS.md",
-  managedContent: [
-    "# Stella Fitness domain boundary",
-    "",
-    "Stella Fitness is recording-only. It records and reports user facts without training supervision, diagnosis, nutrition advice, or health-risk decisions.",
-    "Plugin-managed sections are read-only. User-authored instructions belong only in the marked user section.",
-    "",
-  ].join("\n"),
-}] as const;
 const BODY_WEIGHT_RECORDING_INPUT =
   /^\s*(?:(?:\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))?|今天|昨天|前天|today|yesterday)\s*)?(?:我\s*)?(?:记录\s*)?(?:体重|body\s*weight|weight)\s*(?:是|为|:|：)?\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?(?:\s*(?:或|还是|or)\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?)?\s*[。.!]?\s*$/iu;
 const INITIAL_12RM_ALIASES = {
@@ -117,9 +113,12 @@ export function registerStellaFitnessPlugin(
   }
 
   const preflight = createPreflightRunner(api);
-  statusText = () => createStatusResponse(preflight()).text;
   preflight();
-  registerFitnessAgentWorkspace(api);
+  const identityBootstrap = registerFitnessAgentWorkspace(api);
+  statusText = () => [
+    createStatusResponse(preflight()).text,
+    identityBootstrap.statusSummary(),
+  ].join("\n");
   const stellaRuntime = createStellaFitnessRuntime({
     extractionRuntime: createCurrentExtractionRuntime(api),
     personalDataDirectory: () =>
@@ -271,7 +270,7 @@ export function registerStellaFitnessPlugin(
     acceptsArgs: false,
     requireAuth: true,
     async handler() {
-      return createStatusResponse(preflight());
+      return { text: statusText() };
     },
   });
 
@@ -284,7 +283,8 @@ export function registerStellaFitnessPlugin(
       const agentReply = requireDedicatedAgent(context, api);
       if (agentReply !== undefined) return agentReply;
       const statusText = formatJourneyStatus(await stellaRuntime.programJourneyStatus());
-      return { text: statusText };
+      const disclosure = identityBootstrap.publishedDisclosure();
+      return { text: disclosure === undefined ? statusText : `${disclosure}\n\n${statusText}` };
     },
   });
 
@@ -692,7 +692,7 @@ export function registerStellaFitnessPlugin(
   }): Promise<{ readonly text: string } | undefined> => {
       const { text, receivedAt, source } = input;
       if (normalizeStatusInput(text) === STATUS_INPUT) {
-        return createStatusResponse(preflight());
+        return { text: statusText() };
       }
       const activationIntent = parseNaturalActivationIntent(text, receivedAt.slice(0, 10));
       if (activationIntent !== undefined) {
@@ -997,7 +997,11 @@ function formatCurrentFitnessQuery(
 
 function registerFitnessAgentWorkspace(
   api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
-): void {
+): {
+  currentCandidate(): FitnessIdentityBootstrapCandidate;
+  publishedDisclosure(): string | undefined;
+  statusSummary(): string;
+} {
   const host = createOpenClawFitnessAgentWorkspaceHost(api);
   const manager = createFitnessAgentWorkspaceManager({
     runtimeDirectory: join(
@@ -1006,6 +1010,44 @@ function registerFitnessAgentWorkspace(
     ),
     host,
   });
+  const consumer = createRuntimeIdentityContextConsumer({
+    contract: stellaIdentityProjectionContract,
+  });
+  const currentCandidate = (): FitnessIdentityBootstrapCandidate => {
+    try {
+      return buildFitnessIdentityBootstrapCandidate(
+        consumer.consume(currentOpenClawConfig(api)),
+      );
+    } catch (error) {
+      if (error instanceof FitnessContextContractError) {
+        return { status: "blocked", reasonCode: "IDENTITY_CONTEXT_UNAVAILABLE" };
+      }
+      throw error;
+    }
+  };
+  let publication:
+    | { readonly status: "ready"; readonly candidate: Extract<
+        FitnessIdentityBootstrapCandidate,
+        { readonly status: "ready" }
+      > }
+    | { readonly status: "blocked" | "adoption-required" | "conflicted" | "failed";
+        readonly reasonCode?: string }
+    | undefined;
+  const rememberPublication = (
+    result: { readonly status: string; readonly reasonCode?: string },
+    candidate: Extract<FitnessIdentityBootstrapCandidate, { readonly status: "ready" }>,
+  ): void => {
+    publication = result.status === "ready"
+      ? { status: "ready", candidate }
+      : {
+          status: result.status === "blocked" ||
+              result.status === "adoption-required" ||
+              result.status === "conflicted"
+            ? result.status
+            : "failed",
+          ...(result.reasonCode === undefined ? {} : { reasonCode: result.reasonCode }),
+        };
+  };
   api.registerTrustedToolPolicy(createManagedArtifactToolPolicy({ host }));
   api.registerService({
     id: "stella-fitness-agent-workspace",
@@ -1016,16 +1058,26 @@ function registerFitnessAgentWorkspace(
       );
       if (agentId === undefined) return;
       try {
+        const candidate = currentCandidate();
+        if (candidate.status !== "ready") {
+          publication = { status: "blocked", reasonCode: candidate.reasonCode };
+          api.logger?.info(
+            `agentId=${agentId} status=blocked reasonCode=${candidate.reasonCode} count=0 durationMs=${Date.now() - startedAt}`,
+          );
+          return;
+        }
         const result = await manager.sync({
           agentId,
-          artifacts: FITNESS_WORKSPACE_ARTIFACTS,
+          artifacts: candidate.artifacts,
         });
+        rememberPublication(result, candidate);
         api.logger?.info(
-          `agentId=${result.agentId} status=${result.status} reasonCode=${result.reasonCode ?? "NONE"} count=${FITNESS_WORKSPACE_ARTIFACTS.length} durationMs=${Date.now() - startedAt}`,
+          `agentId=${result.agentId} status=${result.status} reasonCode=${result.reasonCode ?? "NONE"} count=${candidate.artifacts.length} durationMs=${Date.now() - startedAt}`,
         );
       } catch {
+        publication = { status: "failed", reasonCode: "WORKSPACE_INITIALIZATION_FAILED" };
         api.logger?.error(
-          `agentId=${agentId} status=failed reasonCode=WORKSPACE_INITIALIZATION_FAILED count=${FITNESS_WORKSPACE_ARTIFACTS.length} durationMs=${Date.now() - startedAt}`,
+          `agentId=${agentId} status=failed reasonCode=WORKSPACE_INITIALIZATION_FAILED count=0 durationMs=${Date.now() - startedAt}`,
         );
       }
     },
@@ -1042,20 +1094,25 @@ function registerFitnessAgentWorkspace(
       if (agentId === undefined) {
         return { text: "请先配置 Stella Fitness dedicatedAgentId。" };
       }
+      const candidate = currentCandidate();
+      if (candidate.status !== "ready") {
+        publication = { status: "blocked", reasonCode: candidate.reasonCode };
+        return { text: formatIdentityBootstrapBlocked(candidate.reasonCode) };
+      }
       const args = context.args?.trim().split(/\s+/u).filter(Boolean) ?? [];
-      const action = args[0]?.toLowerCase() ?? "status";
+      const action = args[0]?.toLowerCase() ?? "sync";
       const result = action === "sync"
-        ? await manager.sync({ agentId, artifacts: FITNESS_WORKSPACE_ARTIFACTS })
+        ? await manager.sync({ agentId, artifacts: candidate.artifacts })
         : action === "adopt" && args[1]?.toLowerCase() === "merge"
           ? await manager.adopt({
               agentId,
-              artifacts: FITNESS_WORKSPACE_ARTIFACTS,
+              artifacts: candidate.artifacts,
               choice: "merge",
             })
           : action === "adopt" && args[1]?.toLowerCase() === "skip"
             ? await manager.adopt({
                 agentId,
-                artifacts: FITNESS_WORKSPACE_ARTIFACTS,
+                artifacts: candidate.artifacts,
                 choice: "skip",
               })
             : action === "adopt" &&
@@ -1063,16 +1120,75 @@ function registerFitnessAgentWorkspace(
                 args[2] !== undefined
               ? await manager.adopt({
                   agentId,
-                  artifacts: FITNESS_WORKSPACE_ARTIFACTS,
+                  artifacts: candidate.artifacts,
                   choice: { alternateAgentId: args[2] },
                 })
-              : await manager.initialize({
-                  agentId,
-                  artifacts: FITNESS_WORKSPACE_ARTIFACTS,
-                });
-      return { text: formatWorkspaceResult(result) };
+              : await manager.sync({ agentId, artifacts: candidate.artifacts });
+      rememberPublication(result, candidate);
+      return {
+        text: result.status === "ready"
+          ? `${formatWorkspaceResult(result)}\n\n${candidate.disclosure}`
+          : formatWorkspaceResult(result),
+      };
     },
   });
+  return {
+    currentCandidate,
+    publishedDisclosure() {
+      if (publication?.status !== "ready") return undefined;
+      const current = currentCandidate();
+      return current.status === "ready" &&
+          sameIdentityRevision(current, publication.candidate)
+        ? current.disclosure
+        : undefined;
+    },
+    statusSummary() {
+      const candidate = currentCandidate();
+      if (candidate.status !== "ready") {
+        if (publication?.status === "ready") {
+          return `context-sync: stale - last published as-of ${publication.candidate.asOf} (${candidate.reasonCode})`;
+        }
+        return `context-sync: degraded - Runtime Identity Context is unavailable (${candidate.reasonCode})`;
+      }
+      if (publication?.status === "ready") {
+        if (!sameIdentityRevision(candidate, publication.candidate)) {
+          return `context-sync: stale - published as-of ${publication.candidate.asOf}; verified update pending sync`;
+        }
+        return `context-sync: ${candidate.freshness === "active" ? "ready" : "stale"} - as-of ${candidate.asOf}`;
+      }
+      if (publication !== undefined) {
+        const state = publication.status === "conflicted" ||
+            publication.status === "adoption-required"
+          ? "conflicted"
+          : "degraded";
+        return `context-sync: ${state} - ${publication.reasonCode ?? "WORKSPACE_PUBLICATION_INCOMPLETE"}`;
+      }
+      return "context-sync: uninitialized - verified Runtime Identity Context is available; run /stella-workspace sync";
+    },
+  };
+}
+
+function sameIdentityRevision(
+  left: Extract<FitnessIdentityBootstrapCandidate, { readonly status: "ready" }>,
+  right: Extract<FitnessIdentityBootstrapCandidate, { readonly status: "ready" }>,
+): boolean {
+  return left.sourceRevision === right.sourceRevision &&
+    left.projectionRevision === right.projectionRevision;
+}
+
+function formatIdentityBootstrapBlocked(
+  reasonCode: Extract<FitnessIdentityBootstrapCandidate, { status: "blocked" }>["reasonCode"],
+): string {
+  if (reasonCode === "IDENTITY_CORE_REQUIRED") {
+    return "Runtime Identity Context 缺少有效的 Stella 身份或人格核心，因此没有创建或修改 Fitness workspace。";
+  }
+  if (reasonCode === "IDENTITY_CONTEXT_REVOKED") {
+    return "Runtime 已撤销 Fitness Identity Context，因此没有创建或修改 Fitness workspace。";
+  }
+  if (reasonCode === "IDENTITY_CONTEXT_BLOCKED") {
+    return "Runtime Identity Context 当前被阻止，因此没有创建或修改 Fitness workspace。";
+  }
+  return "没有可验证的 Runtime Identity Context，因此没有创建或修改 Fitness workspace。可检查 /stella-status 后重试 /stella-workspace sync。";
 }
 
 function formatWorkspaceResult(result: {

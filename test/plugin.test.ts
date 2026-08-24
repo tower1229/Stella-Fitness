@@ -15,6 +15,7 @@ import { parse } from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin, { registerStellaFitnessPlugin } from "../src/plugin.js";
+import { canonicalizeJcs } from "../src/context/runtime-contract.js";
 import { activateProgramFixture } from "./support/program-state.js";
 import { rawMediaUploadFixture } from "./support/sanitized-media.js";
 import { workoutLogCandidate } from "./support/workout-log-candidate.js";
@@ -28,7 +29,7 @@ afterEach(() => {
 });
 
 const READY_FOR_SETUP_STATUS =
-  "Stella Fitness: READY_FOR_SETUP\ncontract: openclaw>=2026.6.34\nscope: recording-only\ntechnical-readiness: personal-data-directory: ready - Personal Data Directory is readable and writable\ntechnical-readiness: conversation: ready - Plugin conversation hook access is enabled\ntechnical-readiness: time-zone: ready - OpenClaw user timezone is Asia/Shanghai\ntechnical-readiness: media: ready - OpenClaw structured media extraction is available\ntechnical-readiness: model-permission: setup-required - Configure an allowlisted extraction provider and model\nreason: EXTRACTION_MODEL_REQUIRED: Configure an allowlisted extraction provider and model";
+  "Stella Fitness: READY_FOR_SETUP\ncontract: openclaw>=2026.6.34\nscope: recording-only\ntechnical-readiness: personal-data-directory: ready - Personal Data Directory is readable and writable\ntechnical-readiness: conversation: ready - Plugin conversation hook access is enabled\ntechnical-readiness: time-zone: ready - OpenClaw user timezone is Asia/Shanghai\ntechnical-readiness: media: ready - OpenClaw structured media extraction is available\ntechnical-readiness: model-permission: setup-required - Configure an allowlisted extraction provider and model\nreason: EXTRACTION_MODEL_REQUIRED: Configure an allowlisted extraction provider and model\ncontext-sync: degraded - Runtime Identity Context is unavailable (IDENTITY_CONTEXT_UNAVAILABLE)";
 
 describe("Plugin registration", () => {
   it("registers status CLI metadata without loading full runtime contracts", () => {
@@ -122,6 +123,137 @@ describe("Plugin registration", () => {
         },
       }),
     ]);
+  });
+
+  it("publishes Runtime identity bootstrap idempotently and fails closed on ownership conflict", async () => {
+    const commands: Array<Record<string, unknown>> = [];
+    const services: Array<Record<string, unknown>> = [];
+    const personal = configuredPersonalDirectory();
+    writeRuntimeIdentityProjection(personal.personalDataDirectory);
+    const openclawConfig = permittedOpenClawConfig();
+    const api = compatibleApi({
+      commands,
+      hooks: new Map(),
+      cliRegistrations: [],
+      pluginConfig: personal,
+      openclawConfig,
+      workspaceRoot: temporaryRoot(),
+      services,
+    });
+
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const workspaceService = services.find(({ id }) =>
+      id === "stella-fitness-agent-workspace"
+    );
+    await (workspaceService?.start as () => Promise<void>)();
+    const startCommand = commands.find(({ name }) => name === "stella-start");
+    const start = startCommand?.handler as (context: {
+      readonly channel: string;
+      readonly commandBody: string;
+      readonly isAuthorizedSender: boolean;
+      readonly sessionKey: string;
+    }) => Promise<{ readonly text: string }>;
+    await expect(start({
+      channel: "webchat",
+      commandBody: "/stella-start",
+      isAuthorizedSender: true,
+      sessionKey: "agent:fitness:webchat:identity-bootstrap",
+    })).resolves.toEqual({
+      text: expect.stringContaining("Stella Fitness 身份上下文已初始化"),
+    });
+    const statusCommand = commands.find(({ name }) => name === "stella-status");
+    await expect(
+      (statusCommand?.handler as () => Promise<{ readonly text: string }>)(),
+    ).resolves.toEqual({
+      text: expect.stringContaining(
+        "context-sync: ready - as-of 2026-08-24T01:00:00.000Z",
+      ),
+    });
+    markRuntimeIdentityProjectionStale(personal.personalDataDirectory);
+    await expect(
+      (statusCommand?.handler as () => Promise<{ readonly text: string }>)(),
+    ).resolves.toEqual({
+      text: expect.stringContaining(
+        "context-sync: stale - as-of 2026-08-24T01:00:00.000Z",
+      ),
+    });
+    await expect(start({
+      channel: "webchat",
+      commandBody: "/stella-start",
+      isAuthorizedSender: true,
+      sessionKey: "agent:fitness:webchat:identity-bootstrap-stale",
+    })).resolves.toEqual({
+      text: expect.stringContaining("沿用最后验证版本"),
+    });
+    const command = commands.find(({ name }) => name === "stella-workspace");
+    const handler = command?.handler as (input: {
+      readonly args: string;
+    }) => Promise<{ readonly text: string }>;
+
+    const first = await handler({ args: "sync" });
+    expect(first.text).toContain("ownership revision 1");
+    expect(first.text).toContain("身份上下文已初始化");
+    expect(first.text).not.toContain("涛哥");
+    const workspace = openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
+      ?.workspace;
+    expect(workspace).toBeDefined();
+    expect(readFileSync(join(workspace!, "IDENTITY.md"), "utf8")).toContain("Stella");
+    expect(readFileSync(join(workspace!, "SOUL.md"), "utf8")).toContain("温和、直接");
+    expect(readFileSync(join(workspace!, "USER.md"), "utf8")).toContain("涛哥");
+
+    await expect(handler({ args: "sync" })).resolves.toEqual(first);
+    writeRuntimeIdentityProjection(personal.personalDataDirectory, {
+      sourceRevision: "authority-43",
+      agentName: "Nova",
+      persona: "保持事实边界",
+    });
+    await expect(handler({ args: "" })).resolves.toEqual({
+      text: expect.stringContaining("ownership revision 2"),
+    });
+    const updatedWorkspace = openclawConfig.agents?.list?.find(
+      ({ id }) => id === "fitness",
+    )?.workspace;
+    expect(updatedWorkspace).not.toBe(workspace);
+    expect(readFileSync(join(updatedWorkspace!, "IDENTITY.md"), "utf8"))
+      .toContain("Nova");
+    const soulPath = join(updatedWorkspace!, "SOUL.md");
+    const tampered = readFileSync(soulPath, "utf8").replace("保持事实边界", "越权人格");
+    writeFileSync(soulPath, tampered);
+    await expect(handler({ args: "sync" })).resolves.toEqual({
+      text: "Fitness workspace ownership 冲突，已停止覆盖。请先检查本地 Context Diagnostics。",
+    });
+    expect(readFileSync(soulPath, "utf8")).toContain("越权人格");
+  });
+
+  it("does not create a blank Fitness Agent when Runtime identity is unavailable", async () => {
+    const commands: Array<Record<string, unknown>> = [];
+    const personal = configuredPersonalDirectory();
+    const openclawConfig = permittedOpenClawConfig();
+    const workspaceRoot = temporaryRoot();
+    const api = compatibleApi({
+      commands,
+      hooks: new Map(),
+      cliRegistrations: [],
+      pluginConfig: personal,
+      openclawConfig,
+      workspaceRoot,
+    });
+
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const command = commands.find(({ name }) => name === "stella-workspace");
+    const handler = command?.handler as (input: {
+      readonly args: string;
+    }) => Promise<{ readonly text: string }>;
+
+    await expect(handler({ args: "sync" })).resolves.toEqual({
+      text: expect.stringContaining("没有可验证的 Runtime Identity Context"),
+    });
+    expect(openclawConfig.agents?.list).toBeUndefined();
+    expect(existsSync(join(workspaceRoot, "workspace-fitness"))).toBe(false);
   });
 
   it("starts the Built-in Program journey from the configured dedicated agent without conversation binding", async () => {
@@ -3132,6 +3264,8 @@ function compatibleApi(options: {
     readonly error: ReturnType<typeof vi.fn>;
   };
   stateRoot?: string;
+  workspaceRoot?: string;
+  services?: Array<Record<string, unknown>>;
 }) {
   const stateRoot = options.stateRoot ?? temporaryRoot();
   const openclawConfig = options.openclawConfig ?? permittedOpenClawConfig();
@@ -3153,6 +3287,27 @@ function compatibleApi(options: {
       version: "2026.6.34",
       config: {
         current: () => openclawConfig,
+        async mutateConfigFile(input: {
+          readonly mutate: (draft: TestOpenClawConfig) => void;
+        }) {
+          input.mutate(openclawConfig);
+          return { result: undefined };
+        },
+      },
+      agent: {
+        resolveAgentWorkspaceDir(
+          config: TestOpenClawConfig,
+          agentId: string,
+        ) {
+          return config.agents?.list?.find(({ id }) => id === agentId)?.workspace ??
+            join(options.workspaceRoot ?? stateRoot, `workspace-${agentId}`);
+        },
+        async ensureAgentWorkspace(input: { readonly dir: string }) {
+          mkdirSync(input.dir, { recursive: true });
+          writeFileSync(join(input.dir, "IDENTITY.md"), "Host bootstrap identity\n");
+          writeFileSync(join(input.dir, "SOUL.md"), "Host bootstrap soul\n");
+          return { dir: input.dir };
+        },
       },
       state: {
         resolveStateDir: () => stateRoot,
@@ -3184,7 +3339,9 @@ function compatibleApi(options: {
       options.hooks.set(name, handler);
     },
     registerTrustedToolPolicy() {},
-    registerService() {},
+    registerService(service: Record<string, unknown>) {
+      options.services?.push(service);
+    },
   };
 }
 
@@ -3336,6 +3493,7 @@ type TestOpenClawConfig = {
       userTimezone: string;
       models: Record<string, Record<string, never>>;
     };
+    list?: Array<{ id: string; workspace?: string }>;
   };
   bindings?: Array<{
     agentId: string;
@@ -3440,6 +3598,138 @@ function setRuntimeLocator(
       },
     },
   };
+}
+
+function writeRuntimeIdentityProjection(
+  personalDataDirectory: string,
+  options: {
+    readonly sourceRevision?: string;
+    readonly agentName?: string;
+    readonly persona?: string;
+  } = {},
+): void {
+  const repository = join(personalDataDirectory, "..", "..");
+  const projectionRoot = join(repository, "stella", "projections", "fitness");
+  const source = {
+    revision: options.sourceRevision ?? "authority-42",
+    as_of: "2026-08-24T01:00:00.000Z",
+  } as const;
+  const identityBytes = canonicalizeJcs({
+    schema_version: "stella.identity-context/v1",
+    instance_id: "stella-primary",
+    producer_id: "stella-runtime",
+    consumer_id: "stella-fitness",
+    source_revision: source.revision,
+    as_of: source.as_of,
+    categories: ["background", "identity"],
+    entries: [{
+      id: "preferred-appellation",
+      category: "background",
+      content: "涛哥",
+      source_reference_ids: ["source-user"],
+    }, {
+      id: "agent-name",
+      category: "identity",
+      content: options.agentName ?? "Stella",
+      source_reference_ids: ["source-identity"],
+    }, {
+      id: "persona-core",
+      category: "identity",
+      content: options.persona ?? "温和、直接",
+      source_reference_ids: ["source-identity"],
+    }],
+  });
+  const collections = {
+    categories: ["background", "identity"],
+    source_references: [{
+      id: "source-identity",
+      path: "authority/identity.md",
+      revision: source.revision,
+      checksum: `sha256:${"d".repeat(64)}`,
+    }, {
+      id: "source-user",
+      path: "authority/user.md",
+      revision: source.revision,
+      checksum: `sha256:${"e".repeat(64)}`,
+    }],
+    conflicts: [],
+    retractions: [],
+    capabilities: [{ id: "background_context", state: "available" }, {
+      id: "identity_context",
+      state: "available",
+    }],
+    payloads: [{
+      path: "payloads/identity-context.json",
+      media_type: "application/json",
+      byte_length: identityBytes.byteLength,
+      checksum: prefixedSha256(identityBytes),
+    }],
+  } as const;
+  const revision = `projection-${createHash("sha256").update(canonicalizeJcs({
+    schema_version: "stella.context-projection-revision-seed/v1",
+    instance_id: "stella-primary",
+    producer_id: "stella-runtime",
+    consumer_id: "stella-fitness",
+    source,
+    ...collections,
+  })).digest("hex")}`;
+  const manifestBytes = canonicalizeJcs({
+    schema_version: "stella.context-projection-manifest/v1",
+    instance_id: "stella-primary",
+    producer_id: "stella-runtime",
+    consumer_id: "stella-fitness",
+    projection_revision: revision,
+    source,
+    ...collections,
+    generated_at: "2026-08-24T01:01:00.000Z",
+  });
+  const revisionRoot = join(projectionRoot, "revisions", revision);
+  mkdirSync(join(revisionRoot, "payloads"), { recursive: true });
+  mkdirSync(join(repository, "stella", "projections", "stella"), { recursive: true });
+  writeFileSync(join(revisionRoot, "payloads", "identity-context.json"), identityBytes);
+  writeFileSync(join(revisionRoot, "manifest.json"), manifestBytes);
+  writeFileSync(join(projectionRoot, "active.json"), canonicalizeJcs({
+    schema_version: "stella.context-projection-pointer/v1",
+    instance_id: "stella-primary",
+    producer_id: "stella-runtime",
+    consumer_id: "stella-fitness",
+    status: "active",
+    pointer_revision: `pointer-${"a".repeat(64)}`,
+    projection_revision: revision,
+    manifest_checksum: prefixedSha256(manifestBytes),
+    source_revision: source.revision,
+    as_of: source.as_of,
+    changed_at: "2026-08-24T01:01:00.000Z",
+  }));
+}
+
+function markRuntimeIdentityProjectionStale(
+  personalDataDirectory: string,
+): void {
+  const pointerPath = join(
+    personalDataDirectory,
+    "..",
+    "..",
+    "stella",
+    "projections",
+    "fitness",
+    "active.json",
+  );
+  const pointer = JSON.parse(readFileSync(pointerPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const { projection_revision: projectionRevision, ...shared } = pointer;
+  writeFileSync(pointerPath, canonicalizeJcs({
+    ...shared,
+    status: "stale",
+    last_verified_revision: projectionRevision,
+    reason_codes: ["REFRESH_FAILED"],
+  }));
+}
+
+function prefixedSha256(bytes: Uint8Array): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
 function programFixturePath(): string {
