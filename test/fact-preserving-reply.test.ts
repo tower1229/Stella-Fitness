@@ -150,5 +150,9 @@ describe("Fact-Preserving Reply", () => {
       "当前第 2 周 phase-1。2026-08-17 的全身训练已有记录。",
       turn,
     )).toEqual({ valid: false, reason: "untraceable-exact-fact" });
+    expect(validateFactPreservingReply(
+      "当前第 2 周 phase-1。2026-08-17 和 2026-08-24 的全身训练已有记录。",
+      turn,
+    )).toEqual({ valid: false, reason: "untraceable-exact-fact" });
   });
 });

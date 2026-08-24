@@ -194,10 +194,13 @@ function recordStatusClaimsAreTraceable(
         ? relevant
         : [];
     if (claims.length === 0) return false;
-    if (claimsRecorded && !claims.some(({ record }) => record === "recorded")) {
+    if (claimsRecorded && !claims.every(({ record }) => record === "recorded")) {
       return false;
     }
-    if (claimsMissing && !claims.some(({ record }) => record === "no-record-found")) {
+    if (
+      claimsMissing &&
+      !claims.every(({ record }) => record === "no-record-found")
+    ) {
       return false;
     }
   }
