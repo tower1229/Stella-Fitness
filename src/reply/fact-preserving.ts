@@ -151,16 +151,88 @@ export function validateFactPreservingReply(
   ) {
     return invalid("untraceable-exact-fact");
   }
-  if (/已找到记录/u.test(normalized) && !serializedFacts.includes('"record":"recorded"')) {
-    return invalid("untraceable-exact-fact");
-  }
-  if (/未找到记录/u.test(normalized) && !serializedFacts.includes('"record":"no-record-found"')) {
+  if (!recordStatusClaimsAreTraceable(normalized, turn)) {
     return invalid("untraceable-exact-fact");
   }
   if (!containsRequestedFact(normalized, turn)) {
     return invalid("missing-requested-fact");
   }
   return { valid: true };
+}
+
+function recordStatusClaimsAreTraceable(
+  reply: string,
+  turn: FactPreservingReplyTurn,
+): boolean {
+  if (turn.facts.kind !== "active") return true;
+  const relevant = relevantRecordStatuses(turn);
+  for (const sentence of reply.split(/[。！？!?'\n]/u).map((value) => value.trim())) {
+    if (sentence.length === 0) continue;
+    const zeroRecords = /找到.*记录\s*0\s*次/u.test(sentence);
+    const claimsRecorded = !zeroRecords &&
+      /(?:已有|有|已找到|找到了|存在).{0,8}(?:训练)?记录|(?:训练)?记录(?:过|了)/u.test(sentence);
+    const claimsMissing = zeroRecords ||
+      /(?:未找到|没有找到|暂无|没有).{0,12}(?:训练)?记录/u.test(sentence);
+    if (!claimsRecorded && !claimsMissing) continue;
+    const identified = relevant.filter((session) =>
+      sentence.includes(session.date) ||
+      sentence.includes(sessionTypeName(session.sessionType))
+    );
+    const claims = identified.length > 0
+      ? identified
+      : relevant.length === 1
+        ? relevant
+        : [];
+    if (claims.length === 0) return false;
+    if (claimsRecorded && !claims.some(({ record }) => record === "recorded")) {
+      return false;
+    }
+    if (claimsMissing && !claims.some(({ record }) => record === "no-record-found")) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function relevantRecordStatuses(
+  turn: FactPreservingReplyTurn,
+): readonly {
+  readonly date: string;
+  readonly sessionType: string;
+  readonly record: "recorded" | "no-record-found";
+}[] {
+  const facts = turn.facts;
+  if (facts.kind !== "active") return [];
+  if (turn.intent.kind === "recent-training") {
+    return facts.latestRecord === undefined
+      ? []
+      : [{
+          date: facts.latestRecord.date,
+          sessionType: facts.latestRecord.sessionType,
+          record: "recorded",
+        }];
+  }
+  const dates = turn.intent.kind === "today"
+    ? new Set([facts.asOf.localDate])
+    : turn.intent.kind === "week"
+      ? datesInCurrentWeek(facts.asOf.localDate)
+      : undefined;
+  const due = dates === undefined
+    ? facts.dueSessions
+    : facts.dueSessions.filter(({ date }) => dates.has(date));
+  const latest = turn.intent.kind === "current-state" &&
+      facts.latestRecord !== undefined &&
+      !due.some(({ date, sessionType }) =>
+        date === facts.latestRecord?.date &&
+        sessionType === facts.latestRecord?.sessionType
+      )
+    ? [{
+        date: facts.latestRecord.date,
+        sessionType: facts.latestRecord.sessionType,
+        record: "recorded" as const,
+      }]
+    : [];
+  return [...due, ...latest];
 }
 
 function containsRequestedFact(
