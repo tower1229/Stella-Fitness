@@ -35,6 +35,7 @@ export type ReadinessReason = {
     | "PERSONAL_DATA_DIRECTORY_NOT_READABLE"
     | "PERSONAL_DATA_DIRECTORY_NOT_WRITABLE"
     | "PERSONAL_DATA_DIRECTORY_PROBE_CLEANUP_FAILED"
+    | "CONTEXT_LOCATOR_INVALID"
     | "DATA_DIRECTORIES_OVERLAP"
     | "RUNTIME_DIRECTORY_UNAVAILABLE"
     | "USER_TIMEZONE_REQUIRED"
@@ -74,16 +75,23 @@ export type ExtractionPermission = "unconfigured" | "allowed" | "denied";
 export function runConfigurationPreflight(options: {
   userTimezone: unknown;
   personalDataDirectory: unknown;
+  personalDataDirectoryFailure?: string;
   runtimeDirectory: string;
   conversationAccess: boolean;
   structuredMedia: boolean;
   extraction: ExtractionPermission;
 }): TechnicalReadiness {
   const reasons: ReadinessReason[] = [];
-  const personalDataDirectory = validatePersonalDataDirectory(
-    options.personalDataDirectory,
-    reasons,
-  );
+  const personalDataDirectory = options.personalDataDirectoryFailure === undefined
+    ? validatePersonalDataDirectory(options.personalDataDirectory, reasons)
+    : undefined;
+  if (options.personalDataDirectoryFailure !== undefined) {
+    reasons.push({
+      code: "CONTEXT_LOCATOR_INVALID",
+      message:
+        `Runtime-owned Stella Personal Data locator is unavailable (${options.personalDataDirectoryFailure})`,
+    });
+  }
   const timeZoneReason = validateUserTimezone(options.userTimezone);
   if (timeZoneReason !== undefined) reasons.push(timeZoneReason);
 
@@ -169,6 +177,7 @@ function technicalReadinessCapabilities(
 ): TechnicalReadinessCapabilities {
   const personalDataReason = reasons.find(({ code }) =>
     code.startsWith("PERSONAL_DATA_DIRECTORY_") ||
+    code === "CONTEXT_LOCATOR_INVALID" ||
     code === "DATA_DIRECTORIES_OVERLAP" ||
     code === "RUNTIME_DIRECTORY_UNAVAILABLE"
   );

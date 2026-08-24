@@ -3064,7 +3064,11 @@ describe("Plugin registration", () => {
     api.pluginConfig = correctedPluginConfig;
     openclawConfig.agents = allowedModelConfig().agents;
     openclawConfig.plugins.entries["stella-fitness"]!.config =
-      correctedPluginConfig;
+      fitnessPluginConfig(correctedPluginConfig);
+    setRuntimeLocator(
+      openclawConfig,
+      correctedPluginConfig.personalDataDirectory,
+    );
 
     expect(runtime?.preflight()).toMatchObject({ readiness: "READY", reasons: [] });
     await expect(
@@ -3079,7 +3083,7 @@ describe("Plugin registration", () => {
     expect(extractStructuredWithModel).toHaveBeenCalledOnce();
   });
 
-  it("fails closed when corrected Plugin config is removed again", () => {
+  it("fails closed when the Runtime-owned locator is removed again", () => {
     const openclawConfig = permittedOpenClawConfig({ allowModel: true });
     const initialPluginConfig = {
       ...configuredPersonalDirectory(),
@@ -3100,12 +3104,15 @@ describe("Plugin registration", () => {
     );
     expect(runtime?.preflight().readiness).toBe("READY");
 
-    openclawConfig.plugins.entries["stella-fitness"]!.config = undefined;
+    delete openclawConfig.plugins.entries["cognitive-runtime"]!.config.stella;
 
     expect(runtime?.preflight()).toMatchObject({
       readiness: "BLOCKED_CONFIGURATION",
       reasons: [
-        expect.objectContaining({ code: "PERSONAL_DATA_DIRECTORY_REQUIRED" }),
+        expect.objectContaining({
+          code: "CONTEXT_LOCATOR_INVALID",
+          message: expect.stringContaining("LOCATOR_REQUIRED"),
+        }),
       ],
     });
   });
@@ -3130,7 +3137,11 @@ function compatibleApi(options: {
   const openclawConfig = options.openclawConfig ?? permittedOpenClawConfig();
   if (options.pluginConfig !== undefined) {
     openclawConfig.plugins.entries["stella-fitness"]!.config =
-      options.pluginConfig;
+      fitnessPluginConfig(options.pluginConfig);
+    const personalDataDirectory = options.pluginConfig.personalDataDirectory;
+    if (typeof personalDataDirectory === "string") {
+      setRuntimeLocator(openclawConfig, personalDataDirectory);
+    }
   }
   return {
     id: "stella-fitness",
@@ -3336,6 +3347,16 @@ type TestOpenClawConfig = {
         hooks: { allowConversationAccess: boolean };
         config: Record<string, unknown> | undefined;
       };
+      "cognitive-runtime"?: {
+        config: {
+          runtime: { instance_id: string };
+          stella?: {
+            schema_version: "stella.personal-data-locator/v1";
+            instance_id: string;
+            personal_data_repository: string;
+          };
+        };
+      };
     };
   };
 };
@@ -3391,9 +3412,34 @@ function configuredPersonalDirectory(): {
   personalDataDirectory: string;
   dedicatedAgentId: string;
 } {
-  const personalDataDirectory = join(temporaryRoot(), "personal");
-  mkdirSync(personalDataDirectory);
+  const repository = join(temporaryRoot(), "repository");
+  const personalDataDirectory = join(repository, "stella", "fitness");
+  mkdirSync(personalDataDirectory, { recursive: true });
   return { personalDataDirectory, dedicatedAgentId: "fitness" };
+}
+
+function fitnessPluginConfig(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(config).filter(([key]) => key !== "personalDataDirectory"),
+  );
+}
+
+function setRuntimeLocator(
+  openclawConfig: TestOpenClawConfig,
+  personalDataDirectory: string,
+): void {
+  openclawConfig.plugins.entries["cognitive-runtime"] = {
+    config: {
+      runtime: { instance_id: "stella-primary" },
+      stella: {
+        schema_version: "stella.personal-data-locator/v1",
+        instance_id: "stella-primary",
+        personal_data_repository: join(personalDataDirectory, "..", ".."),
+      },
+    },
+  };
 }
 
 function programFixturePath(): string {

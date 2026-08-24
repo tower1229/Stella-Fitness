@@ -34,7 +34,7 @@ Stella Fitness 的质量由来源忠实、记录准确、纠错可追溯、数�
 
 ## 4. Privacy
 
-- 未配置或无效 Personal Data Directory 时 fail closed；
+- Runtime-owned locator 缺失、无效或无法解析固定 Fitness 层级时 fail closed；
 - canonical 用户数据不写入 Runtime Directory；
 - 原件 byte integrity；
 - orientation 应用正确；

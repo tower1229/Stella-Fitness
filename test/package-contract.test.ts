@@ -53,6 +53,9 @@ describe("installable Plugin package contract", () => {
       },
     });
     expect(manifest.configSchema.required ?? []).not.toContain("dedicatedAgentId");
+    expect(manifest.configSchema.properties).not.toHaveProperty(
+      "personalDataDirectory",
+    );
     expect(manifest.configSchema.properties).not.toHaveProperty("diagnosis");
     expect(manifest.configSchema.properties).not.toHaveProperty("nutrition");
     expect(manifest.configSchema.properties).not.toHaveProperty("safety");

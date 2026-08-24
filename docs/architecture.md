@@ -47,9 +47,11 @@ OpenClaw WebChat / channel
 - 在默认 Agent 回复前接管训练记录输入；
 - 调用 structured media extraction；
 - 精确控制媒体 payload 和临时文件生命周期；
-- 写入用户显式配置的 Personal Data Directory；
+- 通过 Runtime-owned locator 写入固定 `<repository>/stella/fitness` Personal Data Directory；
 - 运行确定性 Program Engine；
 - 返回 synthetic status、confirmation 和 recording reply。
+
+Runtime projection 是独立的派生能力：projection 目录缺失或合同不兼容只会使个人上下文 degraded，不得阻断上述确定性训练记录核心。当前仓库仅提供 locator 与文件系统消费 seam；在 Runtime #38 发布 schemas、declarations、checksum vectors 和 fixtures，且 #33 producer 可消费前，不声称正式 Context Projection 合同验收通过。
 
 这些是 Plugin 集成与数据边界需求，不是训练诊断或风险控制需求。Skill 可以辅助说明，但不能替代持久化和媒体处理边界。
 

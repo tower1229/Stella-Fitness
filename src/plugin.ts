@@ -12,6 +12,10 @@ import {
 } from "openclaw/plugin-sdk/plugin-entry";
 import { resolveAgentIdFromSessionKey } from "openclaw/plugin-sdk/agent-runtime";
 import { assertOperatorModelPermission } from "./contracts/openclaw.js";
+import {
+  FitnessContextContractError,
+  resolveStellaPersonalDataPaths,
+} from "./context/runtime-contract.js";
 import { createFitnessAgentWorkspaceManager } from "./agent-workspace/manager.js";
 import { createOpenClawFitnessAgentWorkspaceHost } from "./agent-workspace/openclaw.js";
 import { createManagedArtifactToolPolicy } from "./agent-workspace/policy.js";
@@ -119,9 +123,7 @@ export function registerStellaFitnessPlugin(
   const stellaRuntime = createStellaFitnessRuntime({
     extractionRuntime: createCurrentExtractionRuntime(api),
     personalDataDirectory: () =>
-      resolvePersonalDataDirectory(
-        currentPluginConfig(currentOpenClawConfig(api)),
-      ),
+      resolveStellaPersonalDataPaths(currentOpenClawConfig(api)).fitnessData,
     runtimeDirectory: () =>
       join(api.runtime.state.resolveStateDir(process.env), PLUGIN_ID),
     userTimezone: () => currentOpenClawConfig(api).agents?.defaults?.userTimezone,
@@ -1906,9 +1908,15 @@ function createPreflightRunner(
     const openclawConfig = currentOpenClawConfig(api);
     const pluginConfig = currentPluginConfig(openclawConfig);
     const extractionConfig = resolveExtractionConfig(pluginConfig);
+    const personalData = resolvePersonalDataDirectoryForPreflight(
+      openclawConfig,
+    );
     return runConfigurationPreflight({
       userTimezone: openclawConfig.agents?.defaults?.userTimezone,
-      personalDataDirectory: pluginConfig?.personalDataDirectory,
+      personalDataDirectory: personalData.path,
+      ...(personalData.failure === undefined
+        ? {}
+        : { personalDataDirectoryFailure: personalData.failure }),
       runtimeDirectory: join(
         api.runtime.state.resolveStateDir(process.env),
         PLUGIN_ID,
@@ -2506,10 +2514,15 @@ function formatJourneyBodyWeight(
   return formatBodyWeightRecording(result);
 }
 
-function resolvePersonalDataDirectory(
-  pluginConfig: Record<string, unknown> | undefined,
-): string | undefined {
-  return typeof pluginConfig?.personalDataDirectory === "string"
-    ? pluginConfig.personalDataDirectory
-    : undefined;
+function resolvePersonalDataDirectoryForPreflight(
+  openclawConfig: ReturnType<typeof currentOpenClawConfig>,
+): { readonly path?: string; readonly failure?: string } {
+  try {
+    return { path: resolveStellaPersonalDataPaths(openclawConfig).fitnessData };
+  } catch (error) {
+    if (error instanceof FitnessContextContractError) {
+      return { failure: error.code };
+    }
+    throw error;
+  }
 }

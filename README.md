@@ -63,7 +63,7 @@ Stella Fitness 只回答事实问题：
 
 隐私与数据生命周期设计已由 Product Owner 于 2026-08-10 审核通过：
 
-- 用户必须显式配置 Personal Data Directory；
+- operator 必须通过 Runtime-owned `stella.personal-data-locator/v1` 配置唯一 Personal Data Repository；Fitness 固定使用其中的 `stella/fitness`；
 - canonical 用户数据不得静默写入 Runtime Directory；
 - 原始上传文件保持字节不变；
 - 提交给 OpenClaw media runtime 前生成应用方向且去除 EXIF/GPS 的临时 `Sanitized Media Copy`；

@@ -8,7 +8,7 @@
 2. 新增一个 Stella Fitness 专属 OpenClaw agent，并将其 id 配置为 Plugin 必填项 `dedicatedAgentId`；
 3. 显式启用所需 conversation/media 权限；
 4. 选择 operator 允许的训练日志 extraction model；
-5. 显式配置 Personal Data Directory，并将 OpenClaw `agents.defaults.userTimezone` 配置为用户的 IANA 时区（例如 `Asia/Shanghai`）；
+5. 在 `plugins.entries["cognitive-runtime"].config.stella` 配置唯一 `stella.personal-data-locator/v1`（Runtime instance ID 与绝对 Personal Data Repository 路径），并将 OpenClaw `agents.defaults.userTimezone` 配置为用户的 IANA 时区（例如 `Asia/Shanghai`）；Fitness Plugin 不配置第二份路径；
 6. 在 WebChat 中选择该专属 agent 后运行 `/stella-start`；如使用 Telegram 等 Channel，先用 OpenClaw 顶层 routing binding 将对应账号路由到该 agent；
 7. Plugin 自动验证并使用唯一的卓叔 12 周 Built-in Program；
 8. 运行 `/stella-print` 获取完整 12 周内置 XLSX 并打印所需页面；

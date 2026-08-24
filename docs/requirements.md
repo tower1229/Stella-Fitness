@@ -123,7 +123,7 @@ v1 只优先支持用户提供的原课程三阶段 XLSX 固定布局。
 
 - Built-in Program 内容适用独立发行授权；
 - 用户输入及 Plugin 产生的用户记录均由用户控制；
-- 用户必须显式配置绝对路径 Personal Data Directory；
+- operator 必须通过 Runtime-owned locator 配置唯一绝对路径 Personal Data Repository；Fitness 固定使用 `<repository>/stella/fitness`，不得复制第二份路径配置；
 - 未配置、不可读写或与 Runtime Directory 重叠时必须 fail closed；
 - canonical 用户数据不得回退到 Runtime Directory；
 - 原始上传在 Personal Data Directory 中保持字节不变；

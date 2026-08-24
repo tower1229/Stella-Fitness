@@ -20,11 +20,6 @@
         "minLength": 1,
         "description": "OpenClaw agent id exclusively authorized to run Stella Fitness workflows"
       },
-      "personalDataDirectory": {
-        "type": "string",
-        "minLength": 1,
-        "description": "Absolute path to the user-controlled canonical Personal Data Directory"
-      },
       "extraction": {
         "type": "object",
         "additionalProperties": false,
