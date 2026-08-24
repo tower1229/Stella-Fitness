@@ -1,14 +1,18 @@
 import { createHash } from "node:crypto";
 
-import type {
-  FitnessWriteCandidate,
-  FitnessWriteCandidateClassifier,
-} from "./openclaw.js";
+import {
+  fitnessWriteCandidateFields,
+  type FitnessWriteCandidate,
+} from "./candidate.js";
+import type { FitnessWriteCandidateClassifier } from "./openclaw.js";
+
+const RECEIPT_TTL_MS = 15 * 60 * 1_000;
 
 export type NaturalRecordingReceipt = {
   readonly schemaVersion: "stella-fitness/natural-recording-receipt/v0.1";
   readonly candidateId: string;
   readonly candidate: FitnessWriteCandidate;
+  readonly fields: Readonly<Record<string, string | number>>;
   readonly sourceMessage: string;
   readonly source: {
     readonly channel?: string;
@@ -16,6 +20,7 @@ export type NaturalRecordingReceipt = {
     readonly runId?: string;
   };
   readonly issuedAt: string;
+  readonly expiresAt: string;
   readonly canonicalBase: string;
 };
 
@@ -28,15 +33,20 @@ export type NaturalRecordingReceiptStore = {
 type ConfirmationResult = {
   readonly status: "confirmation";
   readonly message: string;
-  readonly reason?: "canonical-base-drift" | "candidate-modified";
+  readonly reason?:
+    | "canonical-base-drift"
+    | "candidate-modified"
+    | "receipt-expired";
 };
 
 export function createNaturalRecordingCoordinator(options: {
   readonly store: NaturalRecordingReceiptStore;
   readonly classifier: FitnessWriteCandidateClassifier;
-  canonicalBase(): Promise<string>;
+  canonicalFitnessStateDigest(): Promise<string>;
   promote(input: NaturalRecordingReceipt): Promise<string>;
+  readonly now?: () => string;
 }) {
+  const now = options.now ?? (() => new Date().toISOString());
   return {
     async start(input: {
       readonly sessionKey: string;
@@ -56,7 +66,8 @@ export function createNaturalRecordingCoordinator(options: {
         sourceMessage: input.text,
         source: input.source,
         issuedAt: input.receivedAt,
-        canonicalBase: await options.canonicalBase(),
+        expiresAt: receiptExpiry(now()),
+        canonicalBase: await options.canonicalFitnessStateDigest(),
       });
       await options.store.write(sessionKeyHash(input.sessionKey), receipt);
       return { status: "confirmation", message: confirmationMessage(receipt.candidate) };
@@ -64,6 +75,8 @@ export function createNaturalRecordingCoordinator(options: {
     async submit(input: {
       readonly sessionKey: string;
       readonly text: string;
+      readonly receivedAt?: string;
+      readonly source?: NaturalRecordingReceipt["source"];
     }): Promise<
       | ConfirmationResult
       | { readonly status: "not-applicable" }
@@ -80,10 +93,24 @@ export function createNaturalRecordingCoordinator(options: {
           message: "已取消这次记录，没有保存任何健身事实。",
         };
       }
+      const submittedAt = input.receivedAt ?? now();
+      if (Date.parse(submittedAt) > Date.parse(receipt.expiresAt)) {
+        const updated = createReceipt({
+          ...receipt,
+          expiresAt: receiptExpiry(submittedAt),
+          canonicalBase: await options.canonicalFitnessStateDigest(),
+        });
+        await options.store.write(key, updated);
+        return {
+          status: "confirmation",
+          reason: "receipt-expired",
+          message: `候选确认已过期。${confirmationMessage(updated.candidate)}`,
+        };
+      }
       if (!/^\s*(?:确认|确认记录|保存)\s*[。.!！]?\s*$/u.test(input.text)) {
         const modified = await options.classifier.classify({
           text: input.text,
-          receivedAt: receipt.issuedAt,
+          receivedAt: submittedAt,
         });
         if (modified.status === "not-applicable") {
           return { status: "not-applicable" };
@@ -96,10 +123,11 @@ export function createNaturalRecordingCoordinator(options: {
         }
         const updated = createReceipt({
           candidate: modified.candidate,
-          sourceMessage: receipt.sourceMessage,
-          source: receipt.source,
+          sourceMessage: input.text,
+          source: input.source ?? receipt.source,
           issuedAt: receipt.issuedAt,
-          canonicalBase: await options.canonicalBase(),
+          expiresAt: receiptExpiry(submittedAt),
+          canonicalBase: await options.canonicalFitnessStateDigest(),
         });
         await options.store.write(key, updated);
         return {
@@ -108,9 +136,13 @@ export function createNaturalRecordingCoordinator(options: {
           message: confirmationMessage(updated.candidate),
         };
       }
-      const currentBase = await options.canonicalBase();
+      const currentBase = await options.canonicalFitnessStateDigest();
       if (currentBase !== receipt.canonicalBase) {
-        const updated = createReceipt({ ...receipt, canonicalBase: currentBase });
+        const updated = createReceipt({
+          ...receipt,
+          expiresAt: receiptExpiry(submittedAt),
+          canonicalBase: currentBase,
+        });
         await options.store.write(key, updated);
         return {
           status: "confirmation",
@@ -125,12 +157,22 @@ export function createNaturalRecordingCoordinator(options: {
   };
 }
 
-function createReceipt(input: Omit<NaturalRecordingReceipt, "schemaVersion" | "candidateId">): NaturalRecordingReceipt {
+function createReceipt(input: Omit<
+  NaturalRecordingReceipt,
+  "schemaVersion" | "candidateId" | "fields"
+>): NaturalRecordingReceipt {
   return {
     schemaVersion: "stella-fitness/natural-recording-receipt/v0.1",
     candidateId: createHash("sha256").update(JSON.stringify(input)).digest("hex"),
     ...input,
+    fields: fitnessWriteCandidateFields(input.candidate),
   };
+}
+
+function receiptExpiry(issuedAt: string): string {
+  const timestamp = Date.parse(issuedAt);
+  if (Number.isNaN(timestamp)) throw new Error("Natural recording receipt time is invalid");
+  return new Date(timestamp + RECEIPT_TTL_MS).toISOString();
 }
 
 function confirmationMessage(candidate: FitnessWriteCandidate): string {

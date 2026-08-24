@@ -23,7 +23,8 @@ export type FactPreservingReplyValidation =
         | "untraceable-exact-fact"
         | "unsupported-completion-claim"
         | "missing-no-record-qualifier"
-        | "recording-only-boundary";
+        | "recording-only-boundary"
+        | "missing-requested-fact";
     };
 
 const SESSION_TYPE_NAMES: Readonly<Record<string, string>> = {
@@ -82,6 +83,9 @@ export function validateFactPreservingReply(
   if (/(?:完成(?:了)?|做完(?:了)?|漏练|没(?:有)?训练|未训练)/u.test(normalized)) {
     return invalid("unsupported-completion-claim");
   }
+  if (/\d+(?:\.\d+)?\s*(?:kg|公斤|千克|lb|磅)\b/iu.test(normalized)) {
+    return invalid("untraceable-exact-fact");
+  }
   if (
     /(?:未找到|没有找到|暂无|没有).*记录/u.test(normalized) &&
     !/(?:不表示|不代表|不能说明).{0,6}(?:没有|未).{0,3}训练/u.test(normalized)
@@ -95,6 +99,22 @@ export function validateFactPreservingReply(
     }
   }
   const serializedFacts = JSON.stringify(turn.factBlock);
+  const statedWeek = /第\s*(\d+)\s*周/u.exec(normalized)?.[1];
+  if (
+    statedWeek !== undefined &&
+    (turn.facts.kind !== "active" ||
+      turn.facts.position?.week !== Number(statedWeek))
+  ) {
+    return invalid("untraceable-exact-fact");
+  }
+  const statedPhase = /phase-(\d+)/iu.exec(normalized)?.[0].toLowerCase();
+  if (
+    statedPhase !== undefined &&
+    (turn.facts.kind !== "active" ||
+      turn.facts.position?.phase.toLowerCase() !== statedPhase)
+  ) {
+    return invalid("untraceable-exact-fact");
+  }
   for (const [label, exerciseId] of Object.entries(EXERCISE_NAMES)) {
     if (normalized.includes(label) && !serializedFacts.includes(exerciseId)) {
       return invalid("untraceable-exact-fact");
@@ -112,7 +132,43 @@ export function validateFactPreservingReply(
   if (/未找到记录/u.test(normalized) && !serializedFacts.includes('"record":"no-record-found"')) {
     return invalid("untraceable-exact-fact");
   }
+  if (!containsRequestedFact(normalized, turn)) {
+    return invalid("missing-requested-fact");
+  }
   return { valid: true };
+}
+
+function containsRequestedFact(
+  reply: string,
+  turn: FactPreservingReplyTurn,
+): boolean {
+  const facts = turn.facts;
+  if (facts.kind === "conflict") {
+    return /多个\s*Active Program|无法确定.*训练状态/u.test(reply);
+  }
+  if (facts.kind === "program-journey") {
+    return reply.includes(facts.program.id) || /没有已激活.*训练周期/u.test(reply);
+  }
+  if (turn.intent.kind === "recent-training") {
+    return facts.latestRecord === undefined
+      ? /(?:未找到|没有找到|暂无|没有).*记录/u.test(reply)
+      : reply.includes(facts.latestRecord.date);
+  }
+  if (turn.intent.kind === "current-state") {
+    return facts.position === undefined
+      ? reply.includes(facts.asOf.localDate)
+      : reply.includes(facts.position.phase) &&
+        new RegExp(`第\\s*${facts.position.week}\\s*周`, "u").test(reply);
+  }
+  const dates = turn.intent.kind === "today"
+    ? new Set([facts.asOf.localDate])
+    : datesInCurrentWeek(facts.asOf.localDate);
+  const sessions = facts.dueSessions.filter(({ date }) => dates.has(date));
+  if (sessions.length === 0) return /没有计划训练/u.test(reply);
+  return sessions.some((session) =>
+    reply.includes(session.date) ||
+    reply.includes(sessionTypeName(session.sessionType))
+  );
 }
 
 function invalid(

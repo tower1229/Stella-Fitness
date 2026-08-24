@@ -6,7 +6,10 @@ import type {
   NaturalRecordingReceipt,
   NaturalRecordingReceiptStore,
 } from "./coordinator.js";
-import type { FitnessWriteCandidate } from "./openclaw.js";
+import {
+  fitnessWriteCandidateFields,
+  parseFitnessWriteCandidate,
+} from "./candidate.js";
 
 const DIRECTORY = "natural-recording-receipts";
 const KEY_PATTERN = /^[a-f0-9]{64}$/u;
@@ -59,14 +62,17 @@ function parseReceipt(value: unknown): NaturalRecordingReceipt {
   if (!isRecord(value) || !isRecord(value.source)) {
     throw new Error("Invalid natural recording receipt");
   }
-  const candidate = parseCandidate(value.candidate);
+  const candidate = parseFitnessWriteCandidate(value.candidate);
   if (
     value.schemaVersion !== "stella-fitness/natural-recording-receipt/v0.1" ||
     typeof value.candidateId !== "string" ||
     candidate === undefined ||
     typeof value.sourceMessage !== "string" ||
     typeof value.issuedAt !== "string" ||
+    typeof value.expiresAt !== "string" ||
+    Number.isNaN(Date.parse(value.expiresAt)) ||
     typeof value.canonicalBase !== "string" ||
+    !sameFields(value.fields, fitnessWriteCandidateFields(candidate)) ||
     (value.source.channel !== undefined && typeof value.source.channel !== "string") ||
     (value.source.messageId !== undefined && typeof value.source.messageId !== "string") ||
     (value.source.runId !== undefined && typeof value.source.runId !== "string")
@@ -75,6 +81,7 @@ function parseReceipt(value: unknown): NaturalRecordingReceipt {
     schemaVersion: value.schemaVersion,
     candidateId: value.candidateId,
     candidate,
+    fields: fitnessWriteCandidateFields(candidate),
     sourceMessage: value.sourceMessage,
     source: {
       ...(value.source.channel === undefined ? {} : { channel: value.source.channel }),
@@ -82,43 +89,17 @@ function parseReceipt(value: unknown): NaturalRecordingReceipt {
       ...(value.source.runId === undefined ? {} : { runId: value.source.runId }),
     },
     issuedAt: value.issuedAt,
+    expiresAt: value.expiresAt,
     canonicalBase: value.canonicalBase,
   };
 }
 
-function parseCandidate(value: unknown): FitnessWriteCandidate | undefined {
-  if (!isRecord(value) || typeof value.occurredAt !== "string") return undefined;
-  if (
-    value.kind === "body-weight" &&
-    typeof value.amount === "number" &&
-    Number.isFinite(value.amount) &&
-    value.amount > 0 &&
-    (value.unit === "kg" || value.unit === "lb")
-  ) {
-    return {
-      kind: value.kind,
-      amount: value.amount,
-      unit: value.unit,
-      occurredAt: value.occurredAt,
-    };
-  }
-  if (
-    value.kind === "initial-12rm" &&
-    (value.exerciseId === "goblet-squat" ||
-      value.exerciseId === "dumbbell-bench-press" ||
-      value.exerciseId === "dumbbell-deadlift") &&
-    typeof value.valueKg === "number" &&
-    Number.isFinite(value.valueKg) &&
-    value.valueKg > 0
-  ) {
-    return {
-      kind: value.kind,
-      exerciseId: value.exerciseId,
-      valueKg: value.valueKg,
-      occurredAt: value.occurredAt,
-    };
-  }
-  return undefined;
+function sameFields(
+  value: unknown,
+  expected: Readonly<Record<string, string | number>>,
+): boolean {
+  if (!isRecord(value)) return false;
+  return JSON.stringify(value) === JSON.stringify(expected);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

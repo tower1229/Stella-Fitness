@@ -214,7 +214,7 @@ export function registerStellaFitnessPlugin(
         join(api.runtime.state.resolveStateDir(process.env), PLUGIN_ID),
     }),
     classifier: fitnessWriteCandidateClassifier,
-    async canonicalBase() {
+    async canonicalFitnessStateDigest() {
       const [bodyWeight, trainingRecord, journey] = await Promise.all([
         stellaRuntime.bodyWeightTimeline(),
         stellaRuntime.trainingRecordView(),
@@ -273,6 +273,8 @@ export function registerStellaFitnessPlugin(
     const pending = await naturalRecording.submit({
       sessionKey: input.sessionKey,
       text: input.text,
+      receivedAt: input.receivedAt,
+      source: input.source,
     });
     if (pending.status !== "not-applicable") return pending.message;
     const started = await naturalRecording.start({
@@ -2401,7 +2403,7 @@ function stableConfirmationId(context: {
   readonly sessionKey?: string;
   readonly commandBody: string;
 }): string {
-  const hex = createHash("sha256")
+  return uuidFromHex(createHash("sha256")
     .update(
       [
         context.channel,
@@ -2410,12 +2412,7 @@ function stableConfirmationId(context: {
         context.commandBody,
       ].join("\u0000"),
     )
-    .digest("hex")
-    .slice(0, 32)
-    .split("");
-  hex[12] = "4";
-  hex[16] = "8";
-  return `${hex.slice(0, 8).join("")}-${hex.slice(8, 12).join("")}-${hex.slice(12, 16).join("")}-${hex.slice(16, 20).join("")}-${hex.slice(20).join("")}`;
+    .digest("hex"));
 }
 
 function uuidFromHex(value: string): string {

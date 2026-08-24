@@ -1,22 +1,16 @@
-export type FitnessWriteCandidate =
-  | {
-      readonly kind: "body-weight";
-      readonly amount: number;
-      readonly unit: "kg" | "lb";
-      readonly occurredAt: string;
-    }
-  | {
-      readonly kind: "initial-12rm";
-      readonly exerciseId:
-        | "goblet-squat"
-        | "dumbbell-bench-press"
-        | "dumbbell-deadlift";
-      readonly valueKg: number;
-      readonly occurredAt: string;
-    };
+import {
+  parseFitnessWriteCandidate,
+  type FitnessWriteCandidate,
+} from "./candidate.js";
+
+export type { FitnessWriteCandidate } from "./candidate.js";
 
 export type FitnessWriteCandidateClassification =
-  | { readonly status: "candidate"; readonly candidate: FitnessWriteCandidate }
+  | {
+      readonly status: "candidate";
+      readonly candidate: FitnessWriteCandidate;
+      readonly confidence: "high" | "low";
+    }
   | {
       readonly status:
         | "not-applicable"
@@ -112,61 +106,12 @@ function parseClassification(text: string): FitnessWriteCandidateClassification 
         ? { status: "low-confidence" }
         : { status: "invalid-output" };
   }
-  const candidate = parseCandidate(value);
+  const { confidence: _confidence, ...candidateValue } = value;
+  const candidate = parseFitnessWriteCandidate(candidateValue);
   if (candidate === undefined) return { status: "invalid-output" };
-  if (value.confidence === "low") return { status: "low-confidence" };
-  return value.confidence === "high"
-    ? { status: "candidate", candidate }
+  return value.confidence === "high" || value.confidence === "low"
+    ? { status: "candidate", candidate, confidence: value.confidence }
     : { status: "invalid-output" };
-}
-
-function parseCandidate(value: Readonly<Record<string, unknown>>): FitnessWriteCandidate | undefined {
-  if (value.kind === "body-weight") {
-    if (
-      !hasOnlyKeys(value, ["kind", "amount", "unit", "occurredAt", "confidence"]) ||
-      typeof value.amount !== "number" ||
-      !Number.isFinite(value.amount) ||
-      value.amount <= 0 ||
-      (value.unit !== "kg" && value.unit !== "lb") ||
-      !isTimestamp(value.occurredAt)
-    ) return undefined;
-    return {
-      kind: value.kind,
-      amount: value.amount,
-      unit: value.unit,
-      occurredAt: value.occurredAt,
-    };
-  }
-  if (value.kind !== "initial-12rm") return undefined;
-  const exerciseId = parseInitial12RMExerciseId(value.exerciseId);
-  if (
-    !hasOnlyKeys(value, ["kind", "exerciseId", "valueKg", "occurredAt", "confidence"]) ||
-    exerciseId === undefined ||
-    typeof value.valueKg !== "number" ||
-    !Number.isFinite(value.valueKg) ||
-    value.valueKg <= 0 ||
-    !isTimestamp(value.occurredAt)
-  ) return undefined;
-  return {
-    kind: value.kind,
-    exerciseId,
-    valueKg: value.valueKg,
-    occurredAt: value.occurredAt,
-  };
-}
-
-function parseInitial12RMExerciseId(
-  value: unknown,
-): Extract<FitnessWriteCandidate, { kind: "initial-12rm" }>["exerciseId"] | undefined {
-  return value === "goblet-squat" ||
-      value === "dumbbell-bench-press" ||
-      value === "dumbbell-deadlift"
-    ? value
-    : undefined;
-}
-
-function isTimestamp(value: unknown): value is string {
-  return typeof value === "string" && !Number.isNaN(Date.parse(value));
 }
 
 function hasOnlyKeys(

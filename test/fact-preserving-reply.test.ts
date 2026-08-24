@@ -66,6 +66,8 @@ describe("Fact-Preserving Reply", () => {
     ["未找到 2026-08-17 的训练记录。", "missing-no-record-qualifier"],
     ["最近练了俯卧撑。", "untraceable-exact-fact"],
     ["目前没有待确认内容。", "untraceable-exact-fact"],
+    ["你的体重是 2 kg。", "untraceable-exact-fact"],
+    ["好的。", "missing-requested-fact"],
     ["建议你明天补练。", "recording-only-boundary"],
   ] as const)("rejects an unsafe draft and uses a deterministic fallback: %s", (draft, reason) => {
     const turn = createFactPreservingReplyTurn({
