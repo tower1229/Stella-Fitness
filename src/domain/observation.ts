@@ -211,3 +211,7 @@ export type TrainingRecordView = {
     readonly message: string;
   }[];
 };
+
+export type CurrentFitnessTrainingRecordView = TrainingRecordView & {
+  readonly pendingConfirmationCount: number;
+};

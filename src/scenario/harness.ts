@@ -8,6 +8,10 @@ import { throwIfAborted } from "../extraction/cancellation.js";
 import type { MediaSanitizer } from "../media/sanitizer.js";
 import { createStellaFitnessRuntime } from "../plugin-runtime.js";
 import type { ConfigurationPreflightResult } from "../preflight.js";
+import type {
+  FitnessQueryClassification,
+  FitnessQueryClassifier,
+} from "../query/intent.js";
 
 type HarnessInput = Omit<WorkoutLogIngestRequest, "signal" | "intent"> & {
   intent?: WorkoutLogIngestRequest["intent"];
@@ -19,6 +23,7 @@ type ScenarioHarnessOptions = {
   personalDataDirectory?: () => string | undefined;
   runtimeDirectory?: () => string | undefined;
   userTimezone?: () => string | undefined;
+  queryClassifier?: FitnessQueryClassifier;
   mediaSanitizer?: MediaSanitizer;
   preflight: () => ConfigurationPreflightResult;
 };
@@ -93,6 +98,9 @@ export function createScenarioHarness(options: ScenarioHarnessOptions) {
     },
     weightFacts() {
       return pluginRuntime.weightFacts();
+    },
+    queryFitness(input: Parameters<typeof pluginRuntime.queryFitness>[0]) {
+      return pluginRuntime.queryFitness(input);
     },
     resolvePlannedSession(
       input: Parameters<typeof pluginRuntime.resolvePlannedSession>[0],
@@ -179,6 +187,24 @@ export class ControlledExtractionRuntime implements ExtractionRuntime {
     const result = this.#results.shift();
     if (result === undefined) {
       throw new Error("No controlled extraction result remains");
+    }
+    return result;
+  }
+}
+
+export class ControlledFitnessQueryClassifier implements FitnessQueryClassifier {
+  readonly requests: Array<{ readonly text: string }> = [];
+  readonly #results: FitnessQueryClassification[];
+
+  constructor(results: FitnessQueryClassification[]) {
+    this.#results = [...results];
+  }
+
+  async classify(input: { readonly text: string }): Promise<FitnessQueryClassification> {
+    this.requests.push(input);
+    const result = this.#results.shift();
+    if (result === undefined) {
+      throw new Error("No controlled Fitness Query classification remains");
     }
     return result;
   }

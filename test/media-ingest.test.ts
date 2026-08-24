@@ -102,6 +102,53 @@ describe("workout-log Raw Artifact ingest", () => {
     expect(filesUnder(directories.runtimeDirectory)).toEqual([]);
   });
 
+  it("deduplicates the same automatic workout photo after restart on its local date", async () => {
+    const directories = temporaryDirectories();
+    await activateProgramFixture({
+      personalDataDirectory: directories.personalDataDirectory,
+      programSpec: await programFixture(),
+      cycleStart: "2026-08-10",
+    });
+    const bytes = await orientedJpeg();
+    const first = await readyHarness(
+      new ControlledExtractionRuntime([{
+        parsed: automaticCandidate(),
+        metadata: { provider: "controlled", model: "fixture-v1" },
+      }]),
+      directories,
+      { userTimezone: () => "Asia/Shanghai" },
+    ).ingestWorkoutLog({
+      intent: "auto",
+      runId: "automatic-before-restart",
+      upload: upload(bytes),
+      timeoutMs: 2_000,
+    });
+    if (first.status !== "recorded") throw new Error("Expected a record");
+
+    const restartedRuntime = new ControlledExtractionRuntime([]);
+    const duplicate = await readyHarness(
+      restartedRuntime,
+      directories,
+      { userTimezone: () => "Asia/Shanghai" },
+    ).ingestWorkoutLog({
+      intent: "auto",
+      runId: "automatic-after-restart",
+      upload: upload(bytes),
+      timeoutMs: 2_000,
+    });
+
+    expect(duplicate).toMatchObject({
+      status: "recorded",
+      observation: { id: first.observation.id },
+      progress: { recordedSessions: 1, plannedSessions: 3 },
+      execution: { provider: "deduplicated" },
+    });
+    expect(restartedRuntime.requests).toHaveLength(0);
+    expect(filesUnder(directories.personalDataDirectory).filter((path) =>
+      path.startsWith(join("observations", "workout-log"))
+    )).toHaveLength(1);
+  });
+
   it("asks for the deterministic block without retaining a missing target", async () => {
     const directories = temporaryDirectories();
     const runtime = new ControlledExtractionRuntime([{
@@ -619,6 +666,27 @@ function upload(bytes: Buffer) {
 
 function candidate() {
   return workoutLogCandidate();
+}
+
+function automaticCandidate() {
+  const value = candidate();
+  const base = value.exercises[0]!;
+  return {
+    ...value,
+    exercises: [
+      base,
+      ["哑铃卧推", "dumbbell-bench-press"],
+      ["哑铃硬拉", "dumbbell-deadlift"],
+      ["平板支撑", "plank"],
+    ].map((entry) => {
+      if (!Array.isArray(entry)) return entry;
+      return {
+        ...structuredClone(base),
+        rawLabel: { value: entry[0], confidence: "high" as const },
+        exerciseId: { value: entry[1], confidence: "high" as const },
+      };
+    }),
+  };
 }
 
 function sha256(bytes: Buffer): string {

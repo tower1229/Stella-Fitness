@@ -1,5 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import {
+  link,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import type { ProgramSpec } from "../domain/program.js";
@@ -9,6 +17,13 @@ const PROGRAM_DIRECTORY = "program";
 const SELECTION_FILE = "selection.json";
 const SPEC_FILE = "spec.json";
 const STATE_FILE = "state.json";
+const ACTIVE_CONTEXTS_DIRECTORY = "active-contexts";
+const ACTIVE_CONTEXT_MARKER_FILE = "active.json";
+
+export type ActiveProgramContext = {
+  readonly program: ProgramSpec;
+  readonly state: ProgramState;
+};
 
 export type SymbolicLoadBinding = {
   readonly value: number;
@@ -202,6 +217,67 @@ export async function readActiveProgramIfPresent(options: {
     throw error;
   }
   return await readActiveProgram(options);
+}
+
+export async function readActiveProgramContexts(options: {
+  personalDataDirectory: string;
+}): Promise<readonly ActiveProgramContext[]> {
+  const programDirectory = join(options.personalDataDirectory, PROGRAM_DIRECTORY);
+  const contexts: ActiveProgramContext[] = [];
+  const legacy = await readActiveProgramIfPresent(options);
+  if (legacy !== undefined) contexts.push(legacy);
+  const activeContextsDirectory = join(
+    programDirectory,
+    ACTIVE_CONTEXTS_DIRECTORY,
+  );
+  const entries = await readdir(activeContextsDirectory, {
+    withFileTypes: true,
+  }).catch((error: unknown) => {
+    if (isMissing(error)) return [];
+    throw error;
+  });
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name)
+  )) {
+    if (!entry.isDirectory()) continue;
+    const contextDirectory = join(activeContextsDirectory, entry.name);
+    const markerSource = await readFile(
+      join(contextDirectory, ACTIVE_CONTEXT_MARKER_FILE),
+      "utf8",
+    ).catch((error: unknown) => {
+      if (isMissing(error)) return undefined;
+      throw error;
+    });
+    if (markerSource === undefined) continue;
+    const marker = parseActiveProgramContextMarker(markerSource);
+    if (marker.contextId !== entry.name) {
+      throw new Error("Active Program Context marker does not match its directory");
+    }
+    const state = await readRequiredState(join(contextDirectory, STATE_FILE));
+    const program = parseProgramSpec(
+      await readFile(join(contextDirectory, SPEC_FILE), "utf8"),
+    );
+    assertSameProgramIdentity(state.program, programIdentity(program));
+    contexts.push({ program, state });
+  }
+  return contexts;
+}
+
+function parseActiveProgramContextMarker(source: string): {
+  readonly contextId: string;
+} {
+  const value: unknown = JSON.parse(source);
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["schemaVersion", "contextId", "active"]) ||
+    value.schemaVersion !== "stella-fitness/active-program-context/v0.1" ||
+    typeof value.contextId !== "string" ||
+    value.contextId.trim().length === 0 ||
+    value.active !== true
+  ) {
+    throw new Error("Active Program Context marker is schema-invalid");
+  }
+  return { contextId: value.contextId };
 }
 
 export async function replaceProgramState(options: {
@@ -484,6 +560,14 @@ async function removeIfPresent(path: string): Promise<void> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(
+  value: Readonly<Record<string, unknown>>,
+  allowed: readonly string[],
+): boolean {
+  const allowedKeys = new Set(allowed);
+  return Object.keys(value).every((key) => allowedKeys.has(key));
 }
 
 function isAlreadyExists(error: unknown): boolean {

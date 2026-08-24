@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
+  CurrentFitnessTrainingRecordView,
   TrainingRecordView,
   WorkoutLogObservation,
   WorkoutProgramContext,
@@ -107,6 +108,116 @@ export async function rebuildTrainingRecordView(
     records,
     errors,
   };
+}
+
+export async function rebuildCurrentFitnessTrainingRecordView(
+  personalDataDirectory: string,
+): Promise<CurrentFitnessTrainingRecordView> {
+  const view = await rebuildTrainingRecordView(personalDataDirectory);
+  const pending = await pendingWorkoutLogConfirmations(personalDataDirectory);
+  return {
+    ...view,
+    errors: [...view.errors, ...pending.errors],
+    pendingConfirmationCount: pending.count,
+  };
+}
+
+async function pendingWorkoutLogConfirmations(
+  personalDataDirectory: string,
+): Promise<{
+  readonly count: number;
+  readonly errors: readonly { readonly file: string; readonly message: string }[];
+}> {
+  const { records, errors } = await readWorkoutLogProcessingRecords(
+    personalDataDirectory,
+  );
+  const terminalRunIds = new Set(records.flatMap((value) =>
+    isRecord(value) &&
+    value.schemaVersion === "stella-fitness/processing/workout-log/v0.1" &&
+    value.operation === "workout-log-confirmation" &&
+    typeof value.runId === "string" &&
+    (
+      value.status === "succeeded" ||
+      (value.status === "failed" && value.errorCategory === "cancelled")
+    )
+      ? [value.runId]
+      : []
+  ));
+  const count = new Set(records.flatMap((value) => {
+    if (
+      !isRecord(value) ||
+      value.schemaVersion !== "stella-fitness/processing/workout-log/v0.1" ||
+      value.operation !== "workout-log-extraction" ||
+      value.status !== "awaiting-confirmation" ||
+      typeof value.runId !== "string" ||
+      terminalRunIds.has(value.runId) ||
+      !isRecord(value.result) ||
+      value.result.kind !== "workout-log-confirmation" ||
+      typeof value.result.confirmationId !== "string"
+    ) {
+      return [];
+    }
+    return [value.result.confirmationId];
+  })).size;
+  return { count, errors };
+}
+
+async function readWorkoutLogProcessingRecords(
+  personalDataDirectory: string,
+): Promise<{
+  readonly records: readonly Record<string, unknown>[];
+  readonly errors: readonly { readonly file: string; readonly message: string }[];
+}> {
+  const directory = join(personalDataDirectory, "processing", "workout-log");
+  const files = await readdir(directory).catch((error: unknown) => {
+    if (isMissing(error)) return [];
+    throw error;
+  });
+  const records: Record<string, unknown>[] = [];
+  const errors: { file: string; message: string }[] = [];
+  for (const file of files.filter((name) => name.endsWith(".json")).sort()) {
+    try {
+      const value: unknown = JSON.parse(await readFile(join(directory, file), "utf8"));
+      if (!isPendingCountProcessingRecord(value)) {
+        throw new Error("Workout-log Processing Record is schema-invalid");
+      }
+      records.push(value);
+    } catch (error) {
+      errors.push({
+        file: join("processing", "workout-log", file),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { records, errors };
+}
+
+function isPendingCountProcessingRecord(
+  value: unknown,
+): value is Record<string, unknown> {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== "stella-fitness/processing/workout-log/v0.1" ||
+    (value.operation !== "workout-log-extraction" &&
+      value.operation !== "workout-log-confirmation") ||
+    typeof value.runId !== "string" ||
+    value.runId.trim().length === 0 ||
+    (value.status !== "succeeded" &&
+      value.status !== "awaiting-confirmation" &&
+      value.status !== "failed")
+  ) {
+    return false;
+  }
+  if (
+    value.operation === "workout-log-extraction" &&
+    value.status === "awaiting-confirmation"
+  ) {
+    return isRecord(value.result) &&
+      value.result.kind === "workout-log-confirmation" &&
+      typeof value.result.confirmationId === "string" &&
+      value.result.confirmationId.trim().length > 0;
+  }
+  return true;
 }
 
 export async function activeTrainingRecordWithArtifactSha(
