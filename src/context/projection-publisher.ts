@@ -28,6 +28,7 @@ import {
   canonicalTextBytes,
   resolveStellaPersonalDataPaths,
 } from "./runtime-contract.js";
+import type { FitnessProjectionPointerSnapshot } from "./sync-coordinator.js";
 
 const PRODUCER_ID = "stella-fitness" as const;
 const CONSUMER_ID = "stella-runtime" as const;
@@ -119,12 +120,116 @@ export type FitnessProjectionPublishResult = {
   readonly sourceRevision: string;
   readonly projectionRevision: string;
   readonly manifestChecksum: string;
+  readonly asOf: string;
   readonly reusedRevision: boolean;
 };
+
+export async function inspectFitnessContextProjectionSource(options: {
+  readonly openclawConfig: unknown;
+}): Promise<{ readonly sourceRevision: string; readonly asOf: string }> {
+  const paths = resolveStellaPersonalDataPaths(options.openclawConfig);
+  const snapshot = await buildFitnessProjectionSnapshot(paths.fitnessData);
+  return {
+    sourceRevision: snapshot.sourceRevision,
+    asOf: snapshot.sourceAsOf,
+  };
+}
+
+export async function readFitnessContextProjectionPointer(options: {
+  readonly openclawConfig: unknown;
+}): Promise<FitnessProjectionPointerSnapshot | undefined> {
+  const paths = resolveStellaPersonalDataPaths(options.openclawConfig);
+  if (!pathExists(paths.fitnessToRuntime)) return undefined;
+  const publicationRoot = validatePublicationRoot(paths.repository, paths.fitnessToRuntime);
+  const bytes = await readOptionalSafePublishedFile(
+    join(publicationRoot, "active.json"),
+    publicationRoot,
+  );
+  return bytes === undefined ? undefined : parseProjectionPointer(bytes);
+}
+
+export async function publishFitnessContextProjectionPointerStatus(options: {
+  readonly openclawConfig: unknown;
+  readonly status: "blocked" | "revoked" | "stale";
+  readonly reasonCode: string;
+  readonly sourceRevision: string;
+  readonly changedAt?: string;
+}): Promise<void> {
+  const paths = resolveStellaPersonalDataPaths(options.openclawConfig);
+  if (!pathExists(paths.fitnessToRuntime)) return;
+  const publicationRoot = validatePublicationRoot(paths.repository, paths.fitnessToRuntime);
+  const activePath = join(publicationRoot, "active.json");
+  const currentBytes = await readOptionalSafePublishedFile(activePath, publicationRoot);
+  const current = currentBytes === undefined
+    ? undefined
+    : parseProjectionPointer(currentBytes);
+  const changedAt = canonicalTimestamp(options.changedAt ?? new Date().toISOString());
+  const pointer = options.status === "stale"
+    ? buildStalePointer({
+        instanceId: paths.instanceId,
+        previous: requireVerifiedPointer(current),
+        reasonCode: options.reasonCode,
+        changedAt,
+      })
+    : buildUnavailablePointer({
+        instanceId: paths.instanceId,
+        status: options.status,
+        sourceRevision: options.sourceRevision,
+        reasonCode: options.reasonCode,
+        changedAt,
+      });
+  if (currentBytes === undefined || !currentBytes.equals(pointer)) {
+    await atomicWriteFile(activePath, pointer);
+  }
+}
+
+export async function restoreFitnessContextProjectionPointer(options: {
+  readonly openclawConfig: unknown;
+  readonly pointer: FitnessProjectionPointerSnapshot | undefined;
+  readonly expectedSourceRevision: string;
+  readonly changedAt?: string;
+}): Promise<void> {
+  const source = await inspectFitnessContextProjectionSource(options);
+  if (source.sourceRevision !== options.expectedSourceRevision) {
+    throw new Error("FITNESS_PROJECTION_POINTER_RESTORE_SOURCE_CHANGED");
+  }
+  const paths = resolveStellaPersonalDataPaths(options.openclawConfig);
+  if (!pathExists(paths.fitnessToRuntime) && options.pointer === undefined) return;
+  const publicationRoot = validatePublicationRoot(paths.repository, paths.fitnessToRuntime);
+  const activePath = join(publicationRoot, "active.json");
+  const current = await readOptionalSafePublishedFile(activePath, publicationRoot);
+  if (current === undefined && options.pointer === undefined) return;
+  if (current === undefined) {
+    throw new Error("FITNESS_PROJECTION_POINTER_RESTORE_NOT_BLOCKED");
+  }
+  const currentPointer = parseProjectionPointer(current);
+  if (currentPointer.status !== "blocked") {
+    throw new Error("FITNESS_PROJECTION_POINTER_RESTORE_NOT_BLOCKED");
+  }
+  if (options.pointer === undefined) {
+    await rm(activePath);
+    await syncDirectory(publicationRoot);
+    return;
+  }
+  if (options.pointer.status !== "active" && options.pointer.status !== "stale") {
+    throw new Error("FITNESS_PROJECTION_POINTER_RESTORE_INVALID");
+  }
+  const changedAt = canonicalTimestamp(options.changedAt ?? new Date().toISOString());
+  const restored = options.pointer.status === "active"
+    ? buildActivePointerFromSnapshot(paths.instanceId, options.pointer, changedAt)
+    : buildStalePointer({
+        instanceId: paths.instanceId,
+        previous: options.pointer,
+        reasonCode: "RESTORED_AFTER_FAILED_MUTATION",
+        changedAt,
+      });
+  await atomicWriteFile(activePath, restored);
+}
 
 export async function publishFitnessContextProjection(options: {
   readonly openclawConfig: unknown;
   readonly generatedAt?: string;
+  readonly allowBlockedReplacement?: boolean;
   readonly testHooks?: {
     readonly afterLock?: () => Promise<void> | void;
     readonly crashAfterPhase?: FitnessProjectionPublishPhase;
@@ -192,8 +297,22 @@ export async function publishFitnessContextProjection(options: {
       changedAt: generatedAt,
     });
     await assertSourceInventoryUnchanged(paths.fitnessData, snapshot.sourceInventory);
-    if (currentPointer !== undefined) parseActivePointer(currentPointer);
-    if (currentPointer === undefined || !pointerTargets(currentPointer, committed)) {
+    const currentStatus = currentPointer === undefined
+      ? undefined
+      : parseProjectionPointer(currentPointer);
+    if (currentStatus?.status === "revoked") {
+      throw new Error("FITNESS_PROJECTION_POINTER_REVOKED");
+    }
+    if (
+      currentStatus?.status === "blocked" &&
+      options.allowBlockedReplacement !== true
+    ) {
+      throw new Error("FITNESS_PROJECTION_POINTER_BLOCKED");
+    }
+    if (
+      currentPointer === undefined || currentStatus?.status !== "active" ||
+      !pointerTargets(currentPointer, committed)
+    ) {
       await atomicWriteFile(activePath, pointerBytes);
     }
     await setPublishLockPhase(lock, "pointer-replaced");
@@ -205,6 +324,7 @@ export async function publishFitnessContextProjection(options: {
       sourceRevision: snapshot.sourceRevision,
       projectionRevision: committed.projectionRevision,
       manifestChecksum: committed.manifestChecksum,
+      asOf: snapshot.sourceAsOf,
       reusedRevision: existing !== undefined,
     };
   } catch (error) {
@@ -988,15 +1108,29 @@ async function readStoredPublication(
     dirname(dirname(revisionDirectory)),
   );
   if (active !== undefined) {
-    const pointer = parseActivePointer(active);
+    const pointer = parseProjectionPointer(active);
     if (
-      pointer.projection_revision === rebuilt.projectionRevision &&
-      !pointerTargets(active, rebuilt)
+      (pointer.status === "active" || pointer.status === "stale") &&
+      pointer.projectionRevision === rebuilt.projectionRevision &&
+      !verifiedPointerTargets(pointer, rebuilt)
     ) {
       throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
     }
   }
   return rebuilt;
+}
+
+function verifiedPointerTargets(
+  pointer: Extract<
+    FitnessProjectionPointerSnapshot,
+    { readonly status: "active" | "stale" }
+  >,
+  publication: ProjectionPublication,
+): boolean {
+  return pointer.projectionRevision === publication.projectionRevision &&
+    pointer.manifestChecksum === publication.manifestChecksum &&
+    pointer.sourceRevision === publication.manifest.source.revision &&
+    pointer.asOf === publication.manifest.source.as_of;
 }
 
 function assertStoredRevisionDirectory(
@@ -1144,71 +1278,199 @@ function pointerTargets(bytes: Buffer, publication: ProjectionPublication): bool
     pointer.source_revision === publication.manifest.source.revision;
 }
 
-function parseActivePointer(bytes: Buffer): {
-  readonly projection_revision: string;
-  readonly manifest_checksum: string;
-  readonly source_revision: string;
-} {
+function buildActivePointerFromSnapshot(
+  instanceId: string,
+  pointer: Extract<
+    FitnessProjectionPointerSnapshot,
+    { readonly status: "active" | "stale" }
+  >,
+  changedAt: string,
+): Buffer {
+  return buildPointer({
+    schema_version: "stella.context-projection-pointer/v1",
+    instance_id: instanceId,
+    producer_id: PRODUCER_ID,
+    consumer_id: CONSUMER_ID,
+    status: "active",
+    projection_revision: pointer.projectionRevision,
+    manifest_checksum: pointer.manifestChecksum,
+    source_revision: pointer.sourceRevision,
+    as_of: pointer.asOf,
+    changed_at: changedAt,
+  });
+}
+
+function buildStalePointer(options: {
+  readonly instanceId: string;
+  readonly previous: Extract<
+    FitnessProjectionPointerSnapshot,
+    { readonly status: "active" | "stale" }
+  >;
+  readonly reasonCode: string;
+  readonly changedAt: string;
+}): Buffer {
+  validateReasonCode(options.reasonCode);
+  return buildPointer({
+    schema_version: "stella.context-projection-pointer/v1",
+    instance_id: options.instanceId,
+    producer_id: PRODUCER_ID,
+    consumer_id: CONSUMER_ID,
+    status: "stale",
+    last_verified_revision: options.previous.projectionRevision,
+    manifest_checksum: options.previous.manifestChecksum,
+    source_revision: options.previous.sourceRevision,
+    as_of: options.previous.asOf,
+    changed_at: options.changedAt,
+    reason_codes: [options.reasonCode],
+  });
+}
+
+function buildUnavailablePointer(options: {
+  readonly instanceId: string;
+  readonly status: "blocked" | "revoked";
+  readonly sourceRevision: string;
+  readonly reasonCode: string;
+  readonly changedAt: string;
+}): Buffer {
+  validateReasonCode(options.reasonCode);
+  return buildPointer({
+    schema_version: "stella.context-projection-pointer/v1",
+    instance_id: options.instanceId,
+    producer_id: PRODUCER_ID,
+    consumer_id: CONSUMER_ID,
+    status: options.status,
+    source_revision: options.sourceRevision,
+    changed_at: options.changedAt,
+    reason_codes: [options.reasonCode],
+  });
+}
+
+function buildPointer(
+  value: Readonly<Record<string, unknown>> & { readonly changed_at: string },
+): Buffer {
+  const {
+    changed_at: _changedAt,
+    schema_version: _pointerSchema,
+    ...seed
+  } = value;
+  return canonicalizeJcs({
+    ...value,
+    pointer_revision: `pointer-${sha256Hex(canonicalizeJcs({
+      schema_version: "stella.context-projection-pointer-revision-seed/v1",
+      ...seed,
+    }))}`,
+  });
+}
+
+function requireVerifiedPointer(
+  pointer: FitnessProjectionPointerSnapshot | undefined,
+): Extract<
+  FitnessProjectionPointerSnapshot,
+  { readonly status: "active" | "stale" }
+> {
+  if (pointer?.status !== "active" && pointer?.status !== "stale") {
+    throw new Error("FITNESS_PROJECTION_STALE_WITHOUT_VERIFIED_REVISION");
+  }
+  return pointer;
+}
+
+function validateReasonCode(reasonCode: string): void {
+  if (!/^[A-Z][A-Z0-9_]{0,63}$/u.test(reasonCode)) {
+    throw new Error("FITNESS_PROJECTION_POINTER_INVALID");
+  }
+}
+
+function parseProjectionPointer(bytes: Buffer): FitnessProjectionPointerSnapshot {
   let value: unknown;
   try {
     value = JSON.parse(bytes.toString("utf8"));
   } catch {
     throw new Error("FITNESS_PROJECTION_POINTER_INVALID");
   }
+  if (!isRecord(value) || !canonicalizeJcs(value).equals(bytes)) {
+    throw new Error("FITNESS_PROJECTION_POINTER_INVALID");
+  }
+  const status = value.status;
   if (
-    !isRecord(value) ||
-    Object.keys(value).sort().join(",") !== [
-      "as_of",
-      "changed_at",
-      "consumer_id",
-      "instance_id",
-      "manifest_checksum",
-      "pointer_revision",
-      "producer_id",
-      "projection_revision",
-      "schema_version",
-      "source_revision",
-      "status",
-    ].sort().join(",") ||
     value.schema_version !== "stella.context-projection-pointer/v1" ||
-    value.producer_id !== PRODUCER_ID ||
-    value.consumer_id !== CONSUMER_ID ||
-    value.status !== "active" ||
+    value.producer_id !== PRODUCER_ID || value.consumer_id !== CONSUMER_ID ||
     typeof value.instance_id !== "string" ||
     typeof value.pointer_revision !== "string" ||
     !/^pointer-[a-f0-9]{64}$/u.test(value.pointer_revision) ||
-    typeof value.projection_revision !== "string" ||
-    !/^projection-[a-f0-9]{64}$/u.test(value.projection_revision) ||
-    typeof value.manifest_checksum !== "string" ||
-    !/^sha256:[a-f0-9]{64}$/u.test(value.manifest_checksum) ||
     typeof value.source_revision !== "string" ||
-    typeof value.as_of !== "string" ||
     typeof value.changed_at !== "string" ||
-    !canonicalizeJcs(value).equals(bytes)
-  ) {
-    throw new Error("FITNESS_PROJECTION_POINTER_INVALID");
-  }
-  canonicalTimestamp(value.as_of);
+    (status !== "active" && status !== "stale" &&
+      status !== "blocked" && status !== "revoked")
+  ) throw new Error("FITNESS_PROJECTION_POINTER_INVALID");
   canonicalTimestamp(value.changed_at);
-  const { pointer_revision: _pointerRevision, changed_at: _changedAt, ...seed } = value;
+  const {
+    pointer_revision: pointerRevision,
+    changed_at: _changedAt,
+    schema_version: _pointerSchema,
+    ...pointerSeed
+  } = value;
   const expectedRevision = `pointer-${sha256Hex(canonicalizeJcs({
     schema_version: "stella.context-projection-pointer-revision-seed/v1",
-    instance_id: seed.instance_id,
-    producer_id: seed.producer_id,
-    consumer_id: seed.consumer_id,
-    status: seed.status,
-    projection_revision: seed.projection_revision,
-    manifest_checksum: seed.manifest_checksum,
-    source_revision: seed.source_revision,
-    as_of: seed.as_of,
+    ...pointerSeed,
   }))}`;
-  if (value.pointer_revision !== expectedRevision) {
+  if (pointerRevision !== expectedRevision) {
     throw new Error("FITNESS_PROJECTION_POINTER_INVALID");
   }
-  return value as unknown as {
-    readonly projection_revision: string;
-    readonly manifest_checksum: string;
-    readonly source_revision: string;
+  if (status === "blocked" || status === "revoked") {
+    if (
+      Object.keys(value).sort().join(",") !== [
+        "schema_version", "instance_id", "producer_id", "consumer_id", "status",
+        "pointer_revision", "source_revision", "changed_at", "reason_codes",
+      ].sort().join(",") || !validReasonCodes(value.reason_codes)
+    ) throw new Error("FITNESS_PROJECTION_POINTER_INVALID");
+    return { status, sourceRevision: value.source_revision } as FitnessProjectionPointerSnapshot;
+  }
+  const revisionKey = status === "active"
+    ? "projection_revision"
+    : "last_verified_revision";
+  if (
+    Object.keys(value).sort().join(",") !== [
+      "schema_version", "instance_id", "producer_id", "consumer_id", "status",
+      "pointer_revision", revisionKey, "manifest_checksum", "source_revision",
+      "as_of", "changed_at", ...(status === "stale" ? ["reason_codes"] : []),
+    ].sort().join(",") ||
+    typeof value[revisionKey] !== "string" ||
+    !/^projection-[a-f0-9]{64}$/u.test(value[revisionKey]) ||
+    typeof value.manifest_checksum !== "string" ||
+    !/^sha256:[a-f0-9]{64}$/u.test(value.manifest_checksum) ||
+    typeof value.as_of !== "string" ||
+    (status === "stale" && !validReasonCodes(value.reason_codes))
+  ) throw new Error("FITNESS_PROJECTION_POINTER_INVALID");
+  canonicalTimestamp(value.as_of);
+  return {
+    status,
+    sourceRevision: value.source_revision,
+    projectionRevision: value[revisionKey],
+    manifestChecksum: value.manifest_checksum,
+    asOf: value.as_of,
+  } as FitnessProjectionPointerSnapshot;
+}
+
+function validReasonCodes(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0 && value.length <= 16 &&
+    value.every((reason) =>
+      typeof reason === "string" && /^[A-Z][A-Z0-9_]{0,63}$/u.test(reason)
+    ) && new Set(value).size === value.length;
+}
+
+function parseActivePointer(bytes: Buffer): {
+  readonly projection_revision: string;
+  readonly manifest_checksum: string;
+  readonly source_revision: string;
+} {
+  const parsed = parseProjectionPointer(bytes);
+  if (parsed.status !== "active") {
+    throw new Error("FITNESS_PROJECTION_POINTER_INVALID");
+  }
+  return {
+    projection_revision: parsed.projectionRevision,
+    manifest_checksum: parsed.manifestChecksum,
+    source_revision: parsed.sourceRevision,
   };
 }
 

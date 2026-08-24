@@ -313,6 +313,14 @@ type UpdateSpecialSessionState = (
   >,
 ) => Promise<ProgramState>;
 
+export type CanonicalFitnessContextSync = {
+  afterCanonicalWrite<Result>(result: Result): Promise<Result>;
+  withRetraction<Result>(
+    input: { readonly kind: "correction" | "deletion" | "retraction" },
+    mutate: () => Promise<Result>,
+  ): Promise<Result>;
+};
+
 export function createStellaFitnessRuntime(options: {
   extractionRuntime: ExtractionRuntime;
   personalDataDirectory?: () => string | undefined;
@@ -320,6 +328,7 @@ export function createStellaFitnessRuntime(options: {
   userTimezone?: () => string | undefined;
   queryClassifier?: FitnessQueryClassifier;
   mediaSanitizer?: MediaSanitizer;
+  contextSync?: CanonicalFitnessContextSync;
   preflight: () => ConfigurationPreflightResult;
 }): StellaFitnessRuntime {
   const runs = new Map<string, RunEntry>();
@@ -337,6 +346,20 @@ export function createStellaFitnessRuntime(options: {
     runtimeDirectory: requiredRuntimeDirectory(options),
     preflight,
   });
+  const afterCanonicalWrite = async <Result>(
+    operation: () => Promise<Result>,
+  ): Promise<Result> => {
+    const result = await operation();
+    return options.contextSync === undefined
+      ? result
+      : await options.contextSync.afterCanonicalWrite(result);
+  };
+  const withRetraction = <Result>(
+    kind: "correction" | "deletion" | "retraction",
+    operation: () => Promise<Result>,
+  ): Promise<Result> => options.contextSync === undefined
+    ? operation()
+    : options.contextSync.withRetraction({ kind }, operation);
   let stopped = false;
   let programStateUpdateTail: Promise<void> = Promise.resolve();
   const enqueueSpecialSessionStateRebuild = (
@@ -459,43 +482,43 @@ export function createStellaFitnessRuntime(options: {
       await enqueueSpecialSessionStateRebuild(requiredPersonalDataDirectory(options));
       return await journey().status(input);
     },
-    acknowledgePrerequisite(input) {
-      return journey().acknowledgePrerequisite(input);
+    async acknowledgePrerequisite(input) {
+      return await afterCanonicalWrite(() => journey().acknowledgePrerequisite(input));
     },
     async recordJourneyBodyWeight(input) {
       await journey().migrateLegacyProgramStateReferences();
-      return await journey().recordBodyWeight(input);
+      return await afterCanonicalWrite(() => journey().recordBodyWeight(input));
     },
     async correctJourneyBodyWeight(input) {
       await journey().migrateLegacyProgramStateReferences();
-      return await journey().correctBodyWeight(input);
+      return await withRetraction("correction", () => journey().correctBodyWeight(input));
     },
     async deleteJourneyBodyWeight(input) {
       await journey().migrateLegacyProgramStateReferences();
-      return await journey().deleteBodyWeight(input);
+      return await withRetraction("deletion", () => journey().deleteBodyWeight(input));
     },
-    recordInitial12RM(input) {
-      return journey().recordInitial12RM(input);
+    async recordInitial12RM(input) {
+      return await afterCanonicalWrite(() => journey().recordInitial12RM(input));
     },
-    recordInitial12RMBatch(input) {
-      return journey().recordInitial12RMBatch(input);
+    async recordInitial12RMBatch(input) {
+      return await afterCanonicalWrite(() => journey().recordInitial12RMBatch(input));
     },
-    correctInitial12RM(input) {
-      return journey().correctInitial12RM(input);
+    async correctInitial12RM(input) {
+      return await withRetraction("correction", () => journey().correctInitial12RM(input));
     },
-    deleteInitial12RM(input) {
-      return journey().deleteInitial12RM(input);
+    async deleteInitial12RM(input) {
+      return await withRetraction("deletion", () => journey().deleteInitial12RM(input));
     },
     async submitProgramJourneyText(input) {
       await journey().migrateLegacyProgramStateReferences();
-      return await journey().submitText(input);
+      return await afterCanonicalWrite(() => journey().submitText(input));
     },
     async confirmProgramJourneyCandidate(input) {
       await journey().migrateLegacyProgramStateReferences();
-      return await journey().confirmCandidate(input);
+      return await afterCanonicalWrite(() => journey().confirmCandidate(input));
     },
-    activateProgram(cycleStart) {
-      return journey().activate(cycleStart);
+    async activateProgram(cycleStart) {
+      return await afterCanonicalWrite(() => journey().activate(cycleStart));
     },
     async programFacts(query) {
       await journey().migrateLegacyProgramStateReferences();
@@ -586,23 +609,25 @@ export function createStellaFitnessRuntime(options: {
       if ("status" in candidate) {
         return candidate;
       }
-      const observation = await persistBodyWeightObservation({
-        personalDataDirectory,
-        amount: candidate.amount,
-        unit: candidate.unit,
-        occurredAt: candidate.occurredAt,
-        source: {
-          kind: "user-text",
-          text: input.sourceText ?? input.text,
-          ...input.source,
-        },
-        recordedAt: new Date(input.receivedAt).toISOString(),
+      return await afterCanonicalWrite(async () => {
+        const observation = await persistBodyWeightObservation({
+          personalDataDirectory,
+          amount: candidate.amount,
+          unit: candidate.unit,
+          occurredAt: candidate.occurredAt,
+          source: {
+            kind: "user-text",
+            text: input.sourceText ?? input.text,
+            ...input.source,
+          },
+          recordedAt: new Date(input.receivedAt).toISOString(),
+        });
+        return {
+          status: "recorded" as const,
+          observation,
+          view: await rebuildBodyWeightView(personalDataDirectory),
+        };
       });
-      return {
-        status: "recorded",
-        observation,
-        view: await rebuildBodyWeightView(personalDataDirectory),
-      };
     },
     async correctBodyWeight(input) {
       assertPersonalDataPreflight(preflight());
@@ -611,26 +636,28 @@ export function createStellaFitnessRuntime(options: {
       if ("status" in candidate) {
         return candidate;
       }
-      const observation = await persistBodyWeightCorrection({
-        personalDataDirectory,
-        replacesObservationId: input.replacesObservationId,
-        amount: candidate.amount,
-        unit: candidate.unit,
-        ...(candidate.occurrenceTimeSource === "explicit"
-          ? { occurredAt: candidate.occurredAt }
-          : {}),
-        source: {
-          kind: "user-text",
-          text: input.text,
-          ...input.source,
-        },
-        recordedAt: new Date(input.receivedAt).toISOString(),
+      return await withRetraction("correction", async () => {
+        const observation = await persistBodyWeightCorrection({
+          personalDataDirectory,
+          replacesObservationId: input.replacesObservationId,
+          amount: candidate.amount,
+          unit: candidate.unit,
+          ...(candidate.occurrenceTimeSource === "explicit"
+            ? { occurredAt: candidate.occurredAt }
+            : {}),
+          source: {
+            kind: "user-text",
+            text: input.text,
+            ...input.source,
+          },
+          recordedAt: new Date(input.receivedAt).toISOString(),
+        });
+        return {
+          status: "recorded" as const,
+          observation,
+          view: await rebuildBodyWeightView(personalDataDirectory),
+        };
       });
-      return {
-        status: "recorded",
-        observation,
-        view: await rebuildBodyWeightView(personalDataDirectory),
-      };
     },
     async bodyWeightTimeline() {
       assertPersonalDataPreflight(preflight());
@@ -642,12 +669,17 @@ export function createStellaFitnessRuntime(options: {
         requiredPersonalDataDirectory(options),
       );
     },
-    ingestWorkoutLog(request) {
-      return startWorkoutLogIngest(request);
+    async ingestWorkoutLog(request) {
+      const result = await startWorkoutLogIngest(request);
+      return result.status === "recorded" && options.contextSync !== undefined
+        ? await options.contextSync.afterCanonicalWrite(result)
+        : result;
     },
-    correctWorkoutLog(request) {
+    async correctWorkoutLog(request) {
       const { replacesObservationId, ...ingestRequest } = request;
-      return startWorkoutLogIngest(ingestRequest, replacesObservationId);
+      return await withRetraction("correction", () =>
+        startWorkoutLogIngest(ingestRequest, replacesObservationId)
+      );
     },
     async confirmWorkoutLog(input) {
       assertPersonalDataPreflight(preflight());
@@ -685,12 +717,15 @@ export function createStellaFitnessRuntime(options: {
         }
         return pending.result.promise;
       }
-      const promise = recordConfirmedWorkoutLog({
+      const record = () => recordConfirmedWorkoutLog({
         personalDataDirectory,
         pending,
         values: input.values,
         updateSpecialSessionState,
       });
+      const promise = pending.replacesObservationId === undefined
+        ? afterCanonicalWrite(record)
+        : withRetraction("correction", record);
       pending.result = { fingerprint, promise };
       void promise.catch(() => {
         if (pending.result?.promise === promise) {
