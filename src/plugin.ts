@@ -30,6 +30,15 @@ import {
 import { createOpenClawExtractionRuntime } from "./extraction/openclaw.js";
 import type { ExtractionRuntime } from "./extraction/runtime.js";
 import { createOpenClawFitnessQueryClassifier } from "./query/openclaw.js";
+import { parseDeterministicFitnessQuery } from "./query/intent.js";
+import {
+  createFactPreservingReplyTurn,
+  type FactPreservingReplyTurn,
+  validateFactPreservingReply,
+} from "./reply/fact-preserving.js";
+import { createNaturalRecordingCoordinator } from "./recording/coordinator.js";
+import { createOpenClawFitnessWriteCandidateClassifier } from "./recording/openclaw.js";
+import { createRuntimeNaturalRecordingReceiptStore } from "./recording/runtime-store.js";
 import {
   runConfigurationPreflight,
   type ConfigurationPreflightResult,
@@ -136,6 +145,45 @@ export function registerStellaFitnessPlugin(
     preflight,
   });
   const pendingMediaBySession = new Map<string, PluginHookInboundClaimEvent[]>();
+  type PreparedFitnessReply =
+    | { readonly kind: "answer"; readonly turn: FactPreservingReplyTurn }
+    | { readonly kind: "clarification"; readonly message: string };
+  type PreparedFitnessReplyEntry = {
+    readonly value: PreparedFitnessReply;
+    readonly keys: readonly string[];
+  };
+  const preparedFitnessReplies = new Map<string, PreparedFitnessReplyEntry>();
+  const fitnessReplyKeys = (context: {
+    readonly runId?: string;
+    readonly sessionKey?: string;
+  }): readonly string[] => [
+    ...(context.runId === undefined ? [] : [`run:${context.runId}`]),
+    ...(context.sessionKey === undefined ? [] : [`session:${context.sessionKey}`]),
+  ];
+  const rememberPreparedFitnessReply = (
+    context: { readonly runId?: string; readonly sessionKey?: string },
+    value: PreparedFitnessReply,
+  ): void => {
+    const keys = fitnessReplyKeys(context);
+    if (keys.length === 0) return;
+    const entry = { value, keys };
+    for (const key of keys) preparedFitnessReplies.set(key, entry);
+  };
+  const preparedFitnessReply = (context: {
+    readonly runId?: string;
+    readonly sessionKey?: string;
+  }): PreparedFitnessReplyEntry | undefined => {
+    for (const key of fitnessReplyKeys(context)) {
+      const entry = preparedFitnessReplies.get(key);
+      if (entry !== undefined) return entry;
+    }
+    return undefined;
+  };
+  const forgetPreparedFitnessReply = (entry: PreparedFitnessReplyEntry): void => {
+    for (const key of entry.keys) {
+      if (preparedFitnessReplies.get(key) === entry) preparedFitnessReplies.delete(key);
+    }
+  };
   const workoutLogConfirmation = createWorkoutLogConfirmationCoordinator({
     store: createRuntimeDirectoryConfirmationSessionStore({
       runtimeDirectory: () =>
@@ -153,6 +201,88 @@ export function registerStellaFitnessPlugin(
       ),
     }),
   });
+  const fitnessWriteCandidateClassifier =
+    createOpenClawFitnessWriteCandidateClassifier({
+      complete: (input) => api.runtime.llm.complete(input),
+      agentId: () => resolveDedicatedAgentId(
+        currentPluginConfig(currentOpenClawConfig(api)),
+      ),
+    });
+  const naturalRecording = createNaturalRecordingCoordinator({
+    store: createRuntimeNaturalRecordingReceiptStore({
+      runtimeDirectory: () =>
+        join(api.runtime.state.resolveStateDir(process.env), PLUGIN_ID),
+    }),
+    classifier: fitnessWriteCandidateClassifier,
+    async canonicalBase() {
+      const [bodyWeight, trainingRecord, journey] = await Promise.all([
+        stellaRuntime.bodyWeightTimeline(),
+        stellaRuntime.trainingRecordView(),
+        stellaRuntime.programJourneyStatus(),
+      ]);
+      return createHash("sha256")
+        .update(JSON.stringify({ bodyWeight, trainingRecord, journey }))
+        .digest("hex");
+    },
+    async promote(receipt) {
+      const source = {
+        ...(receipt.source.channel === undefined
+          ? {}
+          : { channel: receipt.source.channel }),
+        ...(receipt.source.messageId === undefined
+          ? {}
+          : { messageId: receipt.source.messageId }),
+        ...(receipt.source.runId === undefined
+          ? {}
+          : { runId: receipt.source.runId }),
+      };
+      if (receipt.candidate.kind === "body-weight") {
+        const result = await stellaRuntime.recordBodyWeight({
+          text: `${receipt.candidate.occurredAt} 体重 ${receipt.candidate.amount} ${receipt.candidate.unit}`,
+          sourceText: receipt.sourceMessage,
+          receivedAt: receipt.issuedAt,
+          source,
+        });
+        if (result.status !== "recorded") {
+          throw new Error("Confirmed body-weight candidate failed deterministic parsing");
+        }
+        return `已记录体重 ${result.observation.value.amount} ${result.observation.value.unit}。`;
+      }
+      await stellaRuntime.recordInitial12RM({
+        exerciseId: receipt.candidate.exerciseId,
+        valueKg: receipt.candidate.valueKg,
+        confirmationId: uuidFromHex(receipt.candidateId),
+        occurredAt: new Date(receipt.candidate.occurredAt).toISOString(),
+        recordedAt: new Date(receipt.issuedAt).toISOString(),
+        source: { kind: "user-text", text: receipt.sourceMessage, ...source },
+      });
+      return `已记录 ${receipt.candidate.exerciseId} 12RM ${receipt.candidate.valueKg} kg。`;
+    },
+  });
+  const tryNaturalRecordingText = async (input: {
+    readonly sessionKey?: string;
+    readonly text: string;
+    readonly receivedAt: string;
+    readonly source: {
+      readonly channel?: string;
+      readonly messageId?: string;
+      readonly runId?: string;
+    };
+  }): Promise<string | undefined> => {
+    if (input.sessionKey === undefined) return undefined;
+    const pending = await naturalRecording.submit({
+      sessionKey: input.sessionKey,
+      text: input.text,
+    });
+    if (pending.status !== "not-applicable") return pending.message;
+    const started = await naturalRecording.start({
+      sessionKey: input.sessionKey,
+      text: input.text,
+      receivedAt: input.receivedAt,
+      source: input.source,
+    });
+    return started.status === "confirmation" ? started.message : undefined;
+  };
   const confirmationAttemptsByRun = new Set<string>();
   const resolveWorkoutLogConfirmationText = async (input: {
     readonly sessionKey: string;
@@ -259,11 +389,77 @@ export function registerStellaFitnessPlugin(
     start() {},
     async stop() {
       pendingMediaBySession.clear();
+      preparedFitnessReplies.clear();
       confirmationAttemptsByRun.clear();
       printableLogDownloadTokens.clear();
       await stellaRuntime.shutdown();
     },
   });
+
+  api.on(
+    "before_prompt_build",
+    async (event, context) => {
+      if (!isDedicatedAgentContext(context, api) || hasHostMediaMarker(event.prompt)) {
+        return;
+      }
+      const existing = preparedFitnessReply(context);
+      if (existing !== undefined) forgetPreparedFitnessReply(existing);
+      try {
+        const result = await stellaRuntime.queryFitness({
+          text: event.prompt,
+          receivedAt: new Date().toISOString(),
+        });
+        if (result.status === "not-applicable") return;
+        if (result.status === "clarification") {
+          rememberPreparedFitnessReply(context, {
+            kind: "clarification",
+            message: result.question,
+          });
+          return;
+        }
+        const turn = createFactPreservingReplyTurn({
+          input: event.prompt,
+          intent: result.intent,
+          facts: result.facts,
+        });
+        rememberPreparedFitnessReply(context, { kind: "answer", turn });
+        return { appendSystemContext: turn.systemContext };
+      } catch (error) {
+        api.logger?.error(
+          `stella-fitness fact-preserving reply preparation failed: ${String(error)}`,
+        );
+        return;
+      }
+    },
+    { priority: 100, timeoutMs: 6_000 },
+  );
+
+  api.on(
+    "reply_payload_sending",
+    (event, context) => {
+      if (event.kind !== "final" || !isDedicatedAgentContext(context, api)) return;
+      const entry = preparedFitnessReply({
+        ...(event.runId === undefined ? {} : { runId: event.runId }),
+        ...(event.sessionKey === undefined ? {} : { sessionKey: event.sessionKey }),
+      });
+      if (entry === undefined || entry.value.kind !== "answer") return;
+      forgetPreparedFitnessReply(entry);
+      const text = event.payload.text;
+      if (
+        text !== undefined &&
+        validateFactPreservingReply(text, entry.value.turn).valid
+      ) {
+        return;
+      }
+      return {
+        payload: {
+          ...event.payload,
+          text: entry.value.turn.fallback,
+        },
+      };
+    },
+    { priority: 100, timeoutMs: 6_000 },
+  );
 
   api.registerCommand({
     name: "stella-status",
@@ -727,6 +923,7 @@ export function registerStellaFitnessPlugin(
         });
         return { text: formatJourneyStatus(status, receivedAt.slice(0, 10)) };
       }
+      if (parseDeterministicFitnessQuery(text) !== undefined) return;
       const factQuery = parseNaturalProgramFactsQuery(
         text,
         confirmedFitnessLocalDate(
@@ -778,10 +975,6 @@ export function registerStellaFitnessPlugin(
         };
       }
       if (!isBodyWeightInput(text)) {
-        const fitnessQuery = await stellaRuntime.queryFitness({ text, receivedAt });
-        if (fitnessQuery.status !== "not-applicable") {
-          return { text: formatCurrentFitnessQuery(fitnessQuery) };
-        }
         if (isQuestion(text)) {
           const result = await stellaRuntime.programFacts({
             kind: "unsupported",
@@ -889,7 +1082,21 @@ export function registerStellaFitnessPlugin(
           ...(context.runId === undefined ? {} : { runId: context.runId }),
         },
       });
-      return reply === undefined ? undefined : { handled: true, reply };
+      if (reply !== undefined) return { handled: true, reply };
+      const naturalRecordingReply = await tryNaturalRecordingText({
+        ...(context.sessionKey === undefined ? {} : { sessionKey: context.sessionKey }),
+        text: event.cleanedBody,
+        receivedAt,
+        source: {
+          ...(context.messageProvider === undefined
+            ? {}
+            : { channel: context.messageProvider }),
+          ...(context.runId === undefined ? {} : { runId: context.runId }),
+        },
+      });
+      return naturalRecordingReply === undefined
+        ? undefined
+        : { handled: true, reply: { text: naturalRecordingReply } };
     },
     { priority: 100, timeoutMs: 6_000 },
   );
@@ -916,9 +1123,26 @@ export function registerStellaFitnessPlugin(
           category: "plugin-command",
         };
       }
+      const prepared = preparedFitnessReply({
+        ...(context.runId === undefined ? {} : { runId: context.runId }),
+        ...(context.sessionKey === undefined ? {} : { sessionKey: context.sessionKey }),
+      });
+      if (prepared?.value.kind === "answer") {
+        return { outcome: "pass" as const };
+      }
+      if (prepared?.value.kind === "clarification") {
+        forgetPreparedFitnessReply(prepared);
+        return {
+          outcome: "block" as const,
+          reason: "stella-fitness-query-needs-clarification",
+          message: prepared.value.message,
+          category: "plugin-command",
+        };
+      }
+      const receivedAt = new Date().toISOString();
       const reply = await handleDedicatedTextInputSafely({
         text: event.prompt,
-        receivedAt: new Date().toISOString(),
+        receivedAt,
         source: {
           ...(context.messageProvider === undefined
             ? {}
@@ -931,68 +1155,37 @@ export function registerStellaFitnessPlugin(
         : isBodyWeightInput(event.prompt)
         ? "stella-body-weight-is-plugin-owned"
         : "stella-dedicated-input-is-plugin-owned";
-      return reply === undefined
-        ? { outcome: "pass" as const }
-        : {
+      if (reply !== undefined) {
+        return {
             outcome: "block" as const,
             reason,
             message: reply.text,
+            category: "plugin-command",
+        };
+      }
+      const naturalRecordingReply = await tryNaturalRecordingText({
+        ...(context.sessionKey === undefined ? {} : { sessionKey: context.sessionKey }),
+        text: event.prompt,
+        receivedAt,
+        source: {
+          ...(context.messageProvider === undefined
+            ? {}
+            : { channel: context.messageProvider }),
+          ...(context.runId === undefined ? {} : { runId: context.runId }),
+        },
+      });
+      return naturalRecordingReply === undefined
+        ? { outcome: "pass" as const }
+        : {
+            outcome: "block" as const,
+            reason: "stella-natural-recording-confirmation-is-plugin-owned",
+            message: naturalRecordingReply,
             category: "plugin-command",
           };
     },
     { priority: 100, timeoutMs: 6_000 },
   );
   return stellaRuntime;
-}
-
-function formatCurrentFitnessQuery(
-  result: Exclude<
-    Awaited<ReturnType<StellaFitnessRuntime["queryFitness"]>>,
-    { readonly status: "not-applicable" }
-  >,
-): string {
-  if (result.status === "clarification") return result.question;
-  const facts = result.facts;
-  if (facts.kind === "program-journey") {
-    return [
-      `当前没有已激活的 ${facts.program.id} 训练周期。`,
-      ...(facts.pendingConfirmations === 0
-        ? []
-        : [`另有 ${facts.pendingConfirmations} 项内容等待确认。`]),
-      facts.nextStep.message,
-    ].join("\n");
-  }
-  if (facts.kind === "conflict") return facts.message;
-  const lines = [
-    `${facts.program.id} ${facts.program.version}，周期从 ${facts.program.cycleStart} 开始。`,
-    facts.position === undefined
-      ? `当前日期 ${facts.asOf.localDate} 不在这个训练周期内。`
-      : `当前是第 ${facts.position.week} 周（${facts.position.phase}）。`,
-  ];
-  const recordedDue = facts.dueSessions.filter(({ record }) =>
-    record === "recorded"
-  ).length;
-  lines.push(
-    `截至 ${facts.asOf.localDate}，计划训练 ${facts.dueSessions.length} 次，找到记录 ${recordedDue} 次。`,
-  );
-  if (facts.latestRecord === undefined) {
-    lines.push("目前没有找到这个周期的有效训练记录。");
-  } else {
-    lines.push(
-      `最近一条有效记录是 ${facts.latestRecord.date} 的${sessionTypeName(facts.latestRecord.sessionType)}。`,
-    );
-  }
-  if (facts.pendingConfirmations > 0) {
-    lines.push(`另有 ${facts.pendingConfirmations} 项内容等待确认。`);
-  }
-  if (facts.nextStep.kind === "review-unrecorded-session") {
-    lines.push(
-      `未找到 ${facts.nextStep.date} 计划训练的记录；这不表示你没有训练。`,
-    );
-  } else {
-    lines.push(facts.nextStep.message);
-  }
-  return lines.join("\n");
 }
 
 function registerFitnessAgentWorkspace(
@@ -2219,6 +2412,15 @@ function stableConfirmationId(context: {
     )
     .digest("hex")
     .slice(0, 32)
+    .split("");
+  hex[12] = "4";
+  hex[16] = "8";
+  return `${hex.slice(0, 8).join("")}-${hex.slice(8, 12).join("")}-${hex.slice(12, 16).join("")}-${hex.slice(16, 20).join("")}-${hex.slice(20).join("")}`;
+}
+
+function uuidFromHex(value: string): string {
+  const hex = value.replaceAll(/[^0-9a-f]/giu, "").toLowerCase().slice(0, 32)
+    .padEnd(32, "0")
     .split("");
   hex[12] = "4";
   hex[16] = "8";

@@ -187,6 +187,7 @@ export type StellaFitnessRuntime = {
   shutdown(): Promise<void>;
   recordBodyWeight(input: {
     text: string;
+    sourceText?: string;
     receivedAt: string;
     source?: Omit<ObservationSource, "kind" | "text">;
   }): Promise<
@@ -592,7 +593,7 @@ export function createStellaFitnessRuntime(options: {
         occurredAt: candidate.occurredAt,
         source: {
           kind: "user-text",
-          text: input.text,
+          text: input.sourceText ?? input.text,
           ...input.source,
         },
         recordedAt: new Date(input.receivedAt).toISOString(),

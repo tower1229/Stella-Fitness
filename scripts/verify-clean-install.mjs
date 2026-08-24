@@ -91,8 +91,8 @@ try {
   if (inspection.plugin.status !== "loaded") {
     throw new Error(`Plugin did not load: ${inspection.plugin.status}`);
   }
-  if (inspection.plugin.hookCount !== 5) {
-    throw new Error(`Expected 5 Plugin hooks, got ${inspection.plugin.hookCount}`);
+  if (inspection.plugin.hookCount !== 7) {
+    throw new Error(`Expected 7 Plugin hooks, got ${inspection.plugin.hookCount}`);
   }
   if (!inspection.plugin.commands.includes("stella-status")) {
     throw new Error("Plugin command stella-status was not registered");

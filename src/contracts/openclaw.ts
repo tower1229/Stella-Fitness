@@ -10,8 +10,10 @@ export const OPENCLAW_CONTRACT_BASELINE = {
   hooks: [
     "inbound_claim",
     "before_agent_reply",
+    "before_prompt_build",
     "before_agent_run",
     "message_received",
+    "reply_payload_sending",
     "reply_dispatch",
   ],
   dedicatedAgentScope: "agent-runtime.resolveAgentIdFromSessionKey",
