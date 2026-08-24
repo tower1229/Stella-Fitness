@@ -20,7 +20,15 @@ const REQUEST_TIMEOUT_MS = 20_000;
 const GATEWAY_TOKEN = "stella-fitness-clean-install-gateway-token";
 
 export async function verifyTelegramChannelFlow(options) {
-  const personalDataDirectory = join(options.temporaryRoot, "personal-data");
+  const personalDataRepository = join(
+    options.temporaryRoot,
+    "personal-data-repository",
+  );
+  const personalDataDirectory = join(
+    personalDataRepository,
+    "stella",
+    "fitness",
+  );
   mkdirSync(personalDataDirectory, { recursive: true });
   const telegram = await createFakeTelegramApi();
   const gatewayPort = await availablePort();
@@ -710,14 +718,21 @@ function configureOpenClaw(options, input) {
   set("plugins.entries.stella-fitness.hooks.allowConversationAccess", true);
   set("plugins.entries.stella-fitness.config", {
     dedicatedAgentId: "fitness",
-    personalDataDirectory: input.personalDataDirectory,
     extraction: { provider: "stella-e2e", model: "fixture-v1" },
+  });
+  set("plugins.entries.cognitive-runtime.config", {
+    runtime: { instance_id: "stella-e2e" },
+    stella: {
+      schema_version: "stella.personal-data-locator/v1",
+      instance_id: "stella-e2e",
+      personal_data_repository: resolve(input.personalDataDirectory, "..", ".."),
+    },
   });
   set("agents.list", [
     { id: "main" },
     {
       id: "fitness",
-      workspace: join(input.personalDataDirectory, "..", "workspace-fitness"),
+      workspace: join(options.temporaryRoot, "workspace-fitness"),
       model: "stella-e2e/fixture-v1",
     },
   ], ["--replace"]);

@@ -5,7 +5,7 @@
 
 ## Decision
 
-Images explicitly submitted as workout logs are preserved byte-for-byte in the user-configured Personal Data Directory, including metadata already present in the file. For captionless automatic inspection in an ACTIVE Program, the raw upload is preserved only after structured extraction returns a schema-valid deterministic-target candidate or a confirmation request. Ordinary images, missing target blocks, and provider failures are not retained as Stella data. The Plugin does not extract unrelated EXIF/GPS/device metadata into Observation Records or Processing Records.
+Images explicitly submitted as workout logs are preserved byte-for-byte in the Runtime-located, user-controlled Personal Data Directory, including metadata already present in the file. For captionless automatic inspection in an ACTIVE Program, the raw upload is preserved only after structured extraction returns a schema-valid deterministic-target candidate or a confirmation request. Ordinary images, missing target blocks, and provider failures are not retained as Stella data. The Plugin does not extract unrelated EXIF/GPS/device metadata into Observation Records or Processing Records.
 
 Before an image is submitted to the OpenClaw media runtime, the Plugin creates a temporary sanitized media copy that:
 

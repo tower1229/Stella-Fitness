@@ -33,7 +33,7 @@
 | recovery 保持计划身份 | ProgramSpec | recovery fixture |
 | unresolved fail closed | validator | invalid fixture |
 | Observation canonical | ADR-014 | restart/rebuild tests |
-| Personal Data Directory 显式配置 | ADR-012 | missing-config fail closed |
+| Runtime-owned Personal Data locator 唯一配置 | ADR-012/031 | locator conformance + missing-config fail closed |
 | Runtime 不保存 canonical 用户数据 | ADR-012/020 | path-boundary tests |
 | 原件保真、payload 去 metadata | ADR-022 | byte/orientation/metadata tests |
 | 用户删除有效 | ADR-020 | external deletion test |

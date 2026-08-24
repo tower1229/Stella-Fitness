@@ -4,7 +4,7 @@
 
 ```text
 安装并启用 Plugin
-→ 配置 Personal Data Directory
+→ 通过 Runtime-owned locator 配置唯一 Personal Data Repository
 → 独立检查 Personal Data Directory、conversation、media 与 model 权限
 → 自动载入卓叔 12 周 Built-in Program 并绑定当前 conversation
 → 逐项确认可拆卸哑铃、引体向上杆、打印材料和训练记录协议
