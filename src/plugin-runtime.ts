@@ -879,35 +879,13 @@ async function executeWorkoutLogIngest(options: {
       execution: { provider: "deduplicated" },
     });
   }
-  let target: WorkoutLogTarget | undefined;
-  if (options.request.intent === "auto") {
-    try {
-      target = await resolveAutomaticWorkoutTarget({
-        personalDataDirectory: options.personalDataDirectory,
-        receivedAt: options.request.upload.receivedAt,
-        userTimezone: options.userTimezone?.(),
-      });
-    } catch (error) {
-      if (error instanceof AutomaticWorkoutLogTargetError) {
-        if (error.reason === "program-not-active") {
-          return { status: "ignored", reason: error.reason };
-        }
-        if (error.reason !== "user-timezone-unavailable") {
-          return { status: "user-action-required", reason: error.reason };
-        }
-      }
-      throw error;
-    }
-  }
-  const duplicate =
-    options.replacesObservationId === undefined &&
-    options.request.intent === "explicit"
+  const duplicate = options.replacesObservationId === undefined
     ? await activeTrainingRecordWithArtifactSha(
         options.personalDataDirectory,
         uploadSha256,
       )
     : undefined;
-  if (duplicate !== undefined) {
+  if (duplicate !== undefined && options.request.intent === "explicit") {
     const restored = await restoreMissingWorkoutLogSource({
       personalDataDirectory: options.personalDataDirectory,
       request: options.request,
@@ -922,6 +900,50 @@ async function executeWorkoutLogIngest(options: {
       artifact: restored.artifact,
       execution: { provider: "deduplicated" },
     });
+  }
+  let target: WorkoutLogTarget | undefined;
+  if (options.request.intent === "auto") {
+    try {
+      target = await resolveAutomaticWorkoutTarget({
+        personalDataDirectory: options.personalDataDirectory,
+        receivedAt: options.request.upload.receivedAt,
+        userTimezone: options.userTimezone?.(),
+      });
+    } catch (error) {
+      if (error instanceof AutomaticWorkoutLogTargetError) {
+        if (error.reason === "program-not-active") {
+          return { status: "ignored", reason: error.reason };
+        }
+        if (
+          error.reason === "no-due-session" &&
+          duplicate !== undefined &&
+          automaticDuplicateMatchesReceivedDate({
+            observation: duplicate.observation,
+            receivedAt: options.request.upload.receivedAt,
+            userTimezone: options.userTimezone?.(),
+          })
+        ) {
+          const restored = await restoreMissingWorkoutLogSource({
+            personalDataDirectory: options.personalDataDirectory,
+            request: options.request,
+            observation: duplicate.observation,
+            sourceStatus: duplicate.sourceStatus,
+          });
+          return duplicateWorkoutLogOutput({
+            personalDataDirectory: options.personalDataDirectory,
+            request: options.request,
+            observation: restored.observation,
+            startedAt,
+            artifact: restored.artifact,
+            execution: { provider: "deduplicated" },
+          });
+        }
+        if (error.reason !== "user-timezone-unavailable") {
+          return { status: "user-action-required", reason: error.reason };
+        }
+      }
+      throw error;
+    }
   }
   let artifact = options.request.intent === "explicit"
     ? await persistRawWorkoutLogArtifact({
@@ -1921,6 +1943,33 @@ function dateInTimeZone(timestamp: string, timeZone: string): string {
     throw new AutomaticWorkoutLogTargetError("program-target-invalid");
   }
   return `${year}-${month}-${day}`;
+}
+
+function automaticDuplicateMatchesReceivedDate(options: {
+  readonly observation: WorkoutLogObservation;
+  readonly receivedAt: string;
+  readonly userTimezone: string | undefined;
+}): boolean {
+  const context = options.observation.programContext;
+  if (context === undefined || options.userTimezone === undefined) return false;
+  const weekdayOffset = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+  ].indexOf(options.observation.weekday.value);
+  if (weekdayOffset < 0) return false;
+  const observationDate = addIsoDays(
+    context.cycleStart,
+    (options.observation.week.value - 1) * 7 + weekdayOffset,
+  );
+  return observationDate === dateInTimeZone(
+    options.receivedAt,
+    options.userTimezone,
+  );
 }
 
 function parseIsoDate(value: string): Date {
