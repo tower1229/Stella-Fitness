@@ -51,7 +51,9 @@ OpenClaw WebChat / channel
 - 运行确定性 Program Engine；
 - 返回 synthetic status、confirmation 和 recording reply。
 
-Runtime projection 是独立的派生能力：projection 目录缺失或合同不兼容只会使个人上下文 degraded，不得阻断上述确定性训练记录核心。当前仓库仅提供 locator 与文件系统消费 seam；在 Runtime #38 发布 schemas、declarations、checksum vectors 和 fixtures，且 #33 producer 可消费前，不声称正式 Context Projection 合同验收通过。
+Runtime projection 是独立的派生能力：projection 目录缺失或合同不兼容只会使个人上下文 degraded，不得阻断上述确定性训练记录核心。当前仓库按 Runtime #38 冻结的 Pointer、Manifest、Identity Context、JCS 与 checksum 合同消费 Runtime→Fitness 投影，并通过 Managed Agent Artifacts 发布筛选后的 bootstrap；Runtime #33 producer 尚未交付前，只声称 Fitness consumer 与 synthetic packaged seam 通过，不声称真实 Runtime→Fitness 闭环完成。
+
+Identity Context 的 managed bootstrap 映射只识别 `agent-name`、`persona-core`、`preferred-appellation`、`preferred-language`、`timezone`、`communication-preferences` 和 `stable-fitness-background`。前两项形成首次 bootstrap 身份门禁；其余内容只作为 `USER.md` 引用数据。其他 entry ID 不进入 Agent 文件，且 imported 内容不能扩大 recording-only、工具或数据权限。
 
 这些是 Plugin 集成与数据边界需求，不是训练诊断或风险控制需求。Skill 可以辅助说明，但不能替代持久化和媒体处理边界。
 

@@ -22,6 +22,7 @@ import {
   type RuntimeProjectionContract,
   validateRuntimeProjectionPaths,
 } from "../src/context/runtime-contract.js";
+import { stellaIdentityProjectionContract } from "../src/context/stella-identity-contract.js";
 
 describe("Runtime-owned Stella Personal Data locator", () => {
   it("resolves the only locator without requiring derived projection capability", () => {
@@ -212,6 +213,76 @@ describe("experimental Runtime projection seam", () => {
   });
 });
 
+describe("Runtime #38 Stella Identity Context contract", () => {
+  it("consumes a canonical active Runtime identity projection without a Runtime library dependency", () => {
+    const fixture = writeFormalIdentityProjection();
+
+    expect(consumeRuntimeIdentityContext(
+      fixture.config,
+      stellaIdentityProjectionContract,
+    )).toMatchObject({
+      status: "active",
+      projectionRevision: fixture.revision,
+      sourceRevision: "authority-42",
+      asOf: "2026-08-24T01:00:00.000Z",
+      identityContext: {
+        schema_version: "stella.identity-context/v1",
+        producer_id: "stella-runtime",
+        consumer_id: "stella-fitness",
+        entries: [
+          expect.objectContaining({ id: "agent-name", content: "Stella" }),
+          expect.objectContaining({ id: "persona-core", content: "温和、直接" }),
+        ],
+      },
+    });
+  });
+
+  it("propagates the formally verified stale tuple", () => {
+    const fixture = writeFormalIdentityProjection("stale");
+    expect(consumeRuntimeIdentityContext(
+      fixture.config,
+      stellaIdentityProjectionContract,
+    )).toMatchObject({
+      status: "stale",
+      projectionRevision: fixture.revision,
+      sourceRevision: "authority-42",
+      asOf: "2026-08-24T01:00:00.000Z",
+    });
+  });
+
+  it("propagates a formal material identity update marker for stale rejection", () => {
+    const fixture = writeFormalIdentityProjection("stale", {
+      materialIdentityUpdate: true,
+    });
+    expect(consumeRuntimeIdentityContext(
+      fixture.config,
+      stellaIdentityProjectionContract,
+    )).toMatchObject({
+      status: "stale",
+      materialIdentityUpdate: true,
+    });
+  });
+
+  it.each(["blocked", "revoked"] as const)(
+    "does not read payloads for a formal %s pointer",
+    (status) => {
+      const fixture = writeFormalIdentityProjection(status);
+      const reads: string[] = [];
+      expect(consumeRuntimeIdentityContext(
+        fixture.config,
+        stellaIdentityProjectionContract,
+        {
+          readFile(path) {
+            reads.push(path);
+            return readFileSync(path);
+          },
+        },
+      )).toEqual({ status });
+      expect(reads).toEqual([fixture.pointerPath]);
+    },
+  );
+});
+
 describe("checksum canonicalization primitives", () => {
   it("matches the RFC 8785 recursive property-order vector", () => {
     expect(canonicalizeJcs({
@@ -241,7 +312,7 @@ const testContract: RuntimeProjectionContract<TestContext> = {
   parsePointer(bytes, binding) {
     expect(binding).toEqual({
       instanceId: "stella-primary",
-      producerId: "cognitive-runtime",
+      producerId: "stella-runtime",
       consumerId: "stella-fitness",
     });
     const value = parseJson(bytes);
@@ -310,14 +381,14 @@ function writeProjection(options: {
   });
   const config = runtimeConfig(repository);
   const inbound = join(repository, "stella", "projections", "fitness");
-  const revision = "a".repeat(64);
+  const revision = `projection-${"a".repeat(64)}`;
   const identityBytes = canonicalizeJcs({ name: "Stella" });
   const auxiliaryBytes = canonicalizeJcs({ capability: "test-only" });
   const manifestBytes = canonicalizeJcs({
     projectionRevision: revision,
-    payloadChecksum: sha256(identityBytes),
+    payloadChecksum: checksum(identityBytes),
     payloadBytes: identityBytes.byteLength,
-    auxiliaryChecksum: sha256(auxiliaryBytes),
+    auxiliaryChecksum: checksum(auxiliaryBytes),
     auxiliaryBytes: auxiliaryBytes.byteLength,
   });
   const revisionParent = join(inbound, "revisions");
@@ -333,7 +404,7 @@ function writeProjection(options: {
   writeFileSync(identityPath, identityBytes);
   writeFileSync(join(root, "auxiliary.json"), auxiliaryBytes);
   writeFileSync(join(root, "manifest.json"), manifestBytes);
-  const manifestChecksum = sha256(manifestBytes);
+  const manifestChecksum = checksum(manifestBytes);
   const pointerPath = join(inbound, "active.json");
   writeJson(pointerPath, {
     status: "active",
@@ -347,6 +418,112 @@ function writeProjection(options: {
     revision,
     manifestChecksum,
   };
+}
+
+function writeFormalIdentityProjection(
+  status: "active" | "stale" | "blocked" | "revoked" = "active",
+  options: { readonly materialIdentityUpdate?: boolean } = {},
+) {
+  const repository = createRepository({ projections: true });
+  const config = runtimeConfig(repository);
+  const inbound = join(repository, "stella", "projections", "fitness");
+  const source = {
+    revision: "authority-42",
+    as_of: "2026-08-24T01:00:00.000Z",
+  } as const;
+  const identityBytes = canonicalizeJcs({
+    schema_version: "stella.identity-context/v1",
+    instance_id: "stella-primary",
+    producer_id: "stella-runtime",
+    consumer_id: "stella-fitness",
+    source_revision: source.revision,
+    as_of: source.as_of,
+    categories: ["identity"],
+    entries: [{
+      id: "agent-name",
+      category: "identity",
+      content: "Stella",
+      source_reference_ids: ["source-identity"],
+    }, {
+      id: "persona-core",
+      category: "identity",
+      content: "温和、直接",
+      source_reference_ids: ["source-identity"],
+    }],
+  });
+  const collections = {
+    categories: ["identity"],
+    source_references: [{
+      id: "source-identity",
+      path: "authority/identity.md",
+      revision: source.revision,
+      checksum: `sha256:${"d".repeat(64)}`,
+    }],
+    conflicts: [],
+    retractions: [],
+    capabilities: [{ id: "identity_context", state: "available" },
+      ...(options.materialIdentityUpdate === true ? [{
+        id: "material_identity_update",
+        state: "available",
+      } as const] : [])],
+    payloads: [{
+      path: "payloads/identity-context.json",
+      media_type: "application/json",
+      byte_length: identityBytes.byteLength,
+      checksum: checksum(identityBytes),
+    }],
+  } as const;
+  const revision = `projection-${sha256(canonicalizeJcs({
+    schema_version: "stella.context-projection-revision-seed/v1",
+    instance_id: "stella-primary",
+    producer_id: "stella-runtime",
+    consumer_id: "stella-fitness",
+    source,
+    ...collections,
+  }))}`;
+  const manifestBytes = canonicalizeJcs({
+    schema_version: "stella.context-projection-manifest/v1",
+    instance_id: "stella-primary",
+    producer_id: "stella-runtime",
+    consumer_id: "stella-fitness",
+    projection_revision: revision,
+    source,
+    ...collections,
+    generated_at: "2026-08-24T01:01:00.000Z",
+  });
+  const revisionRoot = join(inbound, "revisions", revision);
+  mkdirSync(join(revisionRoot, "payloads"), { recursive: true });
+  writeFileSync(join(revisionRoot, "payloads", "identity-context.json"), identityBytes);
+  writeFileSync(join(revisionRoot, "manifest.json"), manifestBytes);
+  const pointerPath = join(inbound, "active.json");
+  const commonPointer = {
+    schema_version: "stella.context-projection-pointer/v1",
+    instance_id: "stella-primary",
+    producer_id: "stella-runtime",
+    consumer_id: "stella-fitness",
+    pointer_revision: `pointer-${"a".repeat(64)}`,
+    source_revision: source.revision,
+    changed_at: "2026-08-24T01:01:00.000Z",
+  } as const;
+  writeJson(pointerPath, status === "active" ? {
+    ...commonPointer,
+    status,
+    projection_revision: revision,
+    manifest_checksum: checksum(manifestBytes),
+    as_of: source.as_of,
+  } : status === "stale" ? {
+    ...commonPointer,
+    status,
+    last_verified_revision: revision,
+    manifest_checksum: checksum(manifestBytes),
+    as_of: source.as_of,
+    reason_codes: ["REFRESH_FAILED"],
+  } : {
+    ...commonPointer,
+    status,
+    reason_codes: [status === "blocked" ? "SOURCE_BLOCKED" : "AUTHORIZATION_REVOKED"],
+  });
+  return { config, revision, pointerPath };
 }
 
 function createRepository(options: {
@@ -401,4 +578,8 @@ function parseJson(bytes: Buffer): Record<string, unknown> {
 
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function checksum(bytes: Uint8Array): string {
+  return `sha256:${sha256(bytes)}`;
 }
