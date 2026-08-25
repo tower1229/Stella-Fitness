@@ -478,23 +478,32 @@ export function registerStellaFitnessPlugin(
     "reply_payload_sending",
     (event, context) => {
       if (event.kind !== "final" || !isDedicatedAgentContext(context, api)) return;
+      const originalText = event.payload.text;
+      const identityNotice = originalText === undefined
+        ? undefined
+        : identityBootstrap.publishedDisclosure();
       const entry = preparedFitnessReply({
         ...(event.runId === undefined ? {} : { runId: event.runId }),
         ...(event.sessionKey === undefined ? {} : { sessionKey: event.sessionKey }),
       });
-      if (entry === undefined || entry.value.kind !== "answer") return;
-      forgetPreparedFitnessReply(entry);
-      const text = event.payload.text;
-      if (
-        text !== undefined &&
-        validateFactPreservingReply(text, entry.value.turn).valid
-      ) {
-        return;
+      let text = originalText;
+      if (entry !== undefined && entry.value.kind === "answer") {
+        forgetPreparedFitnessReply(entry);
+        if (
+          text === undefined ||
+          !validateFactPreservingReply(text, entry.value.turn).valid
+        ) {
+          text = entry.value.turn.fallback;
+        }
       }
+      if (text === undefined) return;
+      if (identityNotice === undefined && text === originalText) return;
       return {
         payload: {
           ...event.payload,
-          text: entry.value.turn.fallback,
+          text: identityNotice === undefined
+            ? text
+            : `${identityNotice}\n\n${text}`,
         },
       };
     },
@@ -1580,27 +1589,35 @@ function registerFitnessAgentWorkspace(
           text: `${workspaceSummary}\n${formatConversationalMemoryResult(memory)}\n\n${candidate.disclosure}`,
         };
       }
-      const result = action === "adopt" && args[1]?.toLowerCase() === "merge"
+      if (action !== "adopt") {
+        return { text: formatWorkspaceCommandUsage() };
+      }
+      if (await identityEvolution.diagnostics() !== undefined) {
+        return {
+          text: "Fitness workspace 已初始化；请使用 `/stella-workspace sync` 处理后续上下文更新。",
+        };
+      }
+      const result = args[1]?.toLowerCase() === "merge"
           ? await manager.adopt({
               agentId,
               artifacts: candidate.artifacts,
               choice: "merge",
             })
-          : action === "adopt" && args[1]?.toLowerCase() === "skip"
+          : args[1]?.toLowerCase() === "skip"
             ? await manager.adopt({
                 agentId,
                 artifacts: candidate.artifacts,
                 choice: "skip",
               })
-            : action === "adopt" &&
-                args[1]?.toLowerCase() === "alternate" &&
+            : args[1]?.toLowerCase() === "alternate" &&
                 args[2] !== undefined
               ? await manager.adopt({
                   agentId,
                   artifacts: candidate.artifacts,
                   choice: { alternateAgentId: args[2] },
                 })
-              : await manager.sync({ agentId, artifacts: candidate.artifacts });
+              : undefined;
+      if (result === undefined) return { text: formatWorkspaceCommandUsage() };
       rememberPublication(result, candidate);
       await configureMemory(result);
       if (result.status === "ready") {
@@ -1620,11 +1637,6 @@ function registerFitnessAgentWorkspace(
     acceptsArgs: true,
     requireAuth: true,
     async handler(context) {
-      const candidate = currentCandidate();
-      if (candidate.status !== "ready") {
-        await retainPublishedIdentity(candidate);
-        return { text: formatIdentityBootstrapBlocked(candidate.reasonCode) };
-      }
       const action = context.args?.trim().toLowerCase() ?? "status";
       if (action === "status") {
         const state = await identityEvolution.diagnostics();
@@ -1632,6 +1644,15 @@ function registerFitnessAgentWorkspace(
           text: state === undefined
             ? "当前没有已发布的 Stella Fitness 身份。"
             : formatIdentityEvolutionResult(state),
+        };
+      }
+      const candidate = currentCandidate();
+      if (candidate.status !== "ready") {
+        await retainPublishedIdentity(candidate);
+        return {
+          text: identityEvolutionState === undefined
+            ? formatIdentityBootstrapBlocked(candidate.reasonCode)
+            : formatIdentityEvolutionResult(identityEvolutionState),
         };
       }
       const decision = action === "accept" || action === "接受"
@@ -1675,7 +1696,7 @@ function registerFitnessAgentWorkspace(
         ].join("\0");
         if (lastDisclosureKey === noticeKey) return undefined;
         lastDisclosureKey = noticeKey;
-        return formatIdentityEvolutionResult(identityEvolutionState);
+        return formatIdentityEvolutionNotice(identityEvolutionState);
       }
       if (publication?.status !== "ready") return undefined;
       const current = currentCandidate();
@@ -1690,8 +1711,14 @@ function registerFitnessAgentWorkspace(
         current.asOf,
       ].join("\0");
       if (lastDisclosureKey === disclosureKey) return undefined;
+      const firstDisclosure = lastDisclosureKey === undefined;
       lastDisclosureKey = disclosureKey;
-      return `${current.disclosure}\n${formatConversationalMemoryResult(memory)}`;
+      if (firstDisclosure) {
+        return `${current.disclosure}\n${formatConversationalMemoryResult(memory)}`;
+      }
+      return current.freshness === "stale"
+        ? `身份上下文暂时不可刷新；沿用最后验证版本，截至 ${current.asOf}。`
+        : `身份上下文已更新，同步截至 ${current.asOf}。`;
     },
     statusSummary() {
       const candidate = currentCandidate();
@@ -1809,6 +1836,16 @@ function formatIdentityEvolutionResult(
   return `identity-context: conflicted - 未发布冲突身份；沿用最后验证身份 as-of ${result.active.asOf} (${result.reasonCode ?? "IDENTITY_SOURCE_CONFLICT"}${conflictIds === undefined ? "" : `; conflicts=${conflictIds}`})`;
 }
 
+function formatIdentityEvolutionNotice(
+  result: FitnessIdentityEvolutionResult,
+): string {
+  if (result.status === "pending") return formatPendingIdentityUpdate(result);
+  if (result.status === "conflicted") {
+    return `身份来源存在未解决冲突；我会继续使用截至 ${result.active.asOf} 的最后验证身份。详细来源请查看 /stella-status。`;
+  }
+  return `身份上下文暂时不可用；我会继续使用截至 ${result.active.asOf} 的最后验证身份。详细状态请查看 /stella-status。`;
+}
+
 function formatIdentityBootstrapBlocked(
   reasonCode: Extract<FitnessIdentityBootstrapCandidate, { status: "blocked" }>["reasonCode"],
 ): string {
@@ -1844,6 +1881,10 @@ function formatWorkspaceResult(result: {
       : "OpenClaw 当前未提供所需的公开 Agent files/bootstrap 能力，因此没有创建或修改 Fitness workspace。";
   }
   return `Fitness Agent workspace 已就绪：Agent ID ${result.agentId}，ownership revision ${result.ownershipRevision ?? 0}。`;
+}
+
+function formatWorkspaceCommandUsage(): string {
+  return "请使用 `/stella-workspace sync`、`adopt merge`、`adopt alternate <agent-id>` 或 `adopt skip`。";
 }
 
 function registerPrintableLogDownloadRoute(

@@ -130,6 +130,13 @@ describe("Fitness Identity Evolution", () => {
       status: "ready",
       active: { sourceRevision: "authority-42" },
     });
+    await expect(restarted.decide({
+      decision: "reject",
+      currentCandidate: changed,
+    })).resolves.toMatchObject({
+      status: "ready",
+      active: { sourceRevision: "authority-42" },
+    });
     expect(publish).not.toHaveBeenCalled();
 
     const next = candidate({
@@ -154,6 +161,24 @@ describe("Fitness Identity Evolution", () => {
       active: { sourceRevision: "authority-42" },
     });
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("never lets an optional retraction hide a material identity change", () => {
+    const active = snapshot();
+    expect(classifyFitnessIdentityContextDiff(active, snapshot({
+      fields: {
+        "agent-name": field("Nova", "identity-source"),
+        "persona-core": active.fields["persona-core"]!,
+      },
+      retractions: [{
+        id: "retraction-user",
+        sourceReferenceId: "user-source",
+        retractedRevision: "authority-41",
+      }],
+    }))).toMatchObject({
+      kind: "material",
+      changedFieldIds: ["agent-name", "communication-preferences"],
+    });
   });
 
   it("auto-publishes verified minor and retraction changes but retains active on degraded input", async () => {

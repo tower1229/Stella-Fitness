@@ -239,8 +239,14 @@ export function createFitnessIdentityEvolutionCoordinator(options: {
         const state = await requiredState(options.runtimeDirectory);
         if (state.pending === undefined) {
           if (
-            state.lastDecision?.decision === decisionPastTense(input.decision) &&
-            sameRevision(state.active, input.currentCandidate)
+            state.lastDecision?.decision === decisionPastTense(input.decision) && (
+              sameRevision(state.active, input.currentCandidate) ||
+              (input.decision === "reject" &&
+                state.lastDecision.updateId === identityUpdateId(
+                  state.active,
+                  input.currentCandidate,
+                ))
+            )
           ) return resultFromState(state);
           throw new Error("PENDING_IDENTITY_UPDATE_REQUIRED");
         }
@@ -361,14 +367,14 @@ export function classifyFitnessIdentityContextDiff(
       changedFieldIds,
     };
   }
+  if (changedFieldIds.some((id) => MATERIAL_IDENTITY_FIELDS.has(id))) {
+    return { kind: "material", changedFieldIds };
+  }
   if (
     candidate.retractions.length > 0 ||
     changedFieldIds.some((id) => candidate.fields[id] === undefined)
   ) {
     return { kind: "retraction", changedFieldIds };
-  }
-  if (changedFieldIds.some((id) => MATERIAL_IDENTITY_FIELDS.has(id))) {
-    return { kind: "material", changedFieldIds };
   }
   if (
     changedFieldIds.length > 0 ||
@@ -562,24 +568,7 @@ async function persistState(
   runtimeDirectory: string,
   state: IdentityEvolutionState,
 ): Promise<void> {
-  const path = statePath(runtimeDirectory);
-  const directory = dirname(path);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const temporary = join(directory, `.tmp-${randomUUID()}`);
-  const handle = await open(temporary, "wx", 0o600);
-  try {
-    await handle.writeFile(canonicalizeJcs(state));
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  await rename(temporary, path);
-  const directoryHandle = await open(directory, "r");
-  try {
-    await directoryHandle.sync();
-  } finally {
-    await directoryHandle.close();
-  }
+  await durableAtomicWrite(statePath(runtimeDirectory), canonicalizeJcs(state));
 }
 
 async function persistJournal(

@@ -253,12 +253,13 @@ describe("Plugin registration", () => {
   it("keeps the verified workspace identity until a material Runtime update is accepted", async () => {
     const commands: Array<Record<string, unknown>> = [];
     const services: Array<Record<string, unknown>> = [];
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const personal = configuredPersonalDirectory();
     writeRuntimeIdentityProjection(personal.personalDataDirectory);
     const openclawConfig = permittedOpenClawConfig();
     const api = compatibleApi({
       commands,
-      hooks: new Map(),
+      hooks,
       cliRegistrations: [],
       pluginConfig: personal,
       openclawConfig,
@@ -281,10 +282,29 @@ describe("Plugin registration", () => {
     await expect(workspace({ args: "sync" })).resolves.toEqual({
       text: expect.stringContaining("身份更新待确认"),
     });
+    await expect(workspace({ args: "adopt merge" })).resolves.toEqual({
+      text: expect.stringContaining("已初始化"),
+    });
+    await expect(workspace({ args: "replace" })).resolves.toEqual({
+      text: expect.stringContaining("请使用 `/stella-workspace sync`"),
+    });
     const before = openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
       ?.workspace;
     expect(readFileSync(join(before!, "IDENTITY.md"), "utf8")).toContain("Stella");
     expect(readFileSync(join(before!, "IDENTITY.md"), "utf8")).not.toContain("Nova");
+
+    expect(hooks.get("reply_payload_sending")?.(
+      { kind: "final", payload: { text: "普通回复" } },
+      { sessionKey: "agent:fitness:webchat:identity-pending" },
+    )).toMatchObject({
+      payload: {
+        text: expect.stringMatching(/^检测到身份更新待确认[\s\S]*\n\n普通回复$/u),
+      },
+    });
+    expect(hooks.get("reply_payload_sending")?.(
+      { kind: "final", payload: { text: "第二条普通回复" } },
+      { sessionKey: "agent:fitness:webchat:identity-pending-2" },
+    )).toBeUndefined();
 
     const identity = commands.find(({ name }) => name === "stella-identity")
       ?.handler as (input: { readonly args: string }) => Promise<{ readonly text: string }>;
@@ -383,6 +403,11 @@ describe("Plugin registration", () => {
         "identity-context: degraded - 沿用最后验证身份 as-of 2026-08-24T01:00:00.000Z",
       ),
     });
+    const identityStatus = commands.find(({ name }) => name === "stella-identity")
+      ?.handler as (input: { readonly args: string }) => Promise<{ readonly text: string }>;
+    await expect(identityStatus({ args: "status" })).resolves.toEqual({
+      text: expect.stringContaining("IDENTITY_CONTEXT_UNAVAILABLE"),
+    });
     expect(openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
       ?.workspace).toBe(workspace);
     expect(readFileSync(join(workspace!, "IDENTITY.md"), "utf8")).toContain("Stella");
@@ -447,6 +472,23 @@ describe("Plugin registration", () => {
         "conflicts=identity-conflict[source-identity,source-user]",
       ),
     });
+    const start = commands.find(({ name }) => name === "stella-start")
+      ?.handler as (context: {
+        readonly channel: string;
+        readonly commandBody: string;
+        readonly isAuthorizedSender: boolean;
+        readonly sessionKey: string;
+      }) => Promise<{ readonly text: string }>;
+    const ordinaryNotice = await start({
+      channel: "webchat",
+      commandBody: "/stella-start",
+      isAuthorizedSender: true,
+      sessionKey: "agent:fitness:webchat:identity-conflict",
+    });
+    expect(ordinaryNotice.text).toContain("身份来源存在未解决冲突");
+    expect(ordinaryNotice.text).not.toMatch(
+      /IDENTITY_CONTEXT_CONFLICT|identity-conflict|source-identity|source-user/u,
+    );
     expect(openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
       ?.workspace).toBe(workspace);
     expect(readFileSync(join(workspace!, "IDENTITY.md"), "utf8")).toContain("Stella");
