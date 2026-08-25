@@ -1,5 +1,6 @@
 import {
   cpSync,
+  existsSync,
   linkSync,
   mkdtempSync,
   mkdirSync,
@@ -16,7 +17,14 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-import { publishFitnessContextProjection } from "../src/plugin.js";
+import {
+  inspectFitnessContextProjectionSource,
+  publishFitnessContextProjection,
+  publishFitnessContextProjectionPointerStatus,
+  readFitnessContextProjectionPointer,
+  restoreFitnessContextProjectionPointer,
+} from "../src/plugin.js";
+import { createFitnessContextSyncCoordinator } from "../src/context/sync-coordinator.js";
 import { parseWorkoutLogCandidate } from "../src/extraction/candidate.js";
 import { readActiveProgram } from "../src/program/state.js";
 import {
@@ -795,6 +803,207 @@ describe("Fitness Projection Publisher", () => {
       source_as_of: "2026-08-24T01:00:00.000Z",
       documents: [],
     });
+  });
+
+  it("atomically blocks retraction and restores only the last verified tuple", async () => {
+    const repository = temporaryRepository();
+    const personalDataDirectory = join(repository, "stella", "fitness");
+    await persistBodyWeightObservation({
+      personalDataDirectory,
+      amount: 68.4,
+      unit: "kg",
+      occurredAt: "2026-08-24T00:00:00.000Z",
+      recordedAt: "2026-08-24T00:00:00.000Z",
+      source: { kind: "user-text", text: "68.4 kg" },
+    });
+    await publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      generatedAt: "2026-08-24T00:01:00.000Z",
+    });
+    const verified = await readFitnessContextProjectionPointer({
+      openclawConfig: locatorConfig(repository),
+    });
+    expect(verified).toMatchObject({ status: "active" });
+    if (verified?.status !== "active") throw new Error("expected active pointer");
+
+    await publishFitnessContextProjectionPointerStatus({
+      openclawConfig: locatorConfig(repository),
+      status: "blocked",
+      reasonCode: "CANONICAL_RETRACTION_IN_PROGRESS",
+      sourceRevision: verified.sourceRevision,
+      changedAt: "2026-08-24T00:02:00.000Z",
+    });
+    expect(await readFitnessContextProjectionPointer({
+      openclawConfig: locatorConfig(repository),
+    })).toEqual({
+      status: "blocked",
+      sourceRevision: verified.sourceRevision,
+    });
+    await expect(publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      generatedAt: "2026-08-24T00:02:30.000Z",
+    })).rejects.toThrow("FITNESS_PROJECTION_POINTER_BLOCKED");
+
+    await restoreFitnessContextProjectionPointer({
+      openclawConfig: locatorConfig(repository),
+      pointer: verified,
+      expectedSourceRevision: verified.sourceRevision,
+      changedAt: "2026-08-24T00:03:00.000Z",
+    });
+    expect(await readFitnessContextProjectionPointer({
+      openclawConfig: locatorConfig(repository),
+    })).toEqual(verified);
+  });
+
+  it("blocks before the first projection and restores pointer absence after a failed mutation", async () => {
+    const repository = temporaryRepository();
+    const config = locatorConfig(repository);
+    await persistBodyWeightObservation({
+      personalDataDirectory: join(repository, "stella", "fitness"),
+      amount: 68.4,
+      unit: "kg",
+      occurredAt: "2026-08-24T00:00:00.000Z",
+      recordedAt: "2026-08-24T00:00:00.000Z",
+      source: { kind: "user-text", text: "68.4 kg" },
+    });
+    const source = await inspectFitnessContextProjectionSource({
+      openclawConfig: config,
+    });
+
+    await publishFitnessContextProjectionPointerStatus({
+      openclawConfig: config,
+      status: "blocked",
+      reasonCode: "CANONICAL_RETRACTION_IN_PROGRESS",
+      sourceRevision: source.sourceRevision,
+      changedAt: "2026-08-24T00:02:00.000Z",
+    });
+    expect(await readFitnessContextProjectionPointer({
+      openclawConfig: config,
+    })).toEqual({
+      status: "blocked",
+      sourceRevision: source.sourceRevision,
+    });
+
+    await restoreFitnessContextProjectionPointer({
+      openclawConfig: config,
+      pointer: undefined,
+      expectedSourceRevision: source.sourceRevision,
+      changedAt: "2026-08-24T00:03:00.000Z",
+    });
+    expect(await readFitnessContextProjectionPointer({
+      openclawConfig: config,
+    })).toBeUndefined();
+  });
+
+  it("completes blocked-first correction through the real coordinator and publisher", async () => {
+    const repository = temporaryRepository();
+    const config = locatorConfig(repository);
+    const personalDataDirectory = join(repository, "stella", "fitness");
+    const original = await persistBodyWeightObservation({
+      personalDataDirectory,
+      amount: 68.4,
+      unit: "kg",
+      occurredAt: "2026-08-24T00:00:00.000Z",
+      recordedAt: "2026-08-24T00:00:00.000Z",
+      source: { kind: "user-text", text: "68.4 kg" },
+    });
+    const first = await publishFitnessContextProjection({
+      openclawConfig: config,
+      generatedAt: "2026-08-24T00:01:00.000Z",
+    });
+    const coordinator = createFitnessContextSyncCoordinator({
+      runtimeDirectory: join(repository, "runtime"),
+      publish: async ({ trigger }) => await publishFitnessContextProjection({
+        openclawConfig: config,
+        generatedAt: "2026-08-24T01:01:00.000Z",
+        allowBlockedReplacement: trigger === "retraction-recovery",
+      }),
+      inspectSource: () => inspectFitnessContextProjectionSource({
+        openclawConfig: config,
+      }),
+      readPointer: () => readFitnessContextProjectionPointer({
+        openclawConfig: config,
+      }),
+      publishPointerStatus: (input) =>
+        publishFitnessContextProjectionPointerStatus({
+          openclawConfig: config,
+          ...input,
+        }),
+      restorePointer: (input) => restoreFitnessContextProjectionPointer({
+        openclawConfig: config,
+        ...input,
+      }),
+    });
+
+    const correction = await coordinator.withRetraction(
+      { kind: "correction" },
+      () => persistBodyWeightCorrection({
+        personalDataDirectory,
+        replacesObservationId: original.id,
+        amount: 68.8,
+        unit: "kg",
+        source: { kind: "user-text", text: "改为 68.8 kg" },
+        recordedAt: "2026-08-24T01:00:00.000Z",
+      }),
+    );
+    const active = await readFitnessContextProjectionPointer({
+      openclawConfig: config,
+    });
+
+    expect(active).toMatchObject({ status: "active" });
+    if (active?.status !== "active") throw new Error("expected active pointer");
+    expect(active.projectionRevision).not.toBe(first.projectionRevision);
+    const payload = readFileSync(join(
+      repository,
+      "stella",
+      "projections",
+      "stella",
+      "revisions",
+      active.projectionRevision,
+      "payloads",
+      "fitness-history.json",
+    ), "utf8");
+    expect(payload).toContain(`body-weight:${correction.id}`);
+    expect(payload).not.toContain(`body-weight:${original.id}`);
+    expect(existsSync(join(
+      repository,
+      "runtime",
+      "context-sync",
+      "journal.json",
+    ))).toBe(false);
+  });
+
+  it("publishes stale using only the last verified revision and as-of", async () => {
+    const repository = temporaryRepository();
+    const personalDataDirectory = join(repository, "stella", "fitness");
+    await persistBodyWeightObservation({
+      personalDataDirectory,
+      amount: 68.4,
+      unit: "kg",
+      occurredAt: "2026-08-24T00:00:00.000Z",
+      recordedAt: "2026-08-24T00:00:00.000Z",
+      source: { kind: "user-text", text: "68.4 kg" },
+    });
+    await publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      generatedAt: "2026-08-24T00:01:00.000Z",
+    });
+    const verified = await readFitnessContextProjectionPointer({
+      openclawConfig: locatorConfig(repository),
+    });
+    if (verified?.status !== "active") throw new Error("expected active pointer");
+
+    await publishFitnessContextProjectionPointerStatus({
+      openclawConfig: locatorConfig(repository),
+      status: "stale",
+      reasonCode: "PROJECTION_REFRESH_FAILED",
+      sourceRevision: "ignored-current-source-revision",
+      changedAt: "2026-08-24T00:02:00.000Z",
+    });
+
+    expect(await readFitnessContextProjectionPointer({
+      openclawConfig: locatorConfig(repository),
+    })).toEqual({ ...verified, status: "stale" });
   });
 });
 

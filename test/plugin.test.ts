@@ -451,12 +451,14 @@ describe("Plugin registration", () => {
   it("claims clear body-weight text and returns only the recorded facts", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const personalDataDirectory = configuredPersonalDirectory();
+    const stateRoot = temporaryRoot();
     const api = compatibleApi({
       commands: [],
       hooks,
       cliRegistrations: [],
       pluginConfig: personalDataDirectory,
       openclawConfig: permittedOpenClawConfig(),
+      stateRoot,
     });
     registerStellaFitnessPlugin(
       api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
@@ -497,6 +499,155 @@ describe("Plugin registration", () => {
     expect(
       readdirSync(personalDataDirectory.personalDataDirectory),
     ).toContain("program");
+    expect(JSON.parse(readFileSync(
+      join(stateRoot, "stella-fitness", "context-sync", "state.json"),
+      "utf8",
+    ))).toMatchObject({
+      status: "degraded",
+      source_category: "fitness-canonical",
+      source_revision: expect.stringMatching(/^source-[a-f0-9]{64}$/u),
+      reason_code: "PROJECTION_REFRESH_FAILED",
+      recovery_action: "retry-on-startup-write-or-resync",
+    });
+  });
+
+  it("handles natural Context Resync through the dedicated Agent public seam", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const personal = configuredPersonalDirectory();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: personal,
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const context = { sessionKey: "agent:fitness:webchat:context-resync" };
+    await hooks.get("before_agent_reply")?.(
+      { cleanedBody: "今天体重 68.4 kg" },
+      context,
+    );
+    mkdirSync(join(
+      personal.personalDataDirectory,
+      "..",
+      "projections",
+      "stella",
+    ), { recursive: true });
+
+    await expect(hooks.get("before_agent_reply")?.(
+      { cleanedBody: "重新同步健身上下文" },
+      context,
+    )).resolves.toMatchObject({
+      handled: true,
+      reply: {
+        text: expect.stringMatching(
+          /^context-sync: ready\nsource-category: fitness-canonical\nsource-revision: source-/u,
+        ),
+      },
+    });
+  });
+
+  it("runs and cancels the bounded external revision watch", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-24T00:00:00.000Z"));
+    try {
+      const services: Array<Record<string, unknown>> = [];
+      const stateRoot = temporaryRoot();
+      const hooks = new Map<string, (...args: unknown[]) => unknown>();
+      const personal = configuredPersonalDirectory();
+      const api = compatibleApi({
+        commands: [],
+        hooks,
+        cliRegistrations: [],
+        pluginConfig: personal,
+        openclawConfig: permittedOpenClawConfig(),
+        services,
+        stateRoot,
+      });
+      registerStellaFitnessPlugin(
+        api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+      );
+      const service = services.find(({ id }) => id === "stella-fitness-context-sync");
+      const statePath = join(
+        stateRoot,
+        "stella-fitness",
+        "context-sync",
+        "state.json",
+      );
+
+      await (service?.start as () => Promise<void>)();
+      await hooks.get("before_agent_reply")?.(
+        { cleanedBody: "今天体重 68.4 kg" },
+        { sessionKey: "agent:fitness:webchat:external-revision-watch" },
+      );
+      const started = JSON.parse(readFileSync(statePath, "utf8")) as {
+        readonly updated_at: string;
+      };
+      expect(started.updated_at).toBe("2026-08-24T00:00:00.000Z");
+      const bodyWeightDirectory = join(
+        personal.personalDataDirectory,
+        "observations",
+        "body-weight",
+      );
+      const observationPath = join(
+        bodyWeightDirectory,
+        readdirSync(bodyWeightDirectory)[0]!,
+      );
+      const observation = JSON.parse(readFileSync(observationPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      writeFileSync(observationPath, JSON.stringify({
+        ...observation,
+        recorded_at: "not-a-timestamp",
+      }));
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.waitFor(() => {
+        expect(readFileSync(statePath, "utf8")).not.toContain(
+          '"updated_at":"2026-08-24T00:00:00.000Z"',
+        );
+      });
+      const checked = readFileSync(statePath, "utf8");
+
+      (service?.stop as () => void)();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(readFileSync(statePath, "utf8")).toBe(checked);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not install a revision watch when stop interrupts startup", async () => {
+    const services: Array<Record<string, unknown>> = [];
+    const interval = vi.spyOn(globalThis, "setInterval");
+    const logger = { warn: vi.fn(), error: vi.fn() };
+    try {
+      const api = compatibleApi({
+        commands: [],
+        hooks: new Map(),
+        cliRegistrations: [],
+        pluginConfig: configuredPersonalDirectory(),
+        openclawConfig: permittedOpenClawConfig(),
+        services,
+        logger,
+      });
+      registerStellaFitnessPlugin(
+        api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+      );
+      const service = services.find(({ id }) => id === "stella-fitness-context-sync");
+
+      const starting = (service?.start as () => Promise<void>)();
+      (service?.stop as () => void)();
+      await starting;
+
+      expect(interval).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
+    } finally {
+      interval.mockRestore();
+    }
   });
 
   it("claims an explicit body-weight correction and preserves lineage", async () => {
@@ -3334,6 +3485,7 @@ describe("Plugin registration", () => {
     expect(commands.map(({ name }) => name)).toEqual([
       "stella-workspace",
       "stella-status",
+      "stella-context",
       "stella-start",
       "stella-prerequisite",
       "stella-weight",

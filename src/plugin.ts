@@ -28,6 +28,18 @@ import {
   type FitnessIdentityBootstrapCandidate,
 } from "./context/identity-bootstrap.js";
 import { stellaIdentityProjectionContract } from "./context/stella-identity-contract.js";
+import {
+  inspectFitnessContextProjectionSource,
+  publishFitnessContextProjection,
+  publishFitnessContextProjectionPointerStatus,
+  readFitnessContextProjectionPointer,
+  restoreFitnessContextProjectionPointer,
+} from "./context/projection-publisher.js";
+import {
+  createFitnessContextSyncCoordinator,
+  type FitnessContextSyncCoordinator,
+  type FitnessContextSyncState,
+} from "./context/sync-coordinator.js";
 import { createFitnessAgentWorkspaceManager } from "./agent-workspace/manager.js";
 import {
   configureFitnessAgentMemory,
@@ -123,7 +135,11 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 export default plugin;
 
 export {
+  inspectFitnessContextProjectionSource,
   publishFitnessContextProjection,
+  publishFitnessContextProjectionPointerStatus,
+  readFitnessContextProjectionPointer,
+  restoreFitnessContextProjectionPointer,
   type FitnessProjectionPublishPhase,
   type FitnessProjectionPublishResult,
 } from "./context/projection-publisher.js";
@@ -139,7 +155,8 @@ export function registerStellaFitnessPlugin(
 
   const preflight = createPreflightRunner(api);
   preflight();
-  const identityBootstrap = registerFitnessAgentWorkspace(api);
+  const contextSync = registerFitnessContextSync(api);
+  const identityBootstrap = registerFitnessAgentWorkspace(api, contextSync);
   statusText = () => [
     createStatusResponse(preflight()).text,
     identityBootstrap.statusSummary(),
@@ -157,6 +174,7 @@ export function registerStellaFitnessPlugin(
         currentPluginConfig(currentOpenClawConfig(api)),
       ),
     }),
+    contextSync,
     preflight,
   });
   const pendingMediaBySession = new Map<string, PluginHookInboundClaimEvent[]>();
@@ -485,6 +503,24 @@ export function registerStellaFitnessPlugin(
     requireAuth: true,
     async handler() {
       return { text: statusText() };
+    },
+  });
+
+  api.registerCommand({
+    name: "stella-context",
+    description: "Inspect or resync Stella Fitness Context Projection",
+    acceptsArgs: true,
+    requireAuth: true,
+    async handler(context) {
+      const bindingReply = requireDedicatedAgent(context, api);
+      if (bindingReply !== undefined) return bindingReply;
+      const action = context.args?.trim().toLowerCase() ?? "status";
+      if (action === "resync" || action === "sync") {
+        await contextSync.resync({ trigger: "explicit" });
+      }
+      return {
+        text: formatContextSyncDiagnostics(await contextSync.diagnostics()),
+      };
     },
   });
 
@@ -908,6 +944,12 @@ export function registerStellaFitnessPlugin(
       if (normalizeStatusInput(text) === STATUS_INPUT) {
         return { text: statusText() };
       }
+      if (isNaturalContextResync(text)) {
+        await contextSync.resync({ trigger: "explicit" });
+        return {
+          text: formatContextSyncDiagnostics(await contextSync.diagnostics()),
+        };
+      }
       const activationIntent = parseNaturalActivationIntent(text, receivedAt.slice(0, 10));
       if (activationIntent !== undefined) {
         const status = await stellaRuntime.programJourneyStatus({
@@ -1206,8 +1248,103 @@ export function registerStellaFitnessPlugin(
   return stellaRuntime;
 }
 
+function registerFitnessContextSync(
+  api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
+): FitnessContextSyncCoordinator {
+  const config = () => currentOpenClawConfig(api);
+  const coordinator = createFitnessContextSyncCoordinator({
+    runtimeDirectory: join(
+      api.runtime.state.resolveStateDir(process.env),
+      PLUGIN_ID,
+    ),
+    async publish({ signal, trigger }) {
+      if (signal.aborted) throw contextSyncAbortError();
+      const result = await publishFitnessContextProjection({
+        openclawConfig: config(),
+        allowBlockedReplacement: trigger === "retraction-recovery",
+      });
+      if (signal.aborted) throw contextSyncAbortError();
+      return result;
+    },
+    inspectSource: () => inspectFitnessContextProjectionSource({
+      openclawConfig: config(),
+    }),
+    readPointer: () => readFitnessContextProjectionPointer({
+      openclawConfig: config(),
+    }),
+    publishPointerStatus: (input) =>
+      publishFitnessContextProjectionPointerStatus({
+        openclawConfig: config(),
+        ...input,
+      }),
+    restorePointer: (input) => restoreFitnessContextProjectionPointer({
+      openclawConfig: config(),
+      ...input,
+    }),
+  });
+  let revisionWatch: ReturnType<typeof setInterval> | undefined;
+  let revisionCheck: AbortController | undefined;
+  api.registerService({
+    id: "stella-fitness-context-sync",
+    async start() {
+      if (revisionWatch !== undefined) clearInterval(revisionWatch);
+      revisionCheck?.abort();
+      const controller = new AbortController();
+      revisionCheck = controller;
+      const startedAt = Date.now();
+      try {
+        const recovery = await coordinator.recover();
+        const result = recovery.status === "conflicted"
+          ? recovery
+          : await coordinator.checkForExternalRevision({
+              signal: controller.signal,
+            });
+        api.logger?.info(
+          `sourceCategory=fitness-canonical status=${result.status} reasonCode=${result.reasonCode ?? "NONE"} attempts=${result.attempts} durationMs=${Date.now() - startedAt}`,
+        );
+      } catch {
+        if (controller.signal.aborted || revisionCheck !== controller) return;
+        api.logger?.error(
+          `sourceCategory=fitness-canonical status=degraded reasonCode=CONTEXT_SYNC_STARTUP_FAILED attempts=0 durationMs=${Date.now() - startedAt}`,
+        );
+      }
+      if (revisionCheck !== controller || controller.signal.aborted) return;
+      let checkInProgress = false;
+      revisionWatch = setInterval(() => {
+        if (checkInProgress || controller.signal.aborted) return;
+        checkInProgress = true;
+        const checkStartedAt = Date.now();
+        void coordinator.checkForExternalRevision({
+          signal: controller.signal,
+        }).then((result) => {
+          if (result.attempts === 0) return;
+          api.logger?.info(
+            `sourceCategory=fitness-canonical status=${result.status} reasonCode=${result.reasonCode ?? "NONE"} attempts=${result.attempts} durationMs=${Date.now() - checkStartedAt}`,
+          );
+        }).catch((error: unknown) => {
+          if (error instanceof Error && error.name === "AbortError") return;
+          api.logger?.error(
+            `sourceCategory=fitness-canonical status=degraded reasonCode=CONTEXT_SYNC_REVISION_CHECK_FAILED attempts=0 durationMs=${Date.now() - checkStartedAt}`,
+          );
+        }).finally(() => {
+          checkInProgress = false;
+        });
+      }, 30_000);
+      revisionWatch.unref();
+    },
+    stop() {
+      if (revisionWatch !== undefined) clearInterval(revisionWatch);
+      revisionWatch = undefined;
+      revisionCheck?.abort();
+      revisionCheck = undefined;
+    },
+  });
+  return coordinator;
+}
+
 function registerFitnessAgentWorkspace(
   api: Parameters<NonNullable<OpenClawPluginDefinition["register"]>>[0],
+  contextSync: FitnessContextSyncCoordinator,
 ): {
   currentCandidate(): FitnessIdentityBootstrapCandidate;
   publishedDisclosure(): string | undefined;
@@ -1349,6 +1486,9 @@ function registerFitnessAgentWorkspace(
               : await manager.sync({ agentId, artifacts: candidate.artifacts });
       rememberPublication(result, candidate);
       await configureMemory(result);
+      if (result.status === "ready") {
+        await contextSync.resync({ trigger: "explicit" });
+      }
       return {
         text: result.status === "ready"
           ? `${formatWorkspaceResult(result)}\n${formatConversationalMemoryResult(memory)}\n\n${candidate.disclosure}`
@@ -2122,6 +2262,33 @@ function workoutLogCorrectionId(
 
 function normalizeStatusInput(input: string): string {
   return input.trim().toLowerCase().replaceAll(/\s+/g, " ");
+}
+
+function isNaturalContextResync(input: string): boolean {
+  return /^\s*(?:请)?(?:重新|再)?(?:同步|刷新)(?:一下)?(?:\s*Stella\s*Fitness)?(?:的)?(?:健身)?(?:上下文|context)(?:投影)?[。.!]?\s*$/iu.test(
+    input,
+  ) || /^\s*(?:resync|refresh|sync)\s+(?:the\s+)?(?:fitness\s+)?context[.!]?\s*$/iu.test(
+    input,
+  );
+}
+
+function formatContextSyncDiagnostics(state: FitnessContextSyncState): string {
+  return [
+    `context-sync: ${state.status}`,
+    `source-category: ${state.source_category}`,
+    `source-revision: ${state.source_revision ?? "unavailable"}`,
+    `projection-revision: ${state.projection_revision ?? "unavailable"}`,
+    `manifest-checksum: ${state.manifest_checksum ?? "unavailable"}`,
+    `as-of: ${state.as_of ?? "unavailable"}`,
+    `reason: ${state.reason_code ?? "none"}`,
+    `recovery: ${state.recovery_action ?? "none"}`,
+  ].join("\n");
+}
+
+function contextSyncAbortError(): Error {
+  const error = new Error("Fitness Context Sync was cancelled");
+  error.name = "AbortError";
+  return error;
 }
 
 function isBodyWeightInput(input: string): boolean {
