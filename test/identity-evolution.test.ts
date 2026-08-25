@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import {
   type FitnessIdentityPublicationCandidate,
   type FitnessIdentitySnapshot,
 } from "../src/context/identity-evolution.js";
+import { canonicalizeJcs } from "../src/context/runtime-contract.js";
 
 const temporaryRoots: string[] = [];
 
@@ -26,6 +27,12 @@ describe("Fitness Identity Evolution", () => {
     expect(classifyFitnessIdentityContextDiff(active, snapshot({
       fields: { ...active.fields, "agent-name": field("Nova", "identity-source") },
     }))).toMatchObject({ kind: "material", changedFieldIds: ["agent-name"] });
+    expect(classifyFitnessIdentityContextDiff(active, snapshot({
+      fields: {
+        ...active.fields,
+        "stable-values": field("诚实、尊重边界", "identity-source"),
+      },
+    }))).toMatchObject({ kind: "material", changedFieldIds: ["stable-values"] });
     expect(classifyFitnessIdentityContextDiff(active, snapshot({
       fields: {
         ...active.fields,
@@ -256,10 +263,163 @@ describe("Fitness Identity Evolution", () => {
     expect(publish).toHaveBeenLastCalledWith(minor);
   });
 
+  it("persists only identity metadata and never trusts a stored publication payload", async () => {
+    const runtimeDirectory = temporaryRuntimeDirectory();
+    const publish = vi.fn(async () => ({ status: "ready" as const }));
+    const coordinator = createFitnessIdentityEvolutionCoordinator({
+      runtimeDirectory,
+      publish,
+      captureRecoveryToken: async () => "workspace-revision-42",
+      restore: vi.fn(async () => ({ status: "ready" as const })),
+    });
+    const active = candidate({
+      fields: {
+        ...candidate().fields,
+        "preferred-appellation": field("私密称呼", "user-source"),
+      },
+      artifacts: [{ path: "USER.md", managedContent: "绝不应进入运行状态的私密背景\n" }],
+    });
+    await coordinator.recordPublished(active);
+
+    const statePath = join(runtimeDirectory, "identity-evolution", "state.json");
+    const stateBytes = readFileSync(statePath, "utf8");
+    expect(stateBytes).not.toContain("私密称呼");
+    expect(stateBytes).not.toContain("绝不应进入运行状态的私密背景");
+    expect(stateBytes).not.toContain("managedContent");
+
+    const minor = candidate({
+      sourceRevision: "authority-43",
+      projectionRevision: "projection-43",
+      manifestChecksum: `sha256:${"b".repeat(64)}`,
+      fields: { ...active.fields, "preferred-language": field("zh-CN", "user-source") },
+    });
+    await expect(coordinator.reconcile(minor, {
+      testHooks: { crashAfterPublication: true },
+    })).rejects.toThrow("SIMULATED_IDENTITY_EVOLUTION_CRASH:published");
+    const journalBytes = readFileSync(
+      join(runtimeDirectory, "identity-evolution", "journal.json"),
+      "utf8",
+    );
+    expect(journalBytes).not.toContain("zh-CN");
+    expect(journalBytes).not.toContain("managedContent");
+  });
+
+  it("rejects malformed nested evolution state instead of hydrating it", async () => {
+    const runtimeDirectory = temporaryRuntimeDirectory();
+    const coordinator = createFitnessIdentityEvolutionCoordinator({
+      runtimeDirectory,
+      publish: vi.fn(async () => ({ status: "ready" as const })),
+    });
+    await coordinator.recordPublished(candidate());
+    const statePath = join(runtimeDirectory, "identity-evolution", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    writeFileSync(statePath, JSON.stringify({
+      ...state,
+      active: { sourceRevision: "authority-42" },
+    }));
+
+    await expect(coordinator.diagnostics()).rejects.toThrow(
+      "IDENTITY_EVOLUTION_STATE_INVALID",
+    );
+  });
+
+  it("rejects a canonical but contradictory persisted status", async () => {
+    const runtimeDirectory = temporaryRuntimeDirectory();
+    const coordinator = createFitnessIdentityEvolutionCoordinator({
+      runtimeDirectory,
+      publish: vi.fn(async () => ({ status: "ready" as const })),
+    });
+    await coordinator.recordPublished(candidate());
+    const statePath = join(runtimeDirectory, "identity-evolution", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    writeFileSync(statePath, canonicalizeJcs({ ...state, status: "pending" }));
+
+    await expect(coordinator.diagnostics()).rejects.toThrow(
+      "IDENTITY_EVOLUTION_STATE_INVALID",
+    );
+  });
+
+  it("refuses to persist contradictory retained conflict state", async () => {
+    const runtimeDirectory = temporaryRuntimeDirectory();
+    const coordinator = createFitnessIdentityEvolutionCoordinator({
+      runtimeDirectory,
+      publish: vi.fn(async () => ({ status: "ready" as const })),
+    });
+    await coordinator.recordPublished(candidate());
+
+    await expect(coordinator.retainLastVerified({
+      status: "degraded",
+      reasonCode: "IDENTITY_CONTEXT_UNAVAILABLE",
+      conflicts: [{
+        id: "unexpected-conflict",
+        sourceReferenceIds: ["source-a", "source-b"],
+      }],
+    } as unknown as Parameters<typeof coordinator.retainLastVerified>[0]))
+      .rejects.toThrow("IDENTITY_EVOLUTION_STATE_INVALID");
+    await expect(coordinator.diagnostics()).resolves.toMatchObject({
+      status: "ready",
+    });
+  });
+
+  it("invalidates a pending decision when the active workspace base drifts", async () => {
+    const runtimeDirectory = temporaryRuntimeDirectory();
+    let recoveryToken = "workspace-revision-42";
+    const publish = vi.fn(async () => ({ status: "ready" as const }));
+    const coordinator = createFitnessIdentityEvolutionCoordinator({
+      runtimeDirectory,
+      publish,
+      captureRecoveryToken: async () => recoveryToken,
+    });
+    const active = candidate();
+    const changed = candidate({
+      sourceRevision: "authority-43",
+      projectionRevision: "projection-43",
+      manifestChecksum: `sha256:${"b".repeat(64)}`,
+      fields: { ...active.fields, "agent-name": field("Nova", "identity-source") },
+    });
+    await coordinator.recordPublished(active);
+    await coordinator.reconcile(changed);
+    recoveryToken = "workspace-revision-99";
+
+    await expect(coordinator.decide({
+      decision: "accept",
+      currentCandidate: changed,
+    })).resolves.toMatchObject({
+      status: "conflicted",
+      reasonCode: "IDENTITY_CONFIRMATION_INVALIDATED",
+      active: { sourceRevision: "authority-42" },
+    });
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("persists disclosure claims across coordinator restarts", async () => {
+    const runtimeDirectory = temporaryRuntimeDirectory();
+    const options = {
+      runtimeDirectory,
+      publish: vi.fn(async () => ({ status: "ready" as const })),
+    } as const;
+    const coordinator = createFitnessIdentityEvolutionCoordinator(options);
+    await coordinator.recordPublished(candidate());
+
+    await expect(coordinator.claimDisclosure("pending:update-42")).resolves.toBe("first");
+    const restarted = createFitnessIdentityEvolutionCoordinator(options);
+    await expect(restarted.claimDisclosure("pending:update-42")).resolves
+      .toBe("unchanged");
+    await expect(restarted.claimDisclosure("degraded:source-loss")).resolves
+      .toBe("changed");
+  });
+
   it("restores the last verified identity when a recovery candidate has drifted", async () => {
     const runtimeDirectory = temporaryRuntimeDirectory();
     const publish = vi.fn(async () => ({ status: "ready" as const }));
-    const coordinator = createFitnessIdentityEvolutionCoordinator({ runtimeDirectory, publish });
+    const restore = vi.fn(async () => ({ status: "ready" as const }));
+    const options = {
+      runtimeDirectory,
+      publish,
+      captureRecoveryToken: async () => "workspace-revision-42",
+      restore,
+    } as const;
+    const coordinator = createFitnessIdentityEvolutionCoordinator(options);
     const active = candidate();
     await coordinator.recordPublished(active);
     const minor = candidate({
@@ -276,14 +436,15 @@ describe("Fitness Identity Evolution", () => {
       projectionRevision: "projection-44",
       manifestChecksum: `sha256:${"c".repeat(64)}`,
     });
-    const restarted = createFitnessIdentityEvolutionCoordinator({ runtimeDirectory, publish });
+    const restarted = createFitnessIdentityEvolutionCoordinator(options);
 
     await expect(restarted.recover(drifted)).resolves.toMatchObject({
       status: "conflicted",
       reasonCode: "IDENTITY_RECOVERY_CANDIDATE_DRIFT",
       active: { sourceRevision: "authority-42" },
     });
-    expect(publish).toHaveBeenLastCalledWith(active);
+    expect(restore).toHaveBeenCalledWith("workspace-revision-42");
+    expect(publish).toHaveBeenCalledOnce();
   });
 });
 

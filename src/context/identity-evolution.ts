@@ -13,7 +13,7 @@ export type FitnessIdentityField = {
 export type FitnessIdentityConflict = {
   readonly id: string;
   readonly sourceReferenceIds: readonly string[];
-  readonly summary: string;
+  readonly summary?: string;
 };
 
 export type FitnessIdentityRetraction = {
@@ -51,7 +51,11 @@ export type FitnessIdentityContextDiff =
       readonly changedFieldIds: readonly string[];
     };
 
-const MATERIAL_IDENTITY_FIELDS = new Set(["agent-name", "persona-core"]);
+const MATERIAL_IDENTITY_FIELDS = new Set([
+  "agent-name",
+  "persona-core",
+  "stable-values",
+]);
 const IDENTITY_EVOLUTION_STATE_SCHEMA = "stella-fitness/identity-evolution-state/v1";
 
 type PendingIdentityUpdate = {
@@ -60,11 +64,11 @@ type PendingIdentityUpdate = {
   readonly baseSourceRevision: string;
   readonly baseProjectionRevision: string;
   readonly baseManifestChecksum: string;
+  readonly baseRecoveryToken?: string;
   readonly candidateSourceRevision: string;
   readonly candidateProjectionRevision: string;
   readonly candidateManifestChecksum: string;
   readonly changedFieldIds: readonly string[];
-  readonly candidate: FitnessIdentityPublicationCandidate;
   readonly createdAt: string;
   readonly updatedAt: string;
 };
@@ -72,7 +76,7 @@ type PendingIdentityUpdate = {
 type IdentityEvolutionState = {
   readonly schema_version: typeof IDENTITY_EVOLUTION_STATE_SCHEMA;
   readonly status: "ready" | "pending" | "stale" | "conflicted" | "degraded";
-  readonly active: FitnessIdentityPublicationCandidate;
+  readonly active: StoredFitnessIdentitySnapshot;
   readonly pending?: PendingIdentityUpdate;
   readonly reasonCode?: string;
   readonly conflicts?: readonly FitnessIdentityConflict[];
@@ -81,13 +85,15 @@ type IdentityEvolutionState = {
     readonly decision: "accepted" | "rejected" | "deferred";
     readonly decidedAt: string;
   };
+  readonly lastDisclosureKey?: string;
   readonly updatedAt: string;
 };
 
 type IdentityEvolutionJournal = {
   readonly schema_version: "stella-fitness/identity-evolution-journal/v1";
   readonly phase: "prepared" | "published";
-  readonly candidate: FitnessIdentityPublicationCandidate;
+  readonly candidate: StoredFitnessIdentitySnapshot;
+  readonly recoveryToken?: string;
   readonly lastDecision?: NonNullable<IdentityEvolutionState["lastDecision"]>;
   readonly updatedAt: string;
 };
@@ -98,10 +104,19 @@ type IdentityEvolutionTestHooks = {
 
 export type FitnessIdentityEvolutionResult = {
   readonly status: IdentityEvolutionState["status"];
-  readonly active: FitnessIdentitySnapshot;
+  readonly active: StoredFitnessIdentitySnapshot;
   readonly pending?: Omit<PendingIdentityUpdate, "candidate">;
   readonly reasonCode?: string;
   readonly conflicts?: readonly FitnessIdentityConflict[];
+};
+
+type StoredFitnessIdentityField = {
+  readonly contentChecksum: string;
+  readonly sourceReferenceIds: readonly string[];
+};
+
+type StoredFitnessIdentitySnapshot = Omit<FitnessIdentitySnapshot, "fields"> & {
+  readonly fields: Readonly<Record<string, StoredFitnessIdentityField>>;
 };
 
 export type FitnessIdentityEvolutionCoordinator = {
@@ -119,21 +134,35 @@ export type FitnessIdentityEvolutionCoordinator = {
     readonly currentCandidate: FitnessIdentityPublicationCandidate;
     readonly testHooks?: IdentityEvolutionTestHooks;
   }): Promise<FitnessIdentityEvolutionResult>;
-  retainLastVerified(input: {
-    readonly status: "stale" | "conflicted" | "degraded";
-    readonly reasonCode: string;
-    readonly conflicts?: readonly FitnessIdentityConflict[];
-  }): Promise<FitnessIdentityEvolutionResult>;
+  retainLastVerified(input:
+    | {
+        readonly status: "stale" | "degraded";
+        readonly reasonCode: string;
+        readonly conflicts?: never;
+      }
+    | {
+        readonly status: "conflicted";
+        readonly reasonCode: string;
+        readonly conflicts?: readonly FitnessIdentityConflict[];
+      }
+  ): Promise<FitnessIdentityEvolutionResult>;
   recover(currentCandidate?: FitnessIdentityPublicationCandidate): Promise<
     FitnessIdentityEvolutionResult | undefined
   >;
   diagnostics(): Promise<FitnessIdentityEvolutionResult | undefined>;
+  claimDisclosure(
+    disclosureKey: string,
+  ): Promise<"first" | "changed" | "unchanged">;
 };
 
 export function createFitnessIdentityEvolutionCoordinator(options: {
   readonly runtimeDirectory: string;
   readonly publish: (
     candidate: FitnessIdentityPublicationCandidate,
+  ) => Promise<{ readonly status: string; readonly reasonCode?: string }>;
+  readonly captureRecoveryToken?: () => Promise<string | undefined>;
+  readonly restore?: (
+    recoveryToken: string,
   ) => Promise<{ readonly status: string; readonly reasonCode?: string }>;
   readonly now?: () => Date;
 }): FitnessIdentityEvolutionCoordinator {
@@ -149,7 +178,7 @@ export function createFitnessIdentityEvolutionCoordinator(options: {
     const state: IdentityEvolutionState = {
       schema_version: IDENTITY_EVOLUTION_STATE_SCHEMA,
       status: candidate.freshness === "active" ? "ready" : "stale",
-      active: candidate,
+      active: storedSnapshot(candidate),
       updatedAt: now(options),
     };
     await persistState(options.runtimeDirectory, state);
@@ -163,7 +192,10 @@ export function createFitnessIdentityEvolutionCoordinator(options: {
       return enqueue(async () => {
         const state = await readState(options.runtimeDirectory);
         if (state === undefined) return await recordPublished(candidate);
-        const diff = classifyFitnessIdentityContextDiff(state.active, candidate);
+        const diff = classifyStoredFitnessIdentityContextDiff(
+          state.active,
+          storedSnapshot(candidate),
+        );
         if (candidate.freshness === "stale") {
           const stale = { ...state, status: "stale" as const,
             reasonCode: "IDENTITY_CANDIDATE_STALE", updatedAt: now(options) };
@@ -202,6 +234,9 @@ export function createFitnessIdentityEvolutionCoordinator(options: {
             state.lastDecision?.updateId === updateId &&
             state.lastDecision.decision === "rejected"
           ) return resultFromState(state);
+          const baseRecoveryToken = state.pending?.updateId === updateId
+            ? state.pending.baseRecoveryToken
+            : await options.captureRecoveryToken?.();
           const pending: PendingIdentityUpdate = {
             updateId,
             decision: state.pending?.updateId === updateId
@@ -210,11 +245,11 @@ export function createFitnessIdentityEvolutionCoordinator(options: {
             baseSourceRevision: state.active.sourceRevision,
             baseProjectionRevision: state.active.projectionRevision,
             baseManifestChecksum: state.active.manifestChecksum,
+            ...(baseRecoveryToken === undefined ? {} : { baseRecoveryToken }),
             candidateSourceRevision: candidate.sourceRevision,
             candidateProjectionRevision: candidate.projectionRevision,
             candidateManifestChecksum: candidate.manifestChecksum,
             changedFieldIds: diff.changedFieldIds,
-            candidate,
             createdAt: state.pending?.updateId === updateId
               ? state.pending.createdAt
               : now(options),
@@ -252,6 +287,8 @@ export function createFitnessIdentityEvolutionCoordinator(options: {
         }
         if (
           !pendingBaseMatches(state) ||
+          state.pending.baseRecoveryToken !==
+            await options.captureRecoveryToken?.() ||
           !pendingCandidateMatches(state.pending, input.currentCandidate)
         ) {
           const { pending: _pending, ...retained } = state;
@@ -268,7 +305,7 @@ export function createFitnessIdentityEvolutionCoordinator(options: {
           return await publishAndCommit(
             options,
             state,
-            state.pending.candidate,
+            input.currentCandidate,
             {
               updateId: state.pending.updateId,
               decision: "accepted",
@@ -299,7 +336,9 @@ export function createFitnessIdentityEvolutionCoordinator(options: {
           ...withoutConflicts,
           status: input.status,
           reasonCode: input.reasonCode,
-          ...(input.conflicts === undefined ? {} : { conflicts: input.conflicts }),
+          ...(input.conflicts === undefined
+            ? {}
+            : { conflicts: input.conflicts.map(sanitizedConflict) }),
           updatedAt: now(options),
         };
         await persistState(options.runtimeDirectory, retained);
@@ -315,10 +354,15 @@ export function createFitnessIdentityEvolutionCoordinator(options: {
         }
         const state = await requiredState(options.runtimeDirectory);
         if (
-          currentCandidate !== undefined &&
-          !sameRevision(journal.candidate, currentCandidate)
+          currentCandidate === undefined
         ) {
-          const restoration = await options.publish(state.active);
+          throw new Error("IDENTITY_RECOVERY_CANDIDATE_REQUIRED");
+        }
+        if (!sameRevision(journal.candidate, currentCandidate)) {
+          if (journal.recoveryToken === undefined || options.restore === undefined) {
+            throw new Error("IDENTITY_RECOVERY_RESTORE_REQUIRED");
+          }
+          const restoration = await options.restore(journal.recoveryToken);
           if (restoration.status !== "ready") {
             throw new Error(
               restoration.reasonCode ?? "IDENTITY_RECOVERY_RESTORE_FAILED",
@@ -338,7 +382,7 @@ export function createFitnessIdentityEvolutionCoordinator(options: {
         return await publishAndCommit(
           options,
           state,
-          journal.candidate,
+          currentCandidate,
           journal.lastDecision,
         );
       });
@@ -349,6 +393,20 @@ export function createFitnessIdentityEvolutionCoordinator(options: {
         return state === undefined ? undefined : resultFromState(state);
       });
     },
+    claimDisclosure(disclosureKey) {
+      return enqueue(async () => {
+        if (disclosureKey.length === 0) throw new Error("DISCLOSURE_KEY_REQUIRED");
+        const state = await requiredState(options.runtimeDirectory);
+        if (state.lastDisclosureKey === disclosureKey) return "unchanged";
+        const outcome = state.lastDisclosureKey === undefined ? "first" : "changed";
+        await persistState(options.runtimeDirectory, {
+          ...state,
+          lastDisclosureKey: disclosureKey,
+          updatedAt: now(options),
+        });
+        return outcome;
+      });
+    },
   };
 }
 
@@ -356,10 +414,23 @@ export function classifyFitnessIdentityContextDiff(
   previous: FitnessIdentitySnapshot,
   candidate: FitnessIdentitySnapshot,
 ): FitnessIdentityContextDiff {
+  return classifyStoredFitnessIdentityContextDiff(
+    storedSnapshot(previous),
+    storedSnapshot(candidate),
+  );
+}
+
+function classifyStoredFitnessIdentityContextDiff(
+  previous: StoredFitnessIdentitySnapshot,
+  candidate: StoredFitnessIdentitySnapshot,
+): FitnessIdentityContextDiff {
   const changedFieldIds = [...new Set([
     ...Object.keys(previous.fields),
     ...Object.keys(candidate.fields),
-  ])].filter((id) => !fieldsEqual(previous.fields[id], candidate.fields[id])).sort();
+  ])].filter((id) => !storedFieldsEqual(
+    previous.fields[id],
+    candidate.fields[id],
+  )).sort();
   if (candidate.conflicts.length > 0) {
     return {
       kind: "conflict",
@@ -387,12 +458,44 @@ export function classifyFitnessIdentityContextDiff(
   return { kind: "none", changedFieldIds: [] };
 }
 
-function fieldsEqual(
-  left: FitnessIdentityField | undefined,
-  right: FitnessIdentityField | undefined,
+function storedFieldsEqual(
+  left: StoredFitnessIdentityField | undefined,
+  right: StoredFitnessIdentityField | undefined,
 ): boolean {
-  return left?.content === right?.content &&
+  return left?.contentChecksum === right?.contentChecksum &&
     left?.sourceReferenceIds.join("\0") === right?.sourceReferenceIds.join("\0");
+}
+
+function storedSnapshot(
+  snapshot: FitnessIdentitySnapshot,
+): StoredFitnessIdentitySnapshot {
+  return {
+    sourceRevision: snapshot.sourceRevision,
+    projectionRevision: snapshot.projectionRevision,
+    manifestChecksum: snapshot.manifestChecksum,
+    asOf: snapshot.asOf,
+    freshness: snapshot.freshness,
+    fields: Object.fromEntries(Object.entries(snapshot.fields).map(([id, field]) => [
+      id,
+      {
+        contentChecksum: `sha256:${createHash("sha256")
+          .update(field.content)
+          .digest("hex")}`,
+        sourceReferenceIds: [...field.sourceReferenceIds],
+      },
+    ])),
+    conflicts: snapshot.conflicts.map(sanitizedConflict),
+    retractions: snapshot.retractions.map((retraction) => ({ ...retraction })),
+  };
+}
+
+function sanitizedConflict(
+  conflict: FitnessIdentityConflict,
+): FitnessIdentityConflict {
+  return {
+    id: conflict.id,
+    sourceReferenceIds: [...conflict.sourceReferenceIds],
+  };
 }
 
 async function publishAndCommit(
@@ -401,6 +504,10 @@ async function publishAndCommit(
     readonly publish: (
       candidate: FitnessIdentityPublicationCandidate,
     ) => Promise<{ readonly status: string; readonly reasonCode?: string }>;
+    readonly captureRecoveryToken?: () => Promise<string | undefined>;
+    readonly restore?: (
+      recoveryToken: string,
+    ) => Promise<{ readonly status: string; readonly reasonCode?: string }>;
     readonly now?: () => Date;
   },
   state: IdentityEvolutionState,
@@ -408,10 +515,12 @@ async function publishAndCommit(
   lastDecision?: IdentityEvolutionState["lastDecision"],
   testHooks?: IdentityEvolutionTestHooks,
 ): Promise<FitnessIdentityEvolutionResult> {
+  const recoveryToken = await options.captureRecoveryToken?.();
   let journal: IdentityEvolutionJournal = {
     schema_version: "stella-fitness/identity-evolution-journal/v1",
     phase: "prepared",
-    candidate,
+    candidate: storedSnapshot(candidate),
+    ...(recoveryToken === undefined ? {} : { recoveryToken }),
     ...(lastDecision === undefined ? {} : { lastDecision }),
     updatedAt: now(options),
   };
@@ -436,8 +545,11 @@ async function publishAndCommit(
   const next: IdentityEvolutionState = {
     schema_version: IDENTITY_EVOLUTION_STATE_SCHEMA,
     status: "ready",
-    active: candidate,
+    active: storedSnapshot(candidate),
     ...(lastDecision === undefined ? {} : { lastDecision }),
+    ...(state.lastDisclosureKey === undefined
+      ? {}
+      : { lastDisclosureKey: state.lastDisclosureKey }),
     updatedAt: now(options),
   };
   await persistState(options.runtimeDirectory, next);
@@ -446,8 +558,8 @@ async function publishAndCommit(
 }
 
 function sameRevision(
-  left: FitnessIdentitySnapshot,
-  right: FitnessIdentitySnapshot,
+  left: Pick<FitnessIdentitySnapshot, "sourceRevision" | "projectionRevision" | "manifestChecksum">,
+  right: Pick<FitnessIdentitySnapshot, "sourceRevision" | "projectionRevision" | "manifestChecksum">,
 ): boolean {
   return left.sourceRevision === right.sourceRevision &&
     left.projectionRevision === right.projectionRevision &&
@@ -473,8 +585,8 @@ function pendingCandidateMatches(
 }
 
 function identityUpdateId(
-  active: FitnessIdentitySnapshot,
-  candidate: FitnessIdentitySnapshot,
+  active: Pick<FitnessIdentitySnapshot, "sourceRevision" | "projectionRevision" | "manifestChecksum">,
+  candidate: Pick<FitnessIdentitySnapshot, "sourceRevision" | "projectionRevision" | "manifestChecksum">,
 ): string {
   return `identity-update-${createHash("sha256").update(canonicalizeJcs({
     base_source_revision: active.sourceRevision,
@@ -568,6 +680,9 @@ async function persistState(
   runtimeDirectory: string,
   state: IdentityEvolutionState,
 ): Promise<void> {
+  if (!isIdentityEvolutionState(state)) {
+    throw new Error("IDENTITY_EVOLUTION_STATE_INVALID");
+  }
   await durableAtomicWrite(statePath(runtimeDirectory), canonicalizeJcs(state));
 }
 
@@ -575,6 +690,9 @@ async function persistJournal(
   runtimeDirectory: string,
   journal: IdentityEvolutionJournal,
 ): Promise<void> {
+  if (!isIdentityEvolutionJournal(journal)) {
+    throw new Error("IDENTITY_EVOLUTION_JOURNAL_INVALID");
+  }
   await durableAtomicWrite(journalPath(runtimeDirectory), canonicalizeJcs(journal));
 }
 
@@ -642,23 +760,164 @@ function journalPath(runtimeDirectory: string): string {
 }
 
 function isIdentityEvolutionState(value: unknown): value is IdentityEvolutionState {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Readonly<Record<string, unknown>>;
-  return record.schema_version === IDENTITY_EVOLUTION_STATE_SCHEMA &&
+  const record = exactRecord(value, [
+    "schema_version", "status", "active", "pending", "reasonCode",
+    "conflicts", "lastDecision", "lastDisclosureKey", "updatedAt",
+  ], ["schema_version", "status", "active", "updatedAt"]);
+  return record !== undefined &&
+    record.schema_version === IDENTITY_EVOLUTION_STATE_SCHEMA &&
     (record.status === "ready" || record.status === "pending" ||
       record.status === "stale" || record.status === "conflicted" ||
       record.status === "degraded") &&
-    typeof record.active === "object" && record.active !== null &&
+    isStoredFitnessIdentitySnapshot(record.active) &&
+    (record.pending === undefined || isPendingIdentityUpdate(record.pending)) &&
+    (record.reasonCode === undefined || typeof record.reasonCode === "string") &&
+    (record.conflicts === undefined || isStoredConflicts(record.conflicts)) &&
+    (record.lastDecision === undefined || isLastDecision(record.lastDecision)) &&
+    (record.lastDisclosureKey === undefined ||
+      typeof record.lastDisclosureKey === "string") &&
+    stateInvariantHolds(record) &&
     typeof record.updatedAt === "string";
 }
 
 function isIdentityEvolutionJournal(value: unknown): value is IdentityEvolutionJournal {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Readonly<Record<string, unknown>>;
-  return record.schema_version === "stella-fitness/identity-evolution-journal/v1" &&
+  const record = exactRecord(value, [
+    "schema_version", "phase", "candidate", "recoveryToken", "lastDecision",
+    "updatedAt",
+  ], ["schema_version", "phase", "candidate", "updatedAt"]);
+  return record !== undefined &&
+    record.schema_version === "stella-fitness/identity-evolution-journal/v1" &&
     (record.phase === "prepared" || record.phase === "published") &&
-    typeof record.candidate === "object" && record.candidate !== null &&
+    isStoredFitnessIdentitySnapshot(record.candidate) &&
+    (record.recoveryToken === undefined || typeof record.recoveryToken === "string") &&
+    (record.lastDecision === undefined || isLastDecision(record.lastDecision)) &&
     typeof record.updatedAt === "string";
+}
+
+function isStoredFitnessIdentitySnapshot(
+  value: unknown,
+): value is StoredFitnessIdentitySnapshot {
+  const record = exactRecord(value, [
+    "sourceRevision", "projectionRevision", "manifestChecksum", "asOf",
+    "freshness", "fields", "conflicts", "retractions",
+  ], [
+    "sourceRevision", "projectionRevision", "manifestChecksum", "asOf",
+    "freshness", "fields", "conflicts", "retractions",
+  ]);
+  if (
+    record === undefined ||
+    typeof record.sourceRevision !== "string" ||
+    typeof record.projectionRevision !== "string" ||
+    typeof record.manifestChecksum !== "string" ||
+    typeof record.asOf !== "string" ||
+    (record.freshness !== "active" && record.freshness !== "stale") ||
+    !isStoredConflicts(record.conflicts) ||
+    !isStoredRetractions(record.retractions) ||
+    typeof record.fields !== "object" || record.fields === null ||
+    Array.isArray(record.fields)
+  ) return false;
+  return Object.entries(record.fields).every(([id, field]) => {
+    const fieldRecord = exactRecord(
+      field,
+      ["contentChecksum", "sourceReferenceIds"],
+      ["contentChecksum", "sourceReferenceIds"],
+    );
+    return id.length > 0 && fieldRecord !== undefined &&
+      typeof fieldRecord.contentChecksum === "string" &&
+      /^sha256:[a-f0-9]{64}$/u.test(fieldRecord.contentChecksum) &&
+      isStringArray(fieldRecord.sourceReferenceIds);
+  });
+}
+
+function isPendingIdentityUpdate(value: unknown): value is PendingIdentityUpdate {
+  const record = exactRecord(value, [
+    "updateId", "decision", "baseSourceRevision", "baseProjectionRevision",
+    "baseManifestChecksum", "baseRecoveryToken", "candidateSourceRevision",
+    "candidateProjectionRevision", "candidateManifestChecksum",
+    "changedFieldIds", "createdAt", "updatedAt",
+  ], [
+    "updateId", "decision", "baseSourceRevision", "baseProjectionRevision",
+    "baseManifestChecksum", "candidateSourceRevision",
+    "candidateProjectionRevision", "candidateManifestChecksum",
+    "changedFieldIds", "createdAt", "updatedAt",
+  ]);
+  return record !== undefined && typeof record.updateId === "string" &&
+    (record.decision === "pending" || record.decision === "deferred") &&
+    typeof record.baseSourceRevision === "string" &&
+    typeof record.baseProjectionRevision === "string" &&
+    typeof record.baseManifestChecksum === "string" &&
+    (record.baseRecoveryToken === undefined ||
+      typeof record.baseRecoveryToken === "string") &&
+    typeof record.candidateSourceRevision === "string" &&
+    typeof record.candidateProjectionRevision === "string" &&
+    typeof record.candidateManifestChecksum === "string" &&
+    isStringArray(record.changedFieldIds) &&
+    typeof record.createdAt === "string" && typeof record.updatedAt === "string";
+}
+
+function stateInvariantHolds(record: Readonly<Record<string, unknown>>): boolean {
+  if (record.status === "pending" && record.pending === undefined) return false;
+  if (record.status === "ready" && record.pending !== undefined) return false;
+  if (record.conflicts !== undefined && record.status !== "conflicted") return false;
+  return true;
+}
+
+function isLastDecision(
+  value: unknown,
+): value is NonNullable<IdentityEvolutionState["lastDecision"]> {
+  const record = exactRecord(
+    value,
+    ["updateId", "decision", "decidedAt"],
+    ["updateId", "decision", "decidedAt"],
+  );
+  return record !== undefined && typeof record.updateId === "string" &&
+    (record.decision === "accepted" || record.decision === "rejected" ||
+      record.decision === "deferred") && typeof record.decidedAt === "string";
+}
+
+function isStoredConflicts(value: unknown): value is readonly FitnessIdentityConflict[] {
+  return Array.isArray(value) && value.every((conflict) => {
+    const record = exactRecord(
+      conflict,
+      ["id", "sourceReferenceIds"],
+      ["id", "sourceReferenceIds"],
+    );
+    return record !== undefined && typeof record.id === "string" &&
+      isStringArray(record.sourceReferenceIds);
+  });
+}
+
+function isStoredRetractions(value: unknown): value is readonly FitnessIdentityRetraction[] {
+  return Array.isArray(value) && value.every((retraction) => {
+    const record = exactRecord(
+      retraction,
+      ["id", "sourceReferenceId", "retractedRevision"],
+      ["id", "sourceReferenceId", "retractedRevision"],
+    );
+    return record !== undefined && typeof record.id === "string" &&
+      typeof record.sourceReferenceId === "string" &&
+      typeof record.retractedRevision === "string";
+  });
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function exactRecord(
+  value: unknown,
+  allowedKeys: readonly string[],
+  requiredKeys: readonly string[],
+): Readonly<Record<string, unknown>> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Readonly<Record<string, unknown>>;
+  const keys = Object.keys(record);
+  return keys.every((key) => allowedKeys.includes(key)) &&
+      requiredKeys.every((key) => Object.hasOwn(record, key))
+    ? record
+    : undefined;
 }
 
 function now(options: { readonly now?: () => Date }): string {

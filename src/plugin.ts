@@ -119,6 +119,9 @@ const IDENTITY_DEPENDENCY_PATTERNS = [{
   fieldId: STELLA_IDENTITY_CONTEXT_ENTRY_IDS.personaCore,
   pattern: /(?:你(?:的人格|的性格)|your\s+persona)/iu,
 }, {
+  fieldId: STELLA_IDENTITY_CONTEXT_ENTRY_IDS.stableValues,
+  pattern: /(?:你(?:的价值观|的稳定价值)|your\s+(?:stable\s+)?values)/iu,
+}, {
   fieldId: STELLA_IDENTITY_CONTEXT_ENTRY_IDS.agentName,
   pattern: /(?:你(?:是谁|叫什么|的名字)|who\s+are\s+you|your\s+name)/iu,
 }] as const;
@@ -555,7 +558,7 @@ export function registerStellaFitnessPlugin(
 
   api.on(
     "reply_payload_sending",
-    (event, context) => {
+    async (event, context) => {
       if (event.kind !== "final" || !isDedicatedAgentContext(context, api)) return;
       const originalText = event.payload.text;
       const replyRunId = event.runId ?? context.runId;
@@ -566,7 +569,7 @@ export function registerStellaFitnessPlugin(
       });
       const identityNotice = originalText === undefined
         ? undefined
-        : identityBootstrap.publishedDisclosure({
+        : await identityBootstrap.publishedDisclosure({
             ...(entry?.value.contextDependency === undefined
               ? {}
               : { contextDependency: entry.value.contextDependency }),
@@ -635,7 +638,7 @@ export function registerStellaFitnessPlugin(
       const agentReply = requireDedicatedAgent(context, api);
       if (agentReply !== undefined) return agentReply;
       const statusText = formatJourneyStatus(await stellaRuntime.programJourneyStatus());
-      const disclosure = identityBootstrap.publishedDisclosure();
+      const disclosure = await identityBootstrap.publishedDisclosure();
       return { text: disclosure === undefined ? statusText : `${disclosure}\n\n${statusText}` };
     },
   });
@@ -1451,7 +1454,7 @@ function registerFitnessAgentWorkspace(
   currentCandidate(): FitnessIdentityBootstrapCandidate;
   publishedDisclosure(options?: {
     readonly contextDependency?: IdentityContextDependency;
-  }): string | undefined;
+  }): Promise<string | undefined>;
   statusSummary(): string;
 } {
   const host = createOpenClawFitnessAgentWorkspaceHost(api);
@@ -1524,7 +1527,6 @@ function registerFitnessAgentWorkspace(
         };
   };
   let identityEvolutionState: FitnessIdentityEvolutionResult | undefined;
-  let lastDisclosureKey: string | undefined;
   const publishIdentityCandidate = async (
     candidate: FitnessIdentityPublicationCandidate,
   ): Promise<{ readonly status: string; readonly reasonCode?: string }> => {
@@ -1545,6 +1547,19 @@ function registerFitnessAgentWorkspace(
       PLUGIN_ID,
     ),
     publish: publishIdentityCandidate,
+    captureRecoveryToken: async () => {
+      const agentId = resolveDedicatedAgentId(
+        currentPluginConfig(currentOpenClawConfig(api)),
+      );
+      return agentId === undefined
+        ? undefined
+        : await manager.captureRecoveryToken(agentId);
+    },
+    restore: async (recoveryToken) => {
+      const result = await manager.restoreRecoveryToken(recoveryToken);
+      if (result.status === "ready") await configureMemory(result);
+      return result;
+    },
   });
   const syncIdentityCandidate = async (
     candidate: Extract<FitnessIdentityBootstrapCandidate, { readonly status: "ready" }>,
@@ -1569,13 +1584,18 @@ function registerFitnessAgentWorkspace(
   ): Promise<void> => {
     const existing = await identityEvolution.diagnostics();
     if (existing === undefined) return;
-    identityEvolutionState = await identityEvolution.retainLastVerified({
-      status: blocked.reasonCode === "IDENTITY_CONTEXT_CONFLICT"
-        ? "conflicted"
-        : "degraded",
-      reasonCode: blocked.reasonCode,
-      ...(blocked.conflicts === undefined ? {} : { conflicts: blocked.conflicts }),
-    });
+    identityEvolutionState = blocked.reasonCode === "IDENTITY_CONTEXT_CONFLICT"
+      ? await identityEvolution.retainLastVerified({
+          status: "conflicted",
+          reasonCode: blocked.reasonCode,
+          ...(blocked.conflicts === undefined
+            ? {}
+            : { conflicts: blocked.conflicts }),
+        })
+      : await identityEvolution.retainLastVerified({
+          status: "degraded",
+          reasonCode: blocked.reasonCode,
+        });
   };
   api.registerTrustedToolPolicy(createManagedArtifactToolPolicy({ host }));
   let identityWatch: ReturnType<typeof setInterval> | undefined;
@@ -1773,7 +1793,7 @@ function registerFitnessAgentWorkspace(
   });
   return {
     currentCandidate,
-    publishedDisclosure(options = {}) {
+    async publishedDisclosure(options = {}) {
       if (
         identityEvolutionState !== undefined &&
         identityEvolutionState.status !== "ready"
@@ -1784,10 +1804,19 @@ function registerFitnessAgentWorkspace(
           identityEvolutionState.pending?.updateId ?? "NONE",
           identityEvolutionState.pending?.decision ?? "NONE",
         ].join("\0");
-        if (lastDisclosureKey === noticeKey && options.contextDependency === undefined) {
+        const disclosureClaim = await identityEvolution.claimDisclosure(noticeKey);
+        if (disclosureClaim === "unchanged") {
+          if (
+            options.contextDependency !== undefined &&
+            identityContextDependencyMissing(
+              identityEvolutionState.active,
+              options.contextDependency,
+            )
+          ) {
+            return "这项身份背景上下文尚未提供；我会基于最后验证内容回答，并明确不知道的部分。";
+          }
           return undefined;
         }
-        lastDisclosureKey = noticeKey;
         return formatIdentityEvolutionNotice(identityEvolutionState);
       }
       if (publication?.status !== "ready") return undefined;
@@ -1802,7 +1831,8 @@ function registerFitnessAgentWorkspace(
         current.freshness,
         current.asOf,
       ].join("\0");
-      if (lastDisclosureKey === disclosureKey) {
+      const disclosureClaim = await identityEvolution.claimDisclosure(disclosureKey);
+      if (disclosureClaim === "unchanged") {
         if (
           options.contextDependency !== undefined &&
           identityContextDependencyMissing(current, options.contextDependency)
@@ -1811,9 +1841,7 @@ function registerFitnessAgentWorkspace(
         }
         return undefined;
       }
-      const firstDisclosure = lastDisclosureKey === undefined;
-      lastDisclosureKey = disclosureKey;
-      if (firstDisclosure) {
+      if (disclosureClaim === "first") {
         return `${current.disclosure}\n${formatConversationalMemoryResult(memory)}`;
       }
       return current.freshness === "stale"
@@ -1914,7 +1942,7 @@ function formatPendingIdentityUpdate(
 }
 
 function identityContextDependencyMissing(
-  candidate: FitnessIdentityPublicationCandidate,
+  candidate: { readonly fields: Readonly<Record<string, unknown>> },
   dependency: IdentityContextDependency,
 ): boolean {
   if (dependency !== "background") return candidate.fields[dependency] === undefined;

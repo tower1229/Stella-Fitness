@@ -16,6 +16,7 @@ describe("Runtime Identity Context to managed Stella bootstrap", () => {
       identityContext: identityContext([
         entry("agent-name", "identity", "Stella"),
         entry("persona-core", "identity", "温和、直接、尊重事实边界"),
+        entry("stable-values", "identity", "诚实、尊重边界"),
         entry("preferred-appellation", "background", "涛哥"),
         entry("preferred-language", "background", "zh-CN"),
         entry("timezone", "background", "Asia/Shanghai"),
@@ -38,6 +39,8 @@ describe("Runtime Identity Context to managed Stella bootstrap", () => {
       .toContain("Stella");
     expect(result.artifacts.find(({ path }) => path === "SOUL.md")?.managedContent)
       .toContain("温和、直接、尊重事实边界");
+    expect(result.artifacts.find(({ path }) => path === "SOUL.md")?.managedContent)
+      .toContain("诚实、尊重边界");
     const user = result.artifacts.find(({ path }) => path === "USER.md")?.managedContent;
     expect(user).toContain("涛哥");
     expect(user).toContain("zh-CN");
@@ -49,7 +52,7 @@ describe("Runtime Identity Context to managed Stella bootstrap", () => {
     expect(result.artifacts.find(({ path }) => path === "AGENTS.md")?.managedContent)
       .toContain("cannot override this boundary");
     expect(result.disclosure).toContain("2026-08-24T01:00:00.000Z");
-    expect(result.disclosure).toContain("身份、人格、称呼、语言、时区、稳定健身背景");
+    expect(result.disclosure).toContain("身份、人格、稳定价值、称呼、语言、时区、稳定健身背景");
     expect(result.disclosure).not.toContain("交流偏好");
     expect(result.disclosure).toContain("AGENTS/TOOLS、凭据、原始会话、无关领域和隐藏推理");
     expect(result.disclosure).toContain("/stella-status");
@@ -210,6 +213,76 @@ describe("Runtime Identity Context to managed Stella bootstrap", () => {
         summary: "identity sources disagree",
       }],
     });
+  });
+
+  it("removes retracted sources before rendering managed projections", () => {
+    const result = buildFitnessIdentityBootstrapCandidate({
+      status: "active",
+      projectionRevision: "projection-active",
+      sourceRevision: "authority-43",
+      asOf: "2026-08-25T01:00:00.000Z",
+      manifestChecksum: "sha256:manifest",
+      retractions: [{
+        id: "retraction-user",
+        sourceReferenceId: "source-user",
+        retractedRevision: "projection-previous",
+      }],
+      identityContext: {
+        ...identityContext([
+          entry("agent-name", "identity", "Stella"),
+          entry("persona-core", "identity", "温和、直接"),
+          {
+            id: "preferred-appellation",
+            category: "background",
+            content: "旧称呼",
+            source_reference_ids: ["source-user"],
+          },
+        ]),
+        source_revision: "authority-43",
+        as_of: "2026-08-25T01:00:00.000Z",
+      },
+    });
+
+    expect(result).toMatchObject({ status: "ready", contextCompleteness: "degraded" });
+    if (result.status !== "ready") throw new Error("expected ready candidate");
+    expect(result.fields["preferred-appellation"]).toBeUndefined();
+    expect(result.artifacts.find(({ path }) => path === "USER.md")?.managedContent)
+      .not.toContain("旧称呼");
+  });
+
+  it("removes an atomic field when any contributing source is retracted", () => {
+    const result = buildFitnessIdentityBootstrapCandidate({
+      status: "active",
+      projectionRevision: "projection-active",
+      sourceRevision: "authority-43",
+      asOf: "2026-08-25T01:00:00.000Z",
+      manifestChecksum: "sha256:manifest",
+      retractions: [{
+        id: "retraction-user-old",
+        sourceReferenceId: "source-user-old",
+        retractedRevision: "projection-previous",
+      }],
+      identityContext: {
+        ...identityContext([
+          entry("agent-name", "identity", "Stella"),
+          entry("persona-core", "identity", "温和、直接"),
+          {
+            id: "communication-preferences",
+            category: "background",
+            content: "旧来源与新来源共同生成的表达",
+            source_reference_ids: ["source-user-new", "source-user-old"],
+          },
+        ]),
+        source_revision: "authority-43",
+        as_of: "2026-08-25T01:00:00.000Z",
+      },
+    });
+
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") throw new Error("expected ready candidate");
+    expect(result.fields["communication-preferences"]).toBeUndefined();
+    expect(result.artifacts.find(({ path }) => path === "USER.md")?.managedContent)
+      .not.toContain("旧来源与新来源共同生成的表达");
   });
 
   it.each([
