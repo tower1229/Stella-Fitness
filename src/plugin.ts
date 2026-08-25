@@ -1465,6 +1465,9 @@ function registerFitnessAgentWorkspace(
     ),
     host,
   });
+  let retainedAgentId = resolveDedicatedAgentId(
+    currentPluginConfig(currentOpenClawConfig(api)),
+  );
   const consumer = createRuntimeIdentityContextConsumer({
     contract: stellaIdentityProjectionContract,
   });
@@ -1561,6 +1564,53 @@ function registerFitnessAgentWorkspace(
       return result;
     },
   });
+  let standaloneRetention: Promise<void> | undefined;
+  const retainStandaloneIfUninstalled = (): Promise<void> => {
+    if (pluginEntry(currentOpenClawConfig(api)) !== undefined) {
+      return Promise.resolve();
+    }
+    if (standaloneRetention !== undefined) return standaloneRetention;
+    standaloneRetention = (async () => {
+      const agentId = retainedAgentId;
+      const active = await identityEvolution.diagnostics();
+      const asOf = active?.active.asOf ??
+        (publication?.status === "ready" ? publication.candidate.asOf : undefined);
+      if (agentId === undefined || asOf === undefined) {
+        api.logger?.error(
+          "agentId=unavailable status=failed reasonCode=STANDALONE_RETENTION_SOURCE_UNAVAILABLE count=0 durationMs=0",
+        );
+        return;
+      }
+      const startedAt = Date.now();
+      try {
+        const result = await manager.transitionToStandaloneDegraded({ agentId, asOf });
+        if (result.status !== "standalone-degraded") {
+          api.logger?.error(
+            `agentId=${agentId} status=${result.status} reasonCode=${result.reasonCode ?? "STANDALONE_RETENTION_INCOMPLETE"} count=0 durationMs=${Date.now() - startedAt}`,
+          );
+          return;
+        }
+        await contextSync.markStandaloneDegraded({ asOf });
+        api.logger?.info(
+          `agentId=${agentId} status=standalone-degraded reasonCode=PLUGIN_UNINSTALLED count=1 durationMs=${Date.now() - startedAt}`,
+        );
+      } catch {
+        api.logger?.error(
+          `agentId=${agentId} status=failed reasonCode=STANDALONE_RETENTION_FAILED count=0 durationMs=${Date.now() - startedAt}`,
+        );
+      }
+    })().finally(() => {
+      standaloneRetention = undefined;
+    });
+    return standaloneRetention;
+  };
+  api.lifecycle.registerRuntimeLifecycle({
+    id: "stella-fitness-managed-artifacts",
+    description: "Retain managed Fitness Agent artifacts across Plugin lifecycle changes",
+    async cleanup({ reason }) {
+      if (reason === "disable") await retainStandaloneIfUninstalled();
+    },
+  });
   const syncIdentityCandidate = async (
     candidate: Extract<FitnessIdentityBootstrapCandidate, { readonly status: "ready" }>,
     forcePublication = false,
@@ -1609,6 +1659,7 @@ function registerFitnessAgentWorkspace(
         currentPluginConfig(currentOpenClawConfig(api)),
       );
       if (agentId === undefined) return;
+      retainedAgentId = agentId;
       identityWatch = setInterval(async () => {
         if (identityCheckInProgress) return;
         identityCheckInProgress = true;

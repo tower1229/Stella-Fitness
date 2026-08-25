@@ -68,6 +68,11 @@ describe("OpenClaw Fitness Agent workspace host", () => {
       exists: true,
       workspace: candidate,
     });
+    delete config.plugins.entries["stella-fitness"];
+    const retained = join(root, "retained-standalone");
+    await host.retainAgent?.("fitness", retained);
+    expect(config.agents.list).toEqual([{ id: "fitness", workspace: retained }]);
+    expect(config.plugins.entries).not.toHaveProperty("stella-fitness");
     await expect(readFile(candidate)).rejects.toThrow();
   });
 });

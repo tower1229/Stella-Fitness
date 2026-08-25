@@ -257,6 +257,85 @@ describe("Plugin registration", () => {
     expect(readFileSync(soulPath, "utf8")).toContain("越权人格");
   });
 
+  it("distinguishes disable from uninstall and restores live artifacts after re-enable", async () => {
+    const services: Array<Record<string, unknown>> = [];
+    const lifecycles: Array<Record<string, unknown>> = [];
+    const personal = configuredPersonalDirectory();
+    writeRuntimeIdentityProjection(personal.personalDataDirectory);
+    const canonicalPath = join(personal.personalDataDirectory, "canonical-retained.txt");
+    writeFileSync(canonicalPath, "canonical fact\n");
+    const openclawConfig = permittedOpenClawConfig();
+    const api = compatibleApi({
+      commands: [],
+      hooks: new Map(),
+      cliRegistrations: [],
+      pluginConfig: personal,
+      openclawConfig,
+      workspaceRoot: temporaryRoot(),
+      services,
+      lifecycles,
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const workspaceService = services.find(({ id }) =>
+      id === "stella-fitness-agent-workspace"
+    );
+    await (workspaceService?.start as () => Promise<void>)();
+    const liveWorkspace = openclawConfig.agents?.list?.find(
+      ({ id }) => id === "fitness",
+    )?.workspace;
+    expect(liveWorkspace).toBeDefined();
+    const lifecycle = lifecycles.find(({ id }) =>
+      id === "stella-fitness-managed-artifacts"
+    );
+    expect(lifecycle).toBeDefined();
+
+    openclawConfig.plugins.entries["stella-fitness"]!.enabled = false;
+    await (lifecycle?.cleanup as (input: { reason: string }) => Promise<void>)({
+      reason: "disable",
+    });
+    expect(openclawConfig.agents?.list?.find(({ id }) => id === "fitness")?.workspace)
+      .toBe(liveWorkspace);
+    expect(readFileSync(join(liveWorkspace!, "AGENTS.md"), "utf8"))
+      .not.toContain("standalone-degraded");
+
+    delete openclawConfig.plugins.entries["stella-fitness"];
+    await (lifecycle?.cleanup as (input: { reason: string }) => Promise<void>)({
+      reason: "disable",
+    });
+    const standaloneWorkspace = openclawConfig.agents?.list?.find(
+      ({ id }) => id === "fitness",
+    )?.workspace;
+    expect(standaloneWorkspace).not.toBe(liveWorkspace);
+    const standaloneAgents = readFileSync(
+      join(standaloneWorkspace!, "AGENTS.md"),
+      "utf8",
+    );
+    expect(standaloneAgents).toContain("status: standalone-degraded");
+    expect(standaloneAgents).toContain("last verified as-of: 2026-08-24T01:00:00.000Z");
+    expect(readFileSync(join(standaloneWorkspace!, "IDENTITY.md"), "utf8"))
+      .toContain("Stella");
+    expect(readFileSync(canonicalPath, "utf8")).toBe("canonical fact\n");
+    expect(openclawConfig.plugins.entries["cognitive-runtime"]?.config.stella)
+      .toBeDefined();
+
+    openclawConfig.plugins.entries["stella-fitness"] = {
+      enabled: true,
+      config: { dedicatedAgentId: "fitness" },
+      hooks: { allowConversationAccess: true },
+    };
+    await (workspaceService?.start as () => Promise<void>)();
+    const reenabledWorkspace = openclawConfig.agents?.list?.find(
+      ({ id }) => id === "fitness",
+    )?.workspace;
+    expect(reenabledWorkspace).not.toBe(standaloneWorkspace);
+    expect(readFileSync(join(reenabledWorkspace!, "AGENTS.md"), "utf8"))
+      .not.toContain("standalone-degraded");
+    expect(readFileSync(join(reenabledWorkspace!, "SOUL.md"), "utf8"))
+      .toContain("温和、直接");
+  });
+
   it("keeps the verified workspace identity until a material Runtime update is accepted", async () => {
     const commands: Array<Record<string, unknown>> = [];
     const services: Array<Record<string, unknown>> = [];
@@ -3996,6 +4075,7 @@ function compatibleApi(options: {
   stateRoot?: string;
   workspaceRoot?: string;
   services?: Array<Record<string, unknown>>;
+  lifecycles?: Array<Record<string, unknown>>;
 }) {
   const stateRoot = options.stateRoot ?? temporaryRoot();
   const openclawConfig = options.openclawConfig ?? permittedOpenClawConfig();
@@ -4071,6 +4151,11 @@ function compatibleApi(options: {
     registerTrustedToolPolicy() {},
     registerService(service: Record<string, unknown>) {
       options.services?.push(service);
+    },
+    lifecycle: {
+      registerRuntimeLifecycle(lifecycle: Record<string, unknown>) {
+        options.lifecycles?.push(lifecycle);
+      },
     },
   };
 }
@@ -4241,7 +4326,8 @@ type TestOpenClawConfig = {
   }>;
   plugins: {
     entries: {
-      "stella-fitness": {
+      "stella-fitness"?: {
+        enabled?: boolean;
         hooks: { allowConversationAccess: boolean };
         config: Record<string, unknown> | undefined;
       };

@@ -26,6 +26,7 @@ export type FitnessAgentWorkspaceHost = {
   ) => { readonly exists: boolean; readonly workspace: string };
   prepareWorkspace?: (workspace: string) => Promise<void>;
   activateAgent?: (agentId: string, workspace: string) => Promise<void>;
+  retainAgent?: (agentId: string, workspace: string) => Promise<void>;
 };
 
 export type ManagedAgentArtifactInput = {
@@ -45,7 +46,12 @@ export type FitnessAgentWorkspaceAdoptionRecord = {
 };
 
 export type FitnessAgentWorkspaceResult = {
-  readonly status: "ready" | "blocked" | "adoption-required" | "conflicted";
+  readonly status:
+    | "ready"
+    | "standalone-degraded"
+    | "blocked"
+    | "adoption-required"
+    | "conflicted";
   readonly agentId: string;
   readonly workspace?: string;
   readonly created?: boolean;
@@ -80,6 +86,10 @@ export type FitnessAgentWorkspaceManager = {
   sync(input: {
     readonly agentId: string;
     readonly artifacts: readonly ManagedAgentArtifactInput[];
+  }): Promise<FitnessAgentWorkspaceResult>;
+  transitionToStandaloneDegraded(input: {
+    readonly agentId: string;
+    readonly asOf: string;
   }): Promise<FitnessAgentWorkspaceResult>;
   adoptionRecord(
     agentId: string,
@@ -120,6 +130,11 @@ export function createFitnessAgentWorkspaceManager(
       input.agentId,
       () => syncWorkspace(options, input),
     ),
+    transitionToStandaloneDegraded: (input) => withAgentLock(
+      options.runtimeDirectory,
+      input.agentId,
+      () => transitionToStandaloneDegraded(options, input),
+    ),
     adoptionRecord: (agentId) => readAdoptionRecord(
       options.runtimeDirectory,
       validateAgentId(agentId),
@@ -130,6 +145,126 @@ export function createFitnessAgentWorkspaceManager(
       recoveryToken,
     ),
   };
+}
+
+async function transitionToStandaloneDegraded(
+  options: FitnessAgentWorkspaceManagerOptions,
+  input: { readonly agentId: string; readonly asOf: string },
+): Promise<FitnessAgentWorkspaceResult> {
+  const agentId = validateAgentId(input.agentId);
+  const asOf = validateAsOf(input.asOf);
+  const preflight = retentionCapabilityPreflight(options.host);
+  if (!preflight.ready) {
+    return { status: "blocked", agentId, reasonCode: preflight.reasonCode };
+  }
+  const discovered = options.host.discoverAgent!(agentId);
+  if (!discovered.exists) {
+    return {
+      status: "conflicted",
+      agentId,
+      reasonCode: "MANAGED_WORKSPACE_REQUIRED",
+    };
+  }
+  const ownership = await inspectOwnership(discovered.workspace, agentId);
+  if (ownership.status !== "valid") {
+    return {
+      status: "conflicted",
+      agentId,
+      workspace: discovered.workspace,
+      reasonCode: ownership.status === "missing"
+        ? "OWNERSHIP_MANIFEST_MISSING"
+        : ownership.reasonCode,
+    };
+  }
+  if (!await hasCompleteIdentityCore(discovered.workspace)) {
+    return {
+      status: "conflicted",
+      agentId,
+      workspace: discovered.workspace,
+      reasonCode: "IDENTITY_CORE_MISSING",
+    };
+  }
+  const retainedArtifacts = await readManagedArtifacts(
+    discovered.workspace,
+    ownership.manifest,
+  );
+  const agentsIndex = retainedArtifacts.findIndex(({ path }) => path === "AGENTS.md");
+  if (agentsIndex < 0) {
+    return {
+      status: "conflicted",
+      agentId,
+      workspace: discovered.workspace,
+      reasonCode: "DOMAIN_BOUNDARY_MISSING",
+    };
+  }
+  const agents = retainedArtifacts[agentsIndex]!;
+  retainedArtifacts[agentsIndex] = {
+    path: agents.path,
+    managedContent: standaloneDegradedContent(agents.managedContent, asOf),
+  };
+  if (manifestMatchesArtifacts(ownership.manifest, retainedArtifacts)) {
+    return {
+      status: "standalone-degraded",
+      agentId,
+      workspace: discovered.workspace,
+      created: false,
+      ownershipRevision: ownership.manifest.ownershipRevision,
+    };
+  }
+
+  const managedRoot = managedRootForWorkspace(discovered.workspace, agentId);
+  const revisionsRoot = join(managedRoot, "revisions");
+  await mkdir(revisionsRoot, { recursive: true, mode: 0o700 });
+  const token = randomUUID();
+  const candidate = join(managedRoot, `.candidate-${token}`);
+  const revision = join(revisionsRoot, token);
+  try {
+    const sourceSnapshot = await copyStableWorkspace(
+      options,
+      discovered.workspace,
+      candidate,
+    );
+    if (sourceSnapshot === undefined) {
+      await rm(candidate, { recursive: true, force: true });
+      return {
+        status: "conflicted",
+        agentId,
+        workspace: discovered.workspace,
+        reasonCode: "WORKSPACE_CHANGED_DURING_READ",
+      };
+    }
+    const manifest = await writeManagedArtifacts(
+      candidate,
+      agentId,
+      ownership.manifest.ownershipRevision + 1,
+      retainedArtifacts,
+    );
+    const verified = await inspectOwnership(candidate, agentId);
+    if (verified.status !== "valid" || !await hasCompleteIdentityCore(candidate)) {
+      throw new Error("standalone candidate failed ownership validation");
+    }
+    await rename(candidate, revision);
+    if (!await workspaceMatchesSnapshot(discovered.workspace, sourceSnapshot)) {
+      await rm(revision, { recursive: true, force: true });
+      return {
+        status: "conflicted",
+        agentId,
+        workspace: discovered.workspace,
+        reasonCode: "WORKSPACE_CHANGED_DURING_READ",
+      };
+    }
+    await options.host.retainAgent!(agentId, revision);
+    return {
+      status: "standalone-degraded",
+      agentId,
+      workspace: revision,
+      created: false,
+      ownershipRevision: manifest.ownershipRevision,
+    };
+  } catch (error) {
+    await rm(candidate, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 async function captureRecoveryToken(
@@ -678,6 +813,27 @@ function capabilityPreflight(
   return host.preflight();
 }
 
+function retentionCapabilityPreflight(
+  host: FitnessAgentWorkspaceHost,
+): { readonly ready: true } | { readonly ready: false; readonly reasonCode: string } {
+  if (
+    typeof host.preflight !== "function" ||
+    typeof host.discoverAgent !== "function" ||
+    typeof host.retainAgent !== "function"
+  ) {
+    return { ready: false, reasonCode: "AGENT_FILES_BOOTSTRAP_UNAVAILABLE" };
+  }
+  return host.preflight();
+}
+
+function validateAsOf(value: string): string {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.valueOf()) || parsed.toISOString() !== value) {
+    throw new Error("Standalone degraded as-of must be an ISO timestamp");
+  }
+  return value;
+}
+
 function validateAgentId(value: string): string {
   const trimmed = value.trim();
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/u.test(trimmed)) {
@@ -874,6 +1030,59 @@ function managedContentMatches(
     file.startsWith(userStart, endIndex) &&
     file.indexOf(userEnd, endIndex + userStart.length) >= 0 &&
     file.endsWith(userEnd);
+}
+
+async function readManagedArtifacts(
+  workspace: string,
+  manifest: OwnershipManifest,
+): Promise<ManagedAgentArtifactInput[]> {
+  return await Promise.all(manifest.artifacts.map(async (artifact) => ({
+    path: artifact.path,
+    managedContent: extractManagedContent(
+      await readFile(join(workspace, artifact.path), "utf8"),
+      artifact,
+      manifest.ownershipRevision,
+    ),
+  })));
+}
+
+function extractManagedContent(
+  file: string,
+  artifact: OwnershipArtifact,
+  ownershipRevision: number,
+): string {
+  const start = `<!-- stella-fitness:managed:start path=${artifact.path} revision=${ownershipRevision} checksum=${artifact.checksum} -->\n`;
+  const end = "\n<!-- stella-fitness:managed:end -->";
+  const endIndex = file.indexOf(end, start.length);
+  if (!file.startsWith(start) || endIndex < 0) {
+    throw new Error("Managed artifact content is invalid");
+  }
+  return normalizeManagedContent(file.slice(start.length, endIndex));
+}
+
+function standaloneDegradedContent(content: string, asOf: string): string {
+  const start = "<!-- stella-fitness:lifecycle:start -->";
+  const end = "<!-- stella-fitness:lifecycle:end -->";
+  const existingStart = content.indexOf(start);
+  const retained = existingStart < 0
+    ? content.trimEnd()
+    : content.slice(0, existingStart).trimEnd();
+  return [
+    retained,
+    "",
+    start,
+    "# Stella Fitness lifecycle status",
+    "",
+    "status: standalone-degraded",
+    `last verified as-of: ${asOf}`,
+    "",
+    "The Stella Fitness Plugin real-time recording, Current Fitness State, and Context Resync capabilities are unavailable.",
+    "Retained projections and fitness facts are historical reference data and must not be represented as current or real-time.",
+    "Continue using the last verified Stella identity and recording-only domain boundary.",
+    "Reinstall and complete locator, ownership, source, freshness, and Host capability preflight before restoring live capabilities.",
+    end,
+    "",
+  ].join("\n");
 }
 
 function normalizeManagedContent(value: string): string {

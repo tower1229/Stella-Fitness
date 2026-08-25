@@ -26,6 +26,40 @@ afterEach(() => {
 });
 
 describe("Fitness Context Sync Coordinator", () => {
+  it("persists standalone degraded with the last verified tuple until re-enable", async () => {
+    const runtimeDirectory = temporaryRuntimeDirectory();
+    const coordinator = createFitnessContextSyncCoordinator({
+      runtimeDirectory,
+      publish: async () => publication("source-live", "projection-live"),
+      inspectSource: async () => ({
+        sourceRevision: "source-live",
+        asOf: "2026-08-24T01:00:00.000Z",
+      }),
+      publishPointerStatus: async () => undefined,
+      now: () => new Date("2026-08-25T01:00:00.000Z"),
+    });
+    await coordinator.resync({ trigger: "startup" });
+
+    await expect(coordinator.markStandaloneDegraded({
+      asOf: "2026-08-24T01:00:00.000Z",
+    })).resolves.toMatchObject({
+      status: "standalone-degraded",
+      sourceRevision: "source-live",
+      projectionRevision: "projection-live",
+      asOf: "2026-08-24T03:00:00.000Z",
+      reasonCode: "PLUGIN_UNINSTALLED",
+    });
+    await expect(coordinator.diagnostics()).resolves.toMatchObject({
+      status: "standalone-degraded",
+      source_category: "workspace",
+      recovery_action: "reinstall-and-run-full-preflight",
+    });
+    await expect(coordinator.checkForExternalRevision()).resolves.toMatchObject({
+      status: "ready",
+      sourceRevision: "source-live",
+    });
+  });
+
   it("serializes bounded refreshes and preserves a successful canonical write", async () => {
     const runtimeDirectory = temporaryRuntimeDirectory();
     let attempts = 0;
