@@ -339,9 +339,7 @@ describe("Plugin registration", () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const services: Array<Record<string, unknown>> = [];
     const personal = configuredPersonalDirectory();
-    writeRuntimeIdentityProjection(personal.personalDataDirectory, {
-      includeAppellation: false,
-    });
+    writeRuntimeIdentityProjection(personal.personalDataDirectory);
     registerStellaFitnessPlugin(
       compatibleApi({
         commands: [],
@@ -367,17 +365,30 @@ describe("Plugin registration", () => {
       runId: "degraded-background-run",
     };
     await hooks.get("before_prompt_build")?.(
-      { prompt: "你应该怎么称呼我？", messages: [] },
+      { prompt: "我的时区是什么？", messages: [] },
       backgroundContext,
     );
     expect(hooks.get("reply_payload_sending")?.(
-      { kind: "final", payload: { text: "我不知道你的称呼。" } },
+      { kind: "final", payload: { text: "我不知道你的时区。" } },
       backgroundContext,
     )).toMatchObject({
       payload: {
-        text: "这项身份背景上下文尚未提供；我会基于已验证内容回答，并明确不知道的部分。\n\n我不知道你的称呼。",
+        text: "这项身份背景上下文尚未提供；我会基于已验证内容回答，并明确不知道的部分。\n\n我不知道你的时区。",
       },
     });
+
+    const appellationContext = {
+      sessionKey: "agent:fitness:webchat:complete-appellation",
+      runId: "complete-appellation-run",
+    };
+    await hooks.get("before_prompt_build")?.(
+      { prompt: "你应该怎么称呼我？", messages: [] },
+      appellationContext,
+    );
+    expect(hooks.get("reply_payload_sending")?.(
+      { kind: "final", payload: { text: "我会称呼你涛哥。" } },
+      appellationContext,
+    )).toBeUndefined();
 
     const coreContext = {
       sessionKey: "agent:fitness:webchat:degraded-core",

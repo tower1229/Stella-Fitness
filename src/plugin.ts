@@ -25,6 +25,7 @@ import {
 } from "./context/runtime-contract.js";
 import {
   buildFitnessIdentityBootstrapCandidate,
+  STELLA_IDENTITY_CONTEXT_ENTRY_IDS,
   type FitnessIdentityBootstrapCandidate,
 } from "./context/identity-bootstrap.js";
 import { stellaIdentityProjectionContract } from "./context/stella-identity-contract.js";
@@ -98,11 +99,31 @@ const PRINTABLE_LOG_FILE_NAME = "zhuoshu-workout-log.xlsx";
 const printableLogDownloadTokens = new Map<string, number>();
 const BODY_WEIGHT_RECORDING_INPUT =
   /^\s*(?:(?:\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))?|今天|昨天|前天|today|yesterday)\s*)?(?:我\s*)?(?:记录\s*)?(?:体重|body\s*weight|weight)\s*(?:是|为|:|：)?\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?(?:\s*(?:或|还是|or)\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?)?\s*[。.!]?\s*$/iu;
-const IDENTITY_CORE_DEPENDENT_INPUT =
-  /(?:你(?:是谁|叫什么|的名字|的人格|的性格)|who\s+are\s+you|your\s+(?:name|persona))/iu;
-const IDENTITY_BACKGROUND_DEPENDENT_INPUT =
-  /(?:你(?:应该怎么称呼我|会怎么称呼我)|怎么称呼我|称呼我什么|我的(?:称呼|语言|时区|交流偏好|沟通偏好|健身背景)|根据你对我的了解|what\s+do\s+you\s+call\s+me|my\s+(?:preferred\s+name|language|timezone|communication\s+preferences?|fitness\s+background))/iu;
-type IdentityContextDependency = "identity" | "background";
+const IDENTITY_DEPENDENCY_PATTERNS = [{
+  fieldId: STELLA_IDENTITY_CONTEXT_ENTRY_IDS.appellation,
+  pattern: /(?:你(?:应该怎么称呼我|会怎么称呼我)|怎么称呼我|称呼我什么|what\s+do\s+you\s+call\s+me|my\s+preferred\s+name)/iu,
+}, {
+  fieldId: STELLA_IDENTITY_CONTEXT_ENTRY_IDS.language,
+  pattern: /(?:我的语言|my\s+language)/iu,
+}, {
+  fieldId: STELLA_IDENTITY_CONTEXT_ENTRY_IDS.timezone,
+  pattern: /(?:我的时区|my\s+timezone)/iu,
+}, {
+  fieldId: STELLA_IDENTITY_CONTEXT_ENTRY_IDS.communication,
+  pattern: /(?:我的(?:交流偏好|沟通偏好)|my\s+communication\s+preferences?)/iu,
+}, {
+  fieldId: STELLA_IDENTITY_CONTEXT_ENTRY_IDS.fitnessBackground,
+  pattern: /(?:我的健身背景|my\s+fitness\s+background)/iu,
+}, {
+  fieldId: STELLA_IDENTITY_CONTEXT_ENTRY_IDS.personaCore,
+  pattern: /(?:你(?:的人格|的性格)|your\s+persona)/iu,
+}, {
+  fieldId: STELLA_IDENTITY_CONTEXT_ENTRY_IDS.agentName,
+  pattern: /(?:你(?:是谁|叫什么|的名字)|who\s+are\s+you|your\s+name)/iu,
+}] as const;
+type IdentityContextDependency =
+  | typeof IDENTITY_DEPENDENCY_PATTERNS[number]["fieldId"]
+  | "background";
 const INITIAL_12RM_ALIASES = {
   "goblet-squat": /(?:高脚杯深蹲|goblet[\s-]*squat)/iu,
   "dumbbell-bench-press": /(?:哑铃卧推|dumbbell[\s-]*bench[\s-]*press)/iu,
@@ -133,8 +154,12 @@ const OTHER_EXERCISE_NAMES: Readonly<Record<string, string>> = {
 };
 
 function identityContextDependency(input: string): IdentityContextDependency | undefined {
-  if (IDENTITY_BACKGROUND_DEPENDENT_INPUT.test(input)) return "background";
-  if (IDENTITY_CORE_DEPENDENT_INPUT.test(input)) return "identity";
+  for (const dependency of IDENTITY_DEPENDENCY_PATTERNS) {
+    if (dependency.pattern.test(input)) return dependency.fieldId;
+  }
+  if (/(?:根据你对我的了解|based\s+on\s+what\s+you\s+know\s+about\s+me)/iu.test(input)) {
+    return "background";
+  }
   return undefined;
 }
 
@@ -1768,8 +1793,8 @@ function registerFitnessAgentWorkspace(
       ].join("\0");
       if (lastDisclosureKey === disclosureKey) {
         if (
-          current.contextCompleteness === "degraded" &&
-          options.contextDependency === "background"
+          options.contextDependency !== undefined &&
+          identityContextDependencyMissing(current, options.contextDependency)
         ) {
           return "这项身份背景上下文尚未提供；我会基于已验证内容回答，并明确不知道的部分。";
         }
@@ -1875,6 +1900,20 @@ function formatPendingIdentityUpdate(
     `当前继续使用最后验证身份，as-of ${result.active.asOf}。`,
     "可使用 `/stella-identity accept`、`reject` 或 `later`。",
   ].join("\n");
+}
+
+function identityContextDependencyMissing(
+  candidate: FitnessIdentityPublicationCandidate,
+  dependency: IdentityContextDependency,
+): boolean {
+  if (dependency !== "background") return candidate.fields[dependency] === undefined;
+  return [
+    STELLA_IDENTITY_CONTEXT_ENTRY_IDS.appellation,
+    STELLA_IDENTITY_CONTEXT_ENTRY_IDS.language,
+    STELLA_IDENTITY_CONTEXT_ENTRY_IDS.timezone,
+    STELLA_IDENTITY_CONTEXT_ENTRY_IDS.communication,
+    STELLA_IDENTITY_CONTEXT_ENTRY_IDS.fitnessBackground,
+  ].some((fieldId) => candidate.fields[fieldId] === undefined);
 }
 
 function formatIdentityEvolutionResult(
