@@ -180,6 +180,38 @@ describe("Runtime Identity Context to managed Stella bootstrap", () => {
     });
   });
 
+  it("does not publish a new identity when Runtime preserves conflicting sources", () => {
+    expect(buildFitnessIdentityBootstrapCandidate({
+      status: "active",
+      projectionRevision: "projection-active",
+      sourceRevision: "authority-43",
+      asOf: "2026-08-25T01:00:00.000Z",
+      manifestChecksum: "sha256:manifest",
+      conflicts: [{
+        id: "identity-conflict",
+        sourceReferenceIds: ["identity-a", "identity-b"],
+        summary: "identity sources disagree",
+      }],
+      retractions: [],
+      identityContext: {
+        ...identityContext([
+          entry("agent-name", "identity", "Nova"),
+          entry("persona-core", "identity", "新的核心人格"),
+        ]),
+        source_revision: "authority-43",
+        as_of: "2026-08-25T01:00:00.000Z",
+      },
+    })).toEqual({
+      status: "blocked",
+      reasonCode: "IDENTITY_CONTEXT_CONFLICT",
+      conflicts: [{
+        id: "identity-conflict",
+        sourceReferenceIds: ["identity-a", "identity-b"],
+        summary: "identity sources disagree",
+      }],
+    });
+  });
+
   it.each([
     [
       "source revision mismatch",

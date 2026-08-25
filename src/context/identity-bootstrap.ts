@@ -1,9 +1,7 @@
 import type {
-  ManagedAgentArtifactInput,
-} from "../agent-workspace/manager.js";
-import type {
   ResilientRuntimeIdentityContextResult,
 } from "./runtime-contract.js";
+import type { FitnessIdentityPublicationCandidate } from "./identity-evolution.js";
 
 export type StellaIdentityContextEntry = {
   readonly id: string;
@@ -24,16 +22,9 @@ export type StellaIdentityContext = {
 };
 
 export type FitnessIdentityBootstrapCandidate =
-  | {
+  | ({
       readonly status: "ready";
-      readonly freshness: "active" | "stale";
-      readonly contextCompleteness: "complete" | "degraded";
-      readonly asOf: string;
-      readonly sourceRevision: string;
-      readonly projectionRevision: string;
-      readonly artifacts: readonly ManagedAgentArtifactInput[];
-      readonly disclosure: string;
-    }
+    } & FitnessIdentityPublicationCandidate)
   | {
       readonly status: "blocked";
       readonly reasonCode:
@@ -42,7 +33,9 @@ export type FitnessIdentityBootstrapCandidate =
         | "IDENTITY_CONTEXT_REVOKED"
         | "IDENTITY_CORE_REQUIRED"
         | "IDENTITY_CONTEXT_INVALID"
+        | "IDENTITY_CONTEXT_CONFLICT"
         | "MATERIAL_IDENTITY_UPDATE_REQUIRES_ACTIVE";
+      readonly conflicts?: FitnessIdentityPublicationCandidate["conflicts"];
     };
 
 export const STELLA_IDENTITY_CONTEXT_ENTRY_IDS = {
@@ -82,6 +75,13 @@ export function buildFitnessIdentityBootstrapCandidate(
   }
   if (!contextMatchesProjection(result.identityContext, result)) {
     return { status: "blocked", reasonCode: "IDENTITY_CONTEXT_INVALID" };
+  }
+  if ((result.conflicts?.length ?? 0) > 0) {
+    return {
+      status: "blocked",
+      reasonCode: "IDENTITY_CONTEXT_CONFLICT",
+      conflicts: result.conflicts!,
+    };
   }
   if (result.status === "stale" && result.materialIdentityUpdate === true) {
     return {
@@ -146,6 +146,13 @@ export function buildFitnessIdentityBootstrapCandidate(
     asOf: result.asOf,
     sourceRevision: result.sourceRevision,
     projectionRevision: result.projectionRevision,
+    manifestChecksum: result.manifestChecksum,
+    fields: Object.fromEntries([...entries].map(([id, entry]) => [id, {
+      content: entry.content,
+      sourceReferenceIds: entry.source_reference_ids,
+    }])),
+    conflicts: result.conflicts ?? [],
+    retractions: result.retractions ?? [],
     artifacts,
     disclosure: initializationDisclosure(
       result.status,
