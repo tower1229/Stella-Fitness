@@ -28,6 +28,7 @@ import {
   type FitnessIdentityBootstrapCandidate,
 } from "./context/identity-bootstrap.js";
 import { stellaIdentityProjectionContract } from "./context/stella-identity-contract.js";
+import { createPersonalContextModelingGate } from "./context/modeling-authorization.js";
 import {
   inspectFitnessContextProjectionSource,
   publishFitnessContextProjection,
@@ -155,11 +156,21 @@ export function registerStellaFitnessPlugin(
 
   const preflight = createPreflightRunner(api);
   preflight();
+  const contextModeling = createPersonalContextModelingGate({
+    runtimeDirectory: join(
+      api.runtime.state.resolveStateDir(process.env),
+      PLUGIN_ID,
+    ),
+    // Runtime's current stella.identity-context/v1 has no modeling contract.
+    formalContractAllowsRemoteModeling: false,
+    logger: (event) => api.logger?.info(formatSafeModelingLog(event)),
+  });
   const contextSync = registerFitnessContextSync(api);
   const identityBootstrap = registerFitnessAgentWorkspace(api, contextSync);
   statusText = () => [
     createStatusResponse(preflight()).text,
     identityBootstrap.statusSummary(),
+    formatModelingDiagnostics(contextModeling.diagnostics()),
   ].join("\n");
   const stellaRuntime = createStellaFitnessRuntime({
     extractionRuntime: createCurrentExtractionRuntime(api),
@@ -2283,6 +2294,23 @@ function formatContextSyncDiagnostics(state: FitnessContextSyncState): string {
     `reason: ${state.reason_code ?? "none"}`,
     `recovery: ${state.recovery_action ?? "none"}`,
   ].join("\n");
+}
+
+function formatModelingDiagnostics(
+  diagnostics: ReturnType<
+    ReturnType<typeof createPersonalContextModelingGate>["diagnostics"]
+  >,
+): string {
+  return [
+    `context-modeling: ${diagnostics.mode}`,
+    `modeling-authorization: ${diagnostics.authorizationStatus}`,
+  ].join("\n");
+}
+
+function formatSafeModelingLog(event: Readonly<Record<string, string | number>>): string {
+  return Object.entries(event)
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(" ");
 }
 
 function contextSyncAbortError(): Error {

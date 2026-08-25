@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 const READY_FOR_SETUP_STATUS =
-  "Stella Fitness: READY_FOR_SETUP\ncontract: openclaw>=2026.6.34\nscope: recording-only\ntechnical-readiness: personal-data-directory: ready - Personal Data Directory is readable and writable\ntechnical-readiness: conversation: ready - Plugin conversation hook access is enabled\ntechnical-readiness: time-zone: ready - OpenClaw user timezone is Asia/Shanghai\ntechnical-readiness: media: ready - OpenClaw structured media extraction is available\ntechnical-readiness: model-permission: setup-required - Configure an allowlisted extraction provider and model\nreason: EXTRACTION_MODEL_REQUIRED: Configure an allowlisted extraction provider and model\ncontext-sync: degraded - Runtime Identity Context is unavailable (IDENTITY_CONTEXT_UNAVAILABLE)";
+  "Stella Fitness: READY_FOR_SETUP\ncontract: openclaw>=2026.6.34\nscope: recording-only\ntechnical-readiness: personal-data-directory: ready - Personal Data Directory is readable and writable\ntechnical-readiness: conversation: ready - Plugin conversation hook access is enabled\ntechnical-readiness: time-zone: ready - OpenClaw user timezone is Asia/Shanghai\ntechnical-readiness: media: ready - OpenClaw structured media extraction is available\ntechnical-readiness: model-permission: setup-required - Configure an allowlisted extraction provider and model\nreason: EXTRACTION_MODEL_REQUIRED: Configure an allowlisted extraction provider and model\ncontext-sync: degraded - Runtime Identity Context is unavailable (IDENTITY_CONTEXT_UNAVAILABLE)\ncontext-modeling: deterministic-only\nmodeling-authorization: not-authorized";
 
 describe("Plugin registration", () => {
   it("registers status CLI metadata without loading full runtime contracts", () => {
@@ -171,6 +171,13 @@ describe("Plugin registration", () => {
     ).resolves.toEqual({
       text: expect.stringContaining(
         "context-sync: ready - as-of 2026-08-24T01:00:00.000Z",
+      ),
+    });
+    await expect(
+      (statusCommand?.handler as () => Promise<{ readonly text: string }>)(),
+    ).resolves.toEqual({
+      text: expect.stringContaining(
+        "context-modeling: deterministic-only\nmodeling-authorization: not-authorized",
       ),
     });
     markRuntimeIdentityProjectionStale(personal.personalDataDirectory);
