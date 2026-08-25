@@ -76,6 +76,16 @@ export type RuntimeProjectionManifest = {
   readonly categories?: readonly ("background" | "identity")[];
   readonly sourceReferenceIds?: readonly string[];
   readonly materialIdentityUpdate?: boolean;
+  readonly conflicts?: readonly {
+    readonly id: string;
+    readonly sourceReferenceIds: readonly string[];
+    readonly summary: string;
+  }[];
+  readonly retractions?: readonly {
+    readonly id: string;
+    readonly sourceReferenceId: string;
+    readonly retractedRevision: string;
+  }[];
   readonly declaredFiles: readonly {
     readonly relativePath: string;
     readonly checksum: string;
@@ -118,6 +128,8 @@ export type RuntimeIdentityContextResult<IdentityContext> =
       readonly manifestChecksum: string;
       readonly identityContext: IdentityContext;
       readonly materialIdentityUpdate?: boolean;
+      readonly conflicts?: NonNullable<RuntimeProjectionManifest["conflicts"]>;
+      readonly retractions?: NonNullable<RuntimeProjectionManifest["retractions"]>;
     };
 
 export type ResilientRuntimeIdentityContextResult<IdentityContext> =
@@ -381,6 +393,8 @@ function consumeRevision<IdentityContext>(
     asOf: manifest.asOf,
     manifestChecksum: pointer.manifestChecksum,
     identityContext,
+    ...(manifest.conflicts === undefined ? {} : { conflicts: manifest.conflicts }),
+    ...(manifest.retractions === undefined ? {} : { retractions: manifest.retractions }),
     ...(manifest.materialIdentityUpdate === undefined
       ? {}
       : { materialIdentityUpdate: manifest.materialIdentityUpdate }),

@@ -165,6 +165,14 @@ describe("Plugin registration", () => {
     })).resolves.toEqual({
       text: expect.stringContaining("Stella Fitness 身份上下文已初始化"),
     });
+    await expect(start({
+      channel: "webchat",
+      commandBody: "/stella-start",
+      isAuthorizedSender: true,
+      sessionKey: "agent:fitness:webchat:identity-bootstrap-repeat",
+    })).resolves.toEqual({
+      text: expect.not.stringContaining("Stella Fitness 身份上下文已初始化"),
+    });
     const statusCommand = commands.find(({ name }) => name === "stella-status");
     await expect(
       (statusCommand?.handler as () => Promise<{ readonly text: string }>)(),
@@ -220,7 +228,12 @@ describe("Plugin registration", () => {
       persona: "保持事实边界",
     });
     await expect(handler({ args: "" })).resolves.toEqual({
-      text: expect.stringContaining("ownership revision 2"),
+      text: expect.stringContaining("身份更新待确认"),
+    });
+    const identityHandler = commands.find(({ name }) => name === "stella-identity")
+      ?.handler as (input: { readonly args: string }) => Promise<{ readonly text: string }>;
+    await expect(identityHandler({ args: "accept" })).resolves.toEqual({
+      text: expect.stringContaining("已接受身份更新"),
     });
     const updatedWorkspace = openclawConfig.agents?.list?.find(
       ({ id }) => id === "fitness",
@@ -235,6 +248,228 @@ describe("Plugin registration", () => {
       text: "Fitness workspace ownership 冲突，已停止覆盖。请先检查本地 Context Diagnostics。",
     });
     expect(readFileSync(soulPath, "utf8")).toContain("越权人格");
+  });
+
+  it("keeps the verified workspace identity until a material Runtime update is accepted", async () => {
+    const commands: Array<Record<string, unknown>> = [];
+    const services: Array<Record<string, unknown>> = [];
+    const personal = configuredPersonalDirectory();
+    writeRuntimeIdentityProjection(personal.personalDataDirectory);
+    const openclawConfig = permittedOpenClawConfig();
+    const api = compatibleApi({
+      commands,
+      hooks: new Map(),
+      cliRegistrations: [],
+      pluginConfig: personal,
+      openclawConfig,
+      workspaceRoot: temporaryRoot(),
+      services,
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const workspaceService = services.find(({ id }) =>
+      id === "stella-fitness-agent-workspace"
+    );
+    await (workspaceService?.start as () => Promise<void>)();
+    writeRuntimeIdentityProjection(personal.personalDataDirectory, {
+      sourceRevision: "authority-43",
+      agentName: "Nova",
+    });
+    const workspace = commands.find(({ name }) => name === "stella-workspace")
+      ?.handler as (input: { readonly args: string }) => Promise<{ readonly text: string }>;
+    await expect(workspace({ args: "sync" })).resolves.toEqual({
+      text: expect.stringContaining("身份更新待确认"),
+    });
+    const before = openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
+      ?.workspace;
+    expect(readFileSync(join(before!, "IDENTITY.md"), "utf8")).toContain("Stella");
+    expect(readFileSync(join(before!, "IDENTITY.md"), "utf8")).not.toContain("Nova");
+
+    const identity = commands.find(({ name }) => name === "stella-identity")
+      ?.handler as (input: { readonly args: string }) => Promise<{ readonly text: string }>;
+    await expect(identity({ args: "accept" })).resolves.toEqual({
+      text: expect.stringContaining("已接受身份更新"),
+    });
+    const after = openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
+      ?.workspace;
+    expect(readFileSync(join(after!, "IDENTITY.md"), "utf8")).toContain("Nova");
+  });
+
+  it("automatically publishes a verified minor identity-context wording update", async () => {
+    vi.useFakeTimers();
+    try {
+      const services: Array<Record<string, unknown>> = [];
+      const personal = configuredPersonalDirectory();
+      writeRuntimeIdentityProjection(personal.personalDataDirectory);
+      const openclawConfig = permittedOpenClawConfig();
+      const api = compatibleApi({
+        commands: [],
+        hooks: new Map(),
+        cliRegistrations: [],
+        pluginConfig: personal,
+        openclawConfig,
+        workspaceRoot: temporaryRoot(),
+        services,
+      });
+      registerStellaFitnessPlugin(
+        api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+      );
+      const workspaceService = services.find(({ id }) =>
+        id === "stella-fitness-agent-workspace"
+      );
+      await (workspaceService?.start as () => Promise<void>)();
+      const before = openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
+        ?.workspace;
+      writeRuntimeIdentityProjection(personal.personalDataDirectory, {
+        sourceRevision: "authority-43",
+        appellation: "涛哥，请先给结论",
+      });
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.waitFor(() => {
+        expect(openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
+          ?.workspace).not.toBe(before);
+      });
+      const after = openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
+        ?.workspace;
+      expect(after).not.toBe(before);
+      expect(readFileSync(join(after!, "USER.md"), "utf8"))
+        .toContain("涛哥，请先给结论");
+      (workspaceService?.stop as () => void)();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retains the last verified workspace identity when the Runtime source is lost", async () => {
+    const commands: Array<Record<string, unknown>> = [];
+    const services: Array<Record<string, unknown>> = [];
+    const personal = configuredPersonalDirectory();
+    writeRuntimeIdentityProjection(personal.personalDataDirectory);
+    const openclawConfig = permittedOpenClawConfig();
+    const api = compatibleApi({
+      commands,
+      hooks: new Map(),
+      cliRegistrations: [],
+      pluginConfig: personal,
+      openclawConfig,
+      workspaceRoot: temporaryRoot(),
+      services,
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const workspaceService = services.find(({ id }) =>
+      id === "stella-fitness-agent-workspace"
+    );
+    await (workspaceService?.start as () => Promise<void>)();
+    const workspace = openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
+      ?.workspace;
+    rmSync(join(
+      personal.personalDataDirectory,
+      "..",
+      "..",
+      "stella",
+      "projections",
+      "fitness",
+      "active.json",
+    ));
+
+    const handler = commands.find(({ name }) => name === "stella-workspace")
+      ?.handler as (input: { readonly args: string }) => Promise<{ readonly text: string }>;
+    await expect(handler({ args: "sync" })).resolves.toEqual({
+      text: expect.stringContaining(
+        "identity-context: degraded - 沿用最后验证身份 as-of 2026-08-24T01:00:00.000Z",
+      ),
+    });
+    expect(openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
+      ?.workspace).toBe(workspace);
+    expect(readFileSync(join(workspace!, "IDENTITY.md"), "utf8")).toContain("Stella");
+    (workspaceService?.stop as () => void)();
+  });
+
+  it("preserves conflicting sources and retracts only the corresponding managed projection", async () => {
+    const commands: Array<Record<string, unknown>> = [];
+    const services: Array<Record<string, unknown>> = [];
+    const personal = configuredPersonalDirectory();
+    writeRuntimeIdentityProjection(personal.personalDataDirectory);
+    const pointerPath = join(
+      personal.personalDataDirectory,
+      "..",
+      "..",
+      "stella",
+      "projections",
+      "fitness",
+      "active.json",
+    );
+    const oldProjectionRevision = JSON.parse(
+      readFileSync(pointerPath, "utf8"),
+    ).projection_revision as string;
+    const openclawConfig = permittedOpenClawConfig();
+    const api = compatibleApi({
+      commands,
+      hooks: new Map(),
+      cliRegistrations: [],
+      pluginConfig: personal,
+      openclawConfig,
+      workspaceRoot: temporaryRoot(),
+      services,
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const workspaceService = services.find(({ id }) =>
+      id === "stella-fitness-agent-workspace"
+    );
+    await (workspaceService?.start as () => Promise<void>)();
+    const workspace = openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
+      ?.workspace;
+    const userPath = join(workspace!, "USER.md");
+    writeFileSync(userPath, readFileSync(userPath, "utf8").replace(
+      "<!-- stella-fitness:user:end -->",
+      "用户自定义区域\n<!-- stella-fitness:user:end -->",
+    ));
+    writeRuntimeIdentityProjection(personal.personalDataDirectory, {
+      sourceRevision: "authority-43",
+      agentName: "Nova",
+      conflicts: [{
+        id: "identity-conflict",
+        source_reference_ids: ["source-identity", "source-user"],
+        summary: "identity sources disagree",
+      }],
+    });
+
+    const handler = commands.find(({ name }) => name === "stella-workspace")
+      ?.handler as (input: { readonly args: string }) => Promise<{ readonly text: string }>;
+    await expect(handler({ args: "sync" })).resolves.toEqual({
+      text: expect.stringContaining(
+        "conflicts=identity-conflict[source-identity,source-user]",
+      ),
+    });
+    expect(openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
+      ?.workspace).toBe(workspace);
+    expect(readFileSync(join(workspace!, "IDENTITY.md"), "utf8")).toContain("Stella");
+
+    writeRuntimeIdentityProjection(personal.personalDataDirectory, {
+      sourceRevision: "authority-44",
+      includeAppellation: false,
+      retractions: [{
+        id: "retraction-user",
+        source_reference_id: "source-user",
+        retracted_revision: oldProjectionRevision,
+      }],
+    });
+    await expect(handler({ args: "sync" })).resolves.toEqual({
+      text: expect.stringContaining("ownership revision 2"),
+    });
+    const retractedWorkspace = openclawConfig.agents?.list?.find(
+      ({ id }) => id === "fitness",
+    )?.workspace;
+    const retractedUser = readFileSync(join(retractedWorkspace!, "USER.md"), "utf8");
+    expect(retractedUser).not.toContain("涛哥");
+    expect(retractedUser).toContain("用户自定义区域");
+    (workspaceService?.stop as () => void)();
   });
 
   it("does not create a blank Fitness Agent when Runtime identity is unavailable", async () => {
@@ -3484,6 +3719,7 @@ describe("Plugin registration", () => {
     ).rejects.toThrow("STRUCTURED_MEDIA_REQUIRED");
     expect(commands.map(({ name }) => name)).toEqual([
       "stella-workspace",
+      "stella-identity",
       "stella-status",
       "stella-context",
       "stella-start",
@@ -3948,6 +4184,18 @@ function writeRuntimeIdentityProjection(
     readonly sourceRevision?: string;
     readonly agentName?: string;
     readonly persona?: string;
+    readonly appellation?: string;
+    readonly includeAppellation?: boolean;
+    readonly conflicts?: readonly {
+      readonly id: string;
+      readonly source_reference_ids: readonly string[];
+      readonly summary: string;
+    }[];
+    readonly retractions?: readonly {
+      readonly id: string;
+      readonly source_reference_id: string;
+      readonly retracted_revision: string;
+    }[];
   } = {},
 ): void {
   const repository = join(personalDataDirectory, "..", "..");
@@ -3964,12 +4212,12 @@ function writeRuntimeIdentityProjection(
     source_revision: source.revision,
     as_of: source.as_of,
     categories: ["background", "identity"],
-    entries: [{
-      id: "preferred-appellation",
-      category: "background",
-      content: "涛哥",
+    entries: [...(options.includeAppellation === false ? [] : [{
+      id: "preferred-appellation" as const,
+      category: "background" as const,
+      content: options.appellation ?? "涛哥",
       source_reference_ids: ["source-user"],
-    }, {
+    }]), {
       id: "agent-name",
       category: "identity",
       content: options.agentName ?? "Stella",
@@ -3994,8 +4242,8 @@ function writeRuntimeIdentityProjection(
       revision: source.revision,
       checksum: `sha256:${"e".repeat(64)}`,
     }],
-    conflicts: [],
-    retractions: [],
+    conflicts: options.conflicts ?? [],
+    retractions: options.retractions ?? [],
     capabilities: [{ id: "background_context", state: "available" }, {
       id: "identity_context",
       state: "available",

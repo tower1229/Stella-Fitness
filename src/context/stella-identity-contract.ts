@@ -108,7 +108,18 @@ RuntimeProjectionContract<StellaIdentityContext> = {
       !isSortedUnique(categories)
     ) invalid();
     const sourceReferenceIds = validateSourceReferences(value.source_references);
-    validateConflictAndRetractionCollections(value.conflicts, value.retractions);
+    const { conflicts, retractions } = validateConflictAndRetractionCollections(
+      value.conflicts,
+      value.retractions,
+    );
+    if (
+      conflicts.some(({ sourceReferenceIds: references }) =>
+        references.some((reference) => !sourceReferenceIds.includes(reference))
+      ) ||
+      retractions.some(({ sourceReferenceId }) =>
+        !sourceReferenceIds.includes(sourceReferenceId)
+      )
+    ) invalid();
     const materialIdentityUpdate = validateCapabilities(value.capabilities);
     const payloads = validatePayloads(value.payloads);
     const identityCandidates = payloads.filter(({ mediaType }) =>
@@ -138,6 +149,8 @@ RuntimeProjectionContract<StellaIdentityContext> = {
       categories: categories as readonly ("background" | "identity")[],
       sourceReferenceIds,
       materialIdentityUpdate,
+      conflicts,
+      retractions,
       declaredFiles: payloads.map(({ path, checksum, byteLength }) => ({
         relativePath: path,
         checksum,
@@ -267,10 +280,14 @@ function validateSourceReferences(value: unknown): readonly string[] {
 function validateConflictAndRetractionCollections(
   conflicts: unknown,
   retractions: unknown,
-): void {
+): {
+  readonly conflicts: NonNullable<RuntimeProjectionManifest["conflicts"]>;
+  readonly retractions: NonNullable<RuntimeProjectionManifest["retractions"]>;
+} {
   if (!Array.isArray(conflicts) || conflicts.length > 128 ||
     !Array.isArray(retractions) || retractions.length > 512) invalid();
   const conflictIds: string[] = [];
+  const parsedConflicts: NonNullable<RuntimeProjectionManifest["conflicts"]>[number][] = [];
   for (const candidate of conflicts) {
     const conflict = asRecord(candidate);
     if (conflict === undefined) invalid();
@@ -283,8 +300,14 @@ function validateConflictAndRetractionCollections(
       conflict.summary.length < 1 || conflict.summary.length > 1024
     ) invalid();
     conflictIds.push(conflict.id);
+    parsedConflicts.push({
+      id: conflict.id,
+      sourceReferenceIds: references,
+      summary: conflict.summary,
+    });
   }
   const retractionIds: string[] = [];
+  const parsedRetractions: NonNullable<RuntimeProjectionManifest["retractions"]>[number][] = [];
   for (const candidate of retractions) {
     const retraction = asRecord(candidate);
     if (retraction === undefined) invalid();
@@ -297,8 +320,14 @@ function validateConflictAndRetractionCollections(
       !PROJECTION_REVISION.test(retraction.retracted_revision)
     ) invalid();
     retractionIds.push(retraction.id);
+    parsedRetractions.push({
+      id: retraction.id,
+      sourceReferenceId: retraction.source_reference_id,
+      retractedRevision: retraction.retracted_revision,
+    });
   }
   if (!isSortedUnique(conflictIds) || !isSortedUnique(retractionIds)) invalid();
+  return { conflicts: parsedConflicts, retractions: parsedRetractions };
 }
 
 function validateCapabilities(value: unknown): boolean {

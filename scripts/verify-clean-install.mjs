@@ -107,6 +107,7 @@ try {
     "stella-confirm",
     "stella-context",
     "stella-facts",
+    "stella-identity",
     "stella-prerequisite",
     "stella-print",
     "stella-start",

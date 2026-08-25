@@ -29,6 +29,11 @@ import {
 } from "./context/identity-bootstrap.js";
 import { stellaIdentityProjectionContract } from "./context/stella-identity-contract.js";
 import {
+  createFitnessIdentityEvolutionCoordinator,
+  type FitnessIdentityEvolutionResult,
+  type FitnessIdentityPublicationCandidate,
+} from "./context/identity-evolution.js";
+import {
   inspectFitnessContextProjectionSource,
   publishFitnessContextProjection,
   publishFitnessContextProjectionPointerStatus,
@@ -1377,7 +1382,7 @@ function registerFitnessAgentWorkspace(
     | { readonly status: "ready"; readonly candidate: Extract<
         FitnessIdentityBootstrapCandidate,
         { readonly status: "ready" }
-      > }
+      >; readonly agentId: string; readonly ownershipRevision?: number }
     | { readonly status: "blocked" | "adoption-required" | "conflicted" | "failed";
         readonly reasonCode?: string }
     | undefined;
@@ -1393,11 +1398,23 @@ function registerFitnessAgentWorkspace(
     });
   };
   const rememberPublication = (
-    result: { readonly status: string; readonly reasonCode?: string },
+    result: {
+      readonly status: string;
+      readonly agentId: string;
+      readonly ownershipRevision?: number;
+      readonly reasonCode?: string;
+    },
     candidate: Extract<FitnessIdentityBootstrapCandidate, { readonly status: "ready" }>,
   ): void => {
     publication = result.status === "ready"
-      ? { status: "ready", candidate }
+      ? {
+          status: "ready",
+          candidate,
+          agentId: result.agentId,
+          ...(result.ownershipRevision === undefined
+            ? {}
+            : { ownershipRevision: result.ownershipRevision }),
+        }
       : {
           status: result.status === "blocked" ||
               result.status === "adoption-required" ||
@@ -1407,32 +1424,102 @@ function registerFitnessAgentWorkspace(
           ...(result.reasonCode === undefined ? {} : { reasonCode: result.reasonCode }),
         };
   };
+  let identityEvolutionState: FitnessIdentityEvolutionResult | undefined;
+  let lastDisclosureKey: string | undefined;
+  const publishIdentityCandidate = async (
+    candidate: FitnessIdentityPublicationCandidate,
+  ): Promise<{ readonly status: string; readonly reasonCode?: string }> => {
+    const agentId = resolveDedicatedAgentId(
+      currentPluginConfig(currentOpenClawConfig(api)),
+    );
+    if (agentId === undefined) {
+      return { status: "blocked", reasonCode: "DEDICATED_AGENT_REQUIRED" };
+    }
+    const result = await manager.sync({ agentId, artifacts: candidate.artifacts });
+    rememberPublication(result, { ...candidate, status: "ready" });
+    await configureMemory(result);
+    return result;
+  };
+  const identityEvolution = createFitnessIdentityEvolutionCoordinator({
+    runtimeDirectory: join(
+      api.runtime.state.resolveStateDir(process.env),
+      PLUGIN_ID,
+    ),
+    publish: publishIdentityCandidate,
+  });
+  const syncIdentityCandidate = async (
+    candidate: Extract<FitnessIdentityBootstrapCandidate, { readonly status: "ready" }>,
+    forcePublication = false,
+  ): Promise<FitnessIdentityEvolutionResult> => {
+    const recovered = await identityEvolution.recover(candidate);
+    if (recovered === undefined) {
+      const publicationResult = await publishIdentityCandidate(candidate);
+      if (publicationResult.status !== "ready") {
+        throw new Error(publicationResult.reasonCode ?? "IDENTITY_PUBLICATION_INCOMPLETE");
+      }
+      identityEvolutionState = await identityEvolution.recordPublished(candidate);
+      return identityEvolutionState;
+    }
+    identityEvolutionState = await identityEvolution.reconcile(candidate, {
+      forcePublication,
+    });
+    return identityEvolutionState;
+  };
+  const retainPublishedIdentity = async (
+    blocked: Extract<FitnessIdentityBootstrapCandidate, { status: "blocked" }>,
+  ): Promise<void> => {
+    const existing = await identityEvolution.diagnostics();
+    if (existing === undefined) return;
+    identityEvolutionState = await identityEvolution.retainLastVerified({
+      status: blocked.reasonCode === "IDENTITY_CONTEXT_CONFLICT"
+        ? "conflicted"
+        : "degraded",
+      reasonCode: blocked.reasonCode,
+      ...(blocked.conflicts === undefined ? {} : { conflicts: blocked.conflicts }),
+    });
+  };
   api.registerTrustedToolPolicy(createManagedArtifactToolPolicy({ host }));
+  let identityWatch: ReturnType<typeof setInterval> | undefined;
+  let identityCheckInProgress = false;
   api.registerService({
     id: "stella-fitness-agent-workspace",
     async start() {
+      if (identityWatch !== undefined) clearInterval(identityWatch);
       const startedAt = Date.now();
       const agentId = resolveDedicatedAgentId(
         currentPluginConfig(currentOpenClawConfig(api)),
       );
       if (agentId === undefined) return;
+      identityWatch = setInterval(async () => {
+        if (identityCheckInProgress) return;
+        identityCheckInProgress = true;
+        try {
+          const next = currentCandidate();
+          if (next.status === "ready") {
+            await syncIdentityCandidate(next);
+          } else {
+            await retainPublishedIdentity(next);
+          }
+        } catch {
+          // The next bounded watch or explicit sync retries without replacing active identity.
+        } finally {
+          identityCheckInProgress = false;
+        }
+      }, 30_000);
+      identityWatch.unref();
       try {
         const candidate = currentCandidate();
         if (candidate.status !== "ready") {
+          await retainPublishedIdentity(candidate);
           publication = { status: "blocked", reasonCode: candidate.reasonCode };
           api.logger?.info(
             `agentId=${agentId} status=blocked reasonCode=${candidate.reasonCode} count=0 durationMs=${Date.now() - startedAt}`,
           );
           return;
         }
-        const result = await manager.sync({
-          agentId,
-          artifacts: candidate.artifacts,
-        });
-        rememberPublication(result, candidate);
-        await configureMemory(result);
+        const evolution = await syncIdentityCandidate(candidate, true);
         api.logger?.info(
-          `agentId=${result.agentId} status=${result.status} reasonCode=${result.reasonCode ?? "NONE"} count=${candidate.artifacts.length} durationMs=${Date.now() - startedAt}`,
+          `agentId=${agentId} status=${evolution.status} reasonCode=${evolution.reasonCode ?? "NONE"} count=${candidate.artifacts.length} durationMs=${Date.now() - startedAt}`,
         );
       } catch {
         publication = { status: "failed", reasonCode: "WORKSPACE_INITIALIZATION_FAILED" };
@@ -1440,6 +1527,11 @@ function registerFitnessAgentWorkspace(
           `agentId=${agentId} status=failed reasonCode=WORKSPACE_INITIALIZATION_FAILED count=0 durationMs=${Date.now() - startedAt}`,
         );
       }
+    },
+    stop() {
+      if (identityWatch !== undefined) clearInterval(identityWatch);
+      identityWatch = undefined;
+      identityCheckInProgress = false;
     },
   });
   api.registerCommand({
@@ -1456,14 +1548,39 @@ function registerFitnessAgentWorkspace(
       }
       const candidate = currentCandidate();
       if (candidate.status !== "ready") {
+        await retainPublishedIdentity(candidate);
         publication = { status: "blocked", reasonCode: candidate.reasonCode };
-        return { text: formatIdentityBootstrapBlocked(candidate.reasonCode) };
+        return {
+          text: identityEvolutionState === undefined
+            ? formatIdentityBootstrapBlocked(candidate.reasonCode)
+            : formatIdentityEvolutionResult(identityEvolutionState),
+        };
       }
       const args = context.args?.trim().split(/\s+/u).filter(Boolean) ?? [];
       const action = args[0]?.toLowerCase() ?? "sync";
-      const result = action === "sync"
-        ? await manager.sync({ agentId, artifacts: candidate.artifacts })
-        : action === "adopt" && args[1]?.toLowerCase() === "merge"
+      if (action === "sync") {
+        const evolution = await syncIdentityCandidate(candidate, true);
+        if (evolution.status === "pending") {
+          return { text: formatPendingIdentityUpdate(evolution) };
+        }
+        if (evolution.status !== "ready" && evolution.status !== "stale") {
+          return { text: formatIdentityEvolutionResult(evolution) };
+        }
+        await contextSync.resync({ trigger: "explicit" });
+        const workspaceSummary = publication?.status === "ready"
+          ? formatWorkspaceResult({
+              status: "ready",
+              agentId: publication.agentId,
+              ...(publication.ownershipRevision === undefined
+                ? {}
+                : { ownershipRevision: publication.ownershipRevision }),
+            })
+          : formatIdentityEvolutionResult(evolution);
+        return {
+          text: `${workspaceSummary}\n${formatConversationalMemoryResult(memory)}\n\n${candidate.disclosure}`,
+        };
+      }
+      const result = action === "adopt" && args[1]?.toLowerCase() === "merge"
           ? await manager.adopt({
               agentId,
               artifacts: candidate.artifacts,
@@ -1487,6 +1604,7 @@ function registerFitnessAgentWorkspace(
       rememberPublication(result, candidate);
       await configureMemory(result);
       if (result.status === "ready") {
+        identityEvolutionState = await identityEvolution.recordPublished(candidate);
         await contextSync.resync({ trigger: "explicit" });
       }
       return {
@@ -1496,19 +1614,103 @@ function registerFitnessAgentWorkspace(
       };
     },
   });
+  api.registerCommand({
+    name: "stella-identity",
+    description: "Inspect or decide a pending Stella Fitness identity update",
+    acceptsArgs: true,
+    requireAuth: true,
+    async handler(context) {
+      const candidate = currentCandidate();
+      if (candidate.status !== "ready") {
+        await retainPublishedIdentity(candidate);
+        return { text: formatIdentityBootstrapBlocked(candidate.reasonCode) };
+      }
+      const action = context.args?.trim().toLowerCase() ?? "status";
+      if (action === "status") {
+        const state = await identityEvolution.diagnostics();
+        return {
+          text: state === undefined
+            ? "当前没有已发布的 Stella Fitness 身份。"
+            : formatIdentityEvolutionResult(state),
+        };
+      }
+      const decision = action === "accept" || action === "接受"
+        ? "accept"
+        : action === "reject" || action === "拒绝"
+        ? "reject"
+        : action === "later" || action === "defer" || action === "稍后"
+        ? "defer"
+        : undefined;
+      if (decision === undefined) {
+        return { text: "请使用 `/stella-identity accept`、`reject` 或 `later`。" };
+      }
+      identityEvolutionState = await identityEvolution.decide({
+        decision,
+        currentCandidate: candidate,
+      });
+      if (decision === "accept" && identityEvolutionState.status === "ready") {
+        return { text: "已接受身份更新；新的受管 Stella 身份已发布。" };
+      }
+      if (decision === "reject" && identityEvolutionState.status === "ready") {
+        return { text: "已拒绝此身份更新；继续使用最后验证身份。" };
+      }
+      if (decision === "defer" && identityEvolutionState.status === "pending") {
+        return { text: "已稍后处理；继续使用最后验证身份。" };
+      }
+      return { text: formatIdentityEvolutionResult(identityEvolutionState) };
+    },
+  });
   return {
     currentCandidate,
     publishedDisclosure() {
+      if (
+        identityEvolutionState !== undefined &&
+        identityEvolutionState.status !== "ready"
+      ) {
+        const noticeKey = [
+          identityEvolutionState.status,
+          identityEvolutionState.reasonCode ?? "NONE",
+          identityEvolutionState.pending?.updateId ?? "NONE",
+          identityEvolutionState.pending?.decision ?? "NONE",
+        ].join("\0");
+        if (lastDisclosureKey === noticeKey) return undefined;
+        lastDisclosureKey = noticeKey;
+        return formatIdentityEvolutionResult(identityEvolutionState);
+      }
       if (publication?.status !== "ready") return undefined;
       const current = currentCandidate();
-      return current.status === "ready" &&
-          sameIdentityRevision(current, publication.candidate)
-        ? `${current.disclosure}\n${formatConversationalMemoryResult(memory)}`
-        : undefined;
+      if (
+        current.status !== "ready" ||
+        !sameIdentityRevision(current, publication.candidate)
+      ) return undefined;
+      const disclosureKey = [
+        current.sourceRevision,
+        current.projectionRevision,
+        current.freshness,
+        current.asOf,
+      ].join("\0");
+      if (lastDisclosureKey === disclosureKey) return undefined;
+      lastDisclosureKey = disclosureKey;
+      return `${current.disclosure}\n${formatConversationalMemoryResult(memory)}`;
     },
     statusSummary() {
       const candidate = currentCandidate();
+      if (
+        identityEvolutionState?.status === "pending" ||
+        identityEvolutionState?.status === "conflicted"
+      ) {
+        return appendConversationalMemoryStatus(
+          formatIdentityEvolutionResult(identityEvolutionState),
+          memory,
+        );
+      }
       if (candidate.status !== "ready") {
+        if (identityEvolutionState !== undefined) {
+          return appendConversationalMemoryStatus(
+            formatIdentityEvolutionResult(identityEvolutionState),
+            memory,
+          );
+        }
         if (publication?.status === "ready") {
           return `context-sync: stale - last published as-of ${publication.candidate.asOf} (${candidate.reasonCode})`;
         }
@@ -1571,6 +1773,40 @@ function sameIdentityRevision(
 ): boolean {
   return left.sourceRevision === right.sourceRevision &&
     left.projectionRevision === right.projectionRevision;
+}
+
+function formatPendingIdentityUpdate(
+  result: FitnessIdentityEvolutionResult,
+): string {
+  const changed = result.pending?.changedFieldIds.join("、") ?? "material identity";
+  return [
+    `检测到身份更新待确认（字段：${changed}）。`,
+    `当前继续使用最后验证身份，as-of ${result.active.asOf}。`,
+    "可使用 `/stella-identity accept`、`reject` 或 `later`。",
+  ].join("\n");
+}
+
+function formatIdentityEvolutionResult(
+  result: FitnessIdentityEvolutionResult,
+): string {
+  if (result.status === "pending") return formatPendingIdentityUpdate(result);
+  if (result.status === "ready") {
+    return `identity-context: ready - as-of ${result.active.asOf}`;
+  }
+  if (result.status === "stale" || result.status === "degraded") {
+    return `identity-context: ${result.status} - 沿用最后验证身份 as-of ${result.active.asOf} (${result.reasonCode ?? "SOURCE_UNAVAILABLE"})`;
+  }
+  if (
+    result.reasonCode?.startsWith("OWNERSHIP_") === true ||
+    result.reasonCode?.startsWith("MANAGED_") === true ||
+    result.reasonCode?.startsWith("WORKSPACE_") === true
+  ) {
+    return "Fitness workspace ownership 冲突，已停止覆盖。请先检查本地 Context Diagnostics。";
+  }
+  const conflictIds = result.conflicts?.map(({ id, sourceReferenceIds }) =>
+    `${id}[${sourceReferenceIds.join(",")}]`
+  ).join(";");
+  return `identity-context: conflicted - 未发布冲突身份；沿用最后验证身份 as-of ${result.active.asOf} (${result.reasonCode ?? "IDENTITY_SOURCE_CONFLICT"}${conflictIds === undefined ? "" : `; conflicts=${conflictIds}`})`;
 }
 
 function formatIdentityBootstrapBlocked(
