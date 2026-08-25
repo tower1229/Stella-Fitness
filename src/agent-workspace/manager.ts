@@ -84,6 +84,10 @@ export type FitnessAgentWorkspaceManager = {
   adoptionRecord(
     agentId: string,
   ): Promise<FitnessAgentWorkspaceAdoptionRecord | undefined>;
+  captureRecoveryToken(agentId: string): Promise<string | undefined>;
+  restoreRecoveryToken(
+    recoveryToken: string,
+  ): Promise<FitnessAgentWorkspaceResult>;
 };
 
 type FitnessAgentWorkspaceManagerOptions = {
@@ -120,6 +124,113 @@ export function createFitnessAgentWorkspaceManager(
       options.runtimeDirectory,
       validateAgentId(agentId),
     ),
+    captureRecoveryToken: (agentId) => captureRecoveryToken(options, agentId),
+    restoreRecoveryToken: (recoveryToken) => restoreRecoveryToken(
+      options,
+      recoveryToken,
+    ),
+  };
+}
+
+async function captureRecoveryToken(
+  options: FitnessAgentWorkspaceManagerOptions,
+  rawAgentId: string,
+): Promise<string | undefined> {
+  const agentId = validateAgentId(rawAgentId);
+  const preflight = capabilityPreflight(options.host);
+  if (!preflight.ready) return undefined;
+  const discovered = options.host.discoverAgent!(agentId);
+  if (!discovered.exists) return undefined;
+  const ownership = await inspectOwnership(discovered.workspace, agentId);
+  if (ownership.status !== "valid" || !await hasCompleteIdentityCore(discovered.workspace)) {
+    return undefined;
+  }
+  return JSON.stringify({
+    schemaVersion: "stella-fitness/workspace-recovery/v1",
+    agentId,
+    workspace: resolve(discovered.workspace),
+    ownershipRevision: ownership.manifest.ownershipRevision,
+  });
+}
+
+async function restoreRecoveryToken(
+  options: FitnessAgentWorkspaceManagerOptions,
+  recoveryToken: string,
+): Promise<FitnessAgentWorkspaceResult> {
+  const token = parseRecoveryToken(recoveryToken);
+  const preflight = capabilityPreflight(options.host);
+  if (!preflight.ready) {
+    return { status: "blocked", agentId: token.agentId, reasonCode: preflight.reasonCode };
+  }
+  const current = options.host.discoverAgent!(token.agentId);
+  if (
+    !current.exists ||
+    managedRootForWorkspace(current.workspace, token.agentId) !==
+      managedRootForWorkspace(token.workspace, token.agentId)
+  ) {
+    return {
+      status: "conflicted",
+      agentId: token.agentId,
+      workspace: token.workspace,
+      reasonCode: "RECOVERY_WORKSPACE_INVALID",
+    };
+  }
+  const ownership = await inspectOwnership(token.workspace, token.agentId);
+  if (
+    ownership.status !== "valid" ||
+    ownership.manifest.ownershipRevision !== token.ownershipRevision ||
+    !await hasCompleteIdentityCore(token.workspace)
+  ) {
+    return {
+      status: "conflicted",
+      agentId: token.agentId,
+      workspace: token.workspace,
+      reasonCode: "RECOVERY_WORKSPACE_INVALID",
+    };
+  }
+  await options.host.activateAgent!(token.agentId, token.workspace);
+  return {
+    status: "ready",
+    agentId: token.agentId,
+    workspace: token.workspace,
+    created: false,
+    ownershipRevision: token.ownershipRevision,
+  };
+}
+
+function parseRecoveryToken(recoveryToken: string): {
+  readonly agentId: string;
+  readonly workspace: string;
+  readonly ownershipRevision: number;
+} {
+  let value: unknown;
+  try {
+    value = JSON.parse(recoveryToken);
+  } catch {
+    throw new Error("WORKSPACE_RECOVERY_TOKEN_INVALID");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("WORKSPACE_RECOVERY_TOKEN_INVALID");
+  }
+  const record = value as Readonly<Record<string, unknown>>;
+  if (
+    Object.keys(record).sort().join("\0") !== [
+      "agentId",
+      "ownershipRevision",
+      "schemaVersion",
+      "workspace",
+    ].sort().join("\0") ||
+    record.schemaVersion !== "stella-fitness/workspace-recovery/v1" ||
+    typeof record.agentId !== "string" ||
+    typeof record.workspace !== "string" ||
+    !isAbsolute(record.workspace) ||
+    !Number.isSafeInteger(record.ownershipRevision) ||
+    (record.ownershipRevision as number) < 1
+  ) throw new Error("WORKSPACE_RECOVERY_TOKEN_INVALID");
+  return {
+    agentId: validateAgentId(record.agentId),
+    workspace: resolve(record.workspace),
+    ownershipRevision: record.ownershipRevision as number,
   };
 }
 

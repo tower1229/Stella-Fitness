@@ -264,13 +264,16 @@ describe("Plugin registration", () => {
     const personal = configuredPersonalDirectory();
     writeRuntimeIdentityProjection(personal.personalDataDirectory);
     const openclawConfig = permittedOpenClawConfig();
+    const stateRoot = temporaryRoot();
+    const workspaceRoot = temporaryRoot();
     const api = compatibleApi({
       commands,
       hooks,
       cliRegistrations: [],
       pluginConfig: personal,
       openclawConfig,
-      workspaceRoot: temporaryRoot(),
+      workspaceRoot,
+      stateRoot,
       services,
     });
     registerStellaFitnessPlugin(
@@ -300,39 +303,58 @@ describe("Plugin registration", () => {
     expect(readFileSync(join(before!, "IDENTITY.md"), "utf8")).toContain("Stella");
     expect(readFileSync(join(before!, "IDENTITY.md"), "utf8")).not.toContain("Nova");
 
-    expect(hooks.get("reply_payload_sending")?.(
+    await expect(hooks.get("reply_payload_sending")?.(
       { kind: "final", payload: { text: "普通回复" } },
       { sessionKey: "agent:fitness:webchat:identity-pending" },
-    )).toMatchObject({
+    )).resolves.toMatchObject({
       payload: {
         text: expect.stringMatching(/^检测到身份更新待确认[\s\S]*\n\n普通回复$/u),
       },
     });
-    expect(hooks.get("reply_payload_sending")?.(
+    await expect(hooks.get("reply_payload_sending")?.(
       { kind: "final", payload: { text: "第二条普通回复" } },
       { sessionKey: "agent:fitness:webchat:identity-pending-2" },
-    )).toBeUndefined();
+    )).resolves.toBeUndefined();
+
+    (workspaceService?.stop as () => void)();
+    const restartedCommands: Array<Record<string, unknown>> = [];
+    const restartedServices: Array<Record<string, unknown>> = [];
+    const restartedHooks = new Map<string, (...args: unknown[]) => unknown>();
+    registerStellaFitnessPlugin(
+      compatibleApi({
+        commands: restartedCommands,
+        hooks: restartedHooks,
+        cliRegistrations: [],
+        pluginConfig: personal,
+        openclawConfig,
+        workspaceRoot,
+        stateRoot,
+        services: restartedServices,
+      }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const restartedService = restartedServices.find(({ id }) =>
+      id === "stella-fitness-agent-workspace"
+    );
+    await (restartedService?.start as () => Promise<void>)();
+    await expect(restartedHooks.get("reply_payload_sending")?.(
+      { kind: "final", payload: { text: "重启后的普通回复" } },
+      { sessionKey: "agent:fitness:webchat:identity-pending-restarted" },
+    )).resolves.toBeUndefined();
 
     const identityDependentContext = {
       sessionKey: "agent:fitness:webchat:identity-dependent",
       runId: "identity-dependent-run",
     };
-    await expect(hooks.get("before_prompt_build")?.(
+    await expect(restartedHooks.get("before_prompt_build")?.(
       { prompt: "你应该怎么称呼我？", messages: [] },
       identityDependentContext,
     )).resolves.toBeUndefined();
-    expect(hooks.get("reply_payload_sending")?.(
+    await expect(restartedHooks.get("reply_payload_sending")?.(
       { kind: "final", payload: { text: "我会继续使用最后验证的称呼。" } },
       identityDependentContext,
-    )).toMatchObject({
-      payload: {
-        text: expect.stringMatching(
-          /^检测到身份更新待确认[\s\S]*\n\n我会继续使用最后验证的称呼。$/u,
-        ),
-      },
-    });
+    )).resolves.toBeUndefined();
 
-    const identity = commands.find(({ name }) => name === "stella-identity")
+    const identity = restartedCommands.find(({ name }) => name === "stella-identity")
       ?.handler as (input: { readonly args: string }) => Promise<{ readonly text: string }>;
     await expect(identity({ args: "accept" })).resolves.toEqual({
       text: expect.stringContaining("已接受身份更新"),
@@ -340,6 +362,7 @@ describe("Plugin registration", () => {
     const after = openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
       ?.workspace;
     expect(readFileSync(join(after!, "IDENTITY.md"), "utf8")).toContain("Nova");
+    (restartedService?.stop as () => void)();
   });
 
   it("discloses a missing optional identity field whenever the answer depends on it", async () => {
@@ -362,10 +385,12 @@ describe("Plugin registration", () => {
       id === "stella-fitness-agent-workspace"
     );
     await (workspaceService?.start as () => Promise<void>)();
-    expect(hooks.get("reply_payload_sending")?.(
+    await expect(hooks.get("reply_payload_sending")?.(
       { kind: "final", payload: { text: "首次普通回复" } },
       { sessionKey: "agent:fitness:webchat:degraded-first" },
-    )).toMatchObject({ payload: { text: expect.stringContaining("首次普通回复") } });
+    )).resolves.toMatchObject({
+      payload: { text: expect.stringContaining("首次普通回复") },
+    });
 
     const backgroundContext = {
       sessionKey: "agent:fitness:webchat:degraded-background",
@@ -375,10 +400,10 @@ describe("Plugin registration", () => {
       { prompt: "我的时区是什么？", messages: [] },
       backgroundContext,
     );
-    expect(hooks.get("reply_payload_sending")?.(
+    await expect(hooks.get("reply_payload_sending")?.(
       { kind: "final", payload: { text: "我不知道你的时区。" } },
       backgroundContext,
-    )).toMatchObject({
+    )).resolves.toMatchObject({
       payload: {
         text: "这项身份背景上下文尚未提供；我会基于已验证内容回答，并明确不知道的部分。\n\n我不知道你的时区。",
       },
@@ -392,10 +417,10 @@ describe("Plugin registration", () => {
       { prompt: "你应该怎么称呼我？", messages: [] },
       appellationContext,
     );
-    expect(hooks.get("reply_payload_sending")?.(
+    await expect(hooks.get("reply_payload_sending")?.(
       { kind: "final", payload: { text: "我会称呼你涛哥。" } },
       appellationContext,
-    )).toBeUndefined();
+    )).resolves.toBeUndefined();
 
     const coreContext = {
       sessionKey: "agent:fitness:webchat:degraded-core",
@@ -405,10 +430,10 @@ describe("Plugin registration", () => {
       { prompt: "你叫什么？", messages: [] },
       coreContext,
     );
-    expect(hooks.get("reply_payload_sending")?.(
+    await expect(hooks.get("reply_payload_sending")?.(
       { kind: "final", payload: { text: "我叫 Stella。" } },
       coreContext,
-    )).toBeUndefined();
+    )).resolves.toBeUndefined();
   });
 
   it("automatically publishes a verified minor identity-context wording update", async () => {
@@ -1428,7 +1453,7 @@ describe("Plugin registration", () => {
       runContext,
     )).resolves.toEqual({ outcome: "pass" });
 
-    expect(hooks.get("reply_payload_sending")?.(
+    await expect(hooks.get("reply_payload_sending")?.(
       {
         payload: { text: "你目前是第 9 周，已经完成训练。" },
         kind: "final",
@@ -1436,7 +1461,7 @@ describe("Plugin registration", () => {
         runId: runContext.runId,
       },
       runContext,
-    )).toMatchObject({
+    )).resolves.toMatchObject({
       payload: {
         text: expect.stringContaining("当前是第 3 周（phase-1）"),
       },

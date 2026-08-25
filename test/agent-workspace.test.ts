@@ -284,6 +284,54 @@ describe("Fitness Agent workspace manager", () => {
     expect(await readFile(agentsPath, "utf8")).toContain("revision one");
   });
 
+  it("restores only the exact previously verified managed workspace", async () => {
+    const fixture = await workspaceFixture();
+    const manager = createFitnessAgentWorkspaceManager({
+      runtimeDirectory: fixture.runtimeDirectory,
+      host: fixture.host,
+    });
+    const created = await manager.initialize({
+      agentId: "fitness",
+      artifacts: managedArtifacts("revision one\n"),
+    });
+    const recoveryToken = await manager.captureRecoveryToken("fitness");
+    expect(recoveryToken).toBeDefined();
+    const synced = await manager.sync({
+      agentId: "fitness",
+      artifacts: managedArtifacts("revision two\n"),
+    });
+    expect(fixture.activeAgents.get("fitness")).toBe(synced.workspace);
+
+    await expect(manager.restoreRecoveryToken(recoveryToken!)).resolves.toMatchObject({
+      status: "ready",
+      workspace: created.workspace,
+      ownershipRevision: 1,
+    });
+    expect(fixture.activeAgents.get("fitness")).toBe(created.workspace);
+
+    const forged = JSON.stringify({
+      ...JSON.parse(recoveryToken!),
+      ownershipRevision: 2,
+    });
+    await expect(manager.restoreRecoveryToken(forged)).resolves.toMatchObject({
+      status: "conflicted",
+      reasonCode: "RECOVERY_WORKSPACE_INVALID",
+    });
+    expect(fixture.activeAgents.get("fitness")).toBe(created.workspace);
+
+    const unrelatedWorkspace = join(fixture.root, "unrelated-valid-workspace");
+    await cp(created.workspace!, unrelatedWorkspace, { recursive: true });
+    const unrelated = JSON.stringify({
+      ...JSON.parse(recoveryToken!),
+      workspace: unrelatedWorkspace,
+    });
+    await expect(manager.restoreRecoveryToken(unrelated)).resolves.toMatchObject({
+      status: "conflicted",
+      reasonCode: "RECOVERY_WORKSPACE_INVALID",
+    });
+    expect(fixture.activeAgents.get("fitness")).toBe(created.workspace);
+  });
+
   it("stops publication when managed content was manually changed", async () => {
     const fixture = await workspaceFixture();
     const manager = createFitnessAgentWorkspaceManager({
