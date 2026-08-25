@@ -306,6 +306,25 @@ describe("Plugin registration", () => {
       { sessionKey: "agent:fitness:webchat:identity-pending-2" },
     )).toBeUndefined();
 
+    const identityDependentContext = {
+      sessionKey: "agent:fitness:webchat:identity-dependent",
+      runId: "identity-dependent-run",
+    };
+    await expect(hooks.get("before_prompt_build")?.(
+      { prompt: "你应该怎么称呼我？", messages: [] },
+      identityDependentContext,
+    )).resolves.toBeUndefined();
+    expect(hooks.get("reply_payload_sending")?.(
+      { kind: "final", payload: { text: "我会继续使用最后验证的称呼。" } },
+      identityDependentContext,
+    )).toMatchObject({
+      payload: {
+        text: expect.stringMatching(
+          /^检测到身份更新待确认[\s\S]*\n\n我会继续使用最后验证的称呼。$/u,
+        ),
+      },
+    });
+
     const identity = commands.find(({ name }) => name === "stella-identity")
       ?.handler as (input: { readonly args: string }) => Promise<{ readonly text: string }>;
     await expect(identity({ args: "accept" })).resolves.toEqual({
