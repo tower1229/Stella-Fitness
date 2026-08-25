@@ -24,6 +24,8 @@ describe("installable Plugin package contract", () => {
         "test:live-model": "node scripts/live-model-benchmark.mjs",
         "verify:clean-install": "node scripts/verify-clean-install.mjs",
         "verify:clawhub": "node scripts/verify-clawhub.mjs",
+        "verify:runtime-projection":
+          "node scripts/verify-runtime-projection.mjs",
         "verify:release": "npm run verify:env -- release",
       },
       peerDependencies: { openclaw: ">=2026.6.34" },
