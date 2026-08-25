@@ -48,6 +48,8 @@ import {
   type FitnessContextSyncState,
 } from "./context/sync-coordinator.js";
 import { createFitnessAgentWorkspaceManager } from "./agent-workspace/manager.js";
+import { createManagedArtifactLifecycleTransaction } from
+  "./agent-workspace/lifecycle.js";
 import {
   configureFitnessAgentMemory,
   type FitnessAgentMemoryResult,
@@ -1458,11 +1460,12 @@ function registerFitnessAgentWorkspace(
   statusSummary(): string;
 } {
   const host = createOpenClawFitnessAgentWorkspaceHost(api);
+  const runtimeDirectory = join(
+    api.runtime.state.resolveStateDir(process.env),
+    PLUGIN_ID,
+  );
   const manager = createFitnessAgentWorkspaceManager({
-    runtimeDirectory: join(
-      api.runtime.state.resolveStateDir(process.env),
-      PLUGIN_ID,
-    ),
+    runtimeDirectory,
     host,
   });
   let retainedAgentId = resolveDedicatedAgentId(
@@ -1564,13 +1567,17 @@ function registerFitnessAgentWorkspace(
       return result;
     },
   });
-  let standaloneRetention: Promise<void> | undefined;
+  const standaloneRetention = createManagedArtifactLifecycleTransaction({
+    runtimeDirectory,
+    transitionWorkspace: (input) =>
+      manager.transitionToStandaloneDegraded(input),
+    markContextStandalone: (input) => contextSync.markStandaloneDegraded(input),
+  });
   const retainStandaloneIfUninstalled = (): Promise<void> => {
     if (pluginEntry(currentOpenClawConfig(api)) !== undefined) {
       return Promise.resolve();
     }
-    if (standaloneRetention !== undefined) return standaloneRetention;
-    standaloneRetention = (async () => {
+    return (async () => {
       const agentId = retainedAgentId;
       const active = await identityEvolution.diagnostics();
       const asOf = active?.active.asOf ??
@@ -1579,30 +1586,21 @@ function registerFitnessAgentWorkspace(
         api.logger?.error(
           "agentId=unavailable status=failed reasonCode=STANDALONE_RETENTION_SOURCE_UNAVAILABLE count=0 durationMs=0",
         );
-        return;
+        throw new Error("STANDALONE_RETENTION_SOURCE_UNAVAILABLE");
       }
       const startedAt = Date.now();
       try {
-        const result = await manager.transitionToStandaloneDegraded({ agentId, asOf });
-        if (result.status !== "standalone-degraded") {
-          api.logger?.error(
-            `agentId=${agentId} status=${result.status} reasonCode=${result.reasonCode ?? "STANDALONE_RETENTION_INCOMPLETE"} count=0 durationMs=${Date.now() - startedAt}`,
-          );
-          return;
-        }
-        await contextSync.markStandaloneDegraded({ asOf });
+        await standaloneRetention.retain({ agentId, asOf });
         api.logger?.info(
           `agentId=${agentId} status=standalone-degraded reasonCode=PLUGIN_UNINSTALLED count=1 durationMs=${Date.now() - startedAt}`,
         );
-      } catch {
+      } catch (error) {
         api.logger?.error(
           `agentId=${agentId} status=failed reasonCode=STANDALONE_RETENTION_FAILED count=0 durationMs=${Date.now() - startedAt}`,
         );
+        throw error;
       }
-    })().finally(() => {
-      standaloneRetention = undefined;
-    });
-    return standaloneRetention;
+    })();
   };
   api.lifecycle.registerRuntimeLifecycle({
     id: "stella-fitness-managed-artifacts",
@@ -1650,6 +1648,25 @@ function registerFitnessAgentWorkspace(
   api.registerTrustedToolPolicy(createManagedArtifactToolPolicy({ host }));
   let identityWatch: ReturnType<typeof setInterval> | undefined;
   let identityCheckInProgress = false;
+  const startIdentityWatch = (): void => {
+    identityWatch = setInterval(async () => {
+      if (identityCheckInProgress) return;
+      identityCheckInProgress = true;
+      try {
+        const next = currentCandidate();
+        if (next.status === "ready") {
+          await syncIdentityCandidate(next);
+        } else {
+          await retainPublishedIdentity(next);
+        }
+      } catch {
+        // The next bounded watch or explicit sync retries without replacing active identity.
+      } finally {
+        identityCheckInProgress = false;
+      }
+    }, 30_000);
+    identityWatch.unref();
+  };
   api.registerService({
     id: "stella-fitness-agent-workspace",
     async start() {
@@ -1660,24 +1677,8 @@ function registerFitnessAgentWorkspace(
       );
       if (agentId === undefined) return;
       retainedAgentId = agentId;
-      identityWatch = setInterval(async () => {
-        if (identityCheckInProgress) return;
-        identityCheckInProgress = true;
-        try {
-          const next = currentCandidate();
-          if (next.status === "ready") {
-            await syncIdentityCandidate(next);
-          } else {
-            await retainPublishedIdentity(next);
-          }
-        } catch {
-          // The next bounded watch or explicit sync retries without replacing active identity.
-        } finally {
-          identityCheckInProgress = false;
-        }
-      }, 30_000);
-      identityWatch.unref();
       try {
+        await standaloneRetention.recover();
         const candidate = currentCandidate();
         if (candidate.status !== "ready") {
           await retainPublishedIdentity(candidate);
@@ -1685,12 +1686,14 @@ function registerFitnessAgentWorkspace(
           api.logger?.info(
             `agentId=${agentId} status=blocked reasonCode=${candidate.reasonCode} count=0 durationMs=${Date.now() - startedAt}`,
           );
+          startIdentityWatch();
           return;
         }
         const evolution = await syncIdentityCandidate(candidate, true);
         api.logger?.info(
           `agentId=${agentId} status=${evolution.status} reasonCode=${evolution.reasonCode ?? "NONE"} count=${candidate.artifacts.length} durationMs=${Date.now() - startedAt}`,
         );
+        startIdentityWatch();
       } catch {
         publication = { status: "failed", reasonCode: "WORKSPACE_INITIALIZATION_FAILED" };
         api.logger?.error(

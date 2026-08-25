@@ -140,15 +140,13 @@ try {
   );
 
   process.stdout.write(`${JSON.stringify({
+    scope: "packaged-primitives-only",
     builtLifecyclePrimitives: "passed",
-    disableReenable: "passed",
     upgradeCrash: "passed",
-    fitnessUninstallTransition: "passed",
-    fitnessUninstallHost: "blocked-host-seam",
+    standaloneTransition: "passed",
     hostRestart: "passed",
     reinstall: "passed",
     ownershipConflict: "passed",
-    runtimeUninstallLocator: "blocked-host-seam",
   })}\n`);
 } finally {
   await rm(root, { recursive: true, force: true });
