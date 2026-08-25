@@ -73,6 +73,28 @@ describe("Personal Context Modeling Gate", () => {
     });
   });
 
+  it("allows an authorized category subset and records only the actual input categories", () => {
+    const gate = authorizedGate();
+    const subset = { ...scope(), dataCategories: ["fitness-background"] };
+    const allowed = gate.authorizeOutbound(subset);
+    expect(allowed.status).toBe("authorized");
+    if (allowed.status !== "authorized") throw new Error("expected authorization");
+
+    const generated = gate.verifyGeneratedProjection({
+      authorizationReceiptId: allowed.receipt.authorization_receipt_id,
+      scope: subset,
+      sourceArtifacts: [{ id: "source-user", bytes: Buffer.from("private user content") }],
+      model: "model-a",
+      schemaVersion: "identity-summary/v1",
+      promptVersion: "fitness-background/v1",
+      outputBytes: Buffer.from("generated projection field"),
+    });
+    expect(generated).toMatchObject({
+      status: "verified",
+      provenance: { input_categories: ["fitness-background"] },
+    });
+  });
+
   it("revocation blocks future outbound modeling without breaking deterministic mode", () => {
     const gate = authorizedGate();
     const allowed = gate.authorizeOutbound(scope());
@@ -98,12 +120,11 @@ describe("Personal Context Modeling Gate", () => {
     const generated = gate.verifyGeneratedProjection({
       authorizationReceiptId: allowed.receipt.authorization_receipt_id,
       scope: scope(),
-      sourceReferences: [{ id: "source-user", checksum: `sha256:${"a".repeat(64)}` }],
+      sourceArtifacts: [{ id: "source-user", bytes: Buffer.from("source bytes") }],
       model: "model-a",
       schemaVersion: "identity-summary/v1",
       promptVersion: "fitness-background/v1",
-      generatedAt: "2026-08-25T01:00:00.000Z",
-      outputChecksum: `sha256:${"b".repeat(64)}`,
+      outputBytes: Buffer.from("output bytes"),
     });
 
     expect(generated).toMatchObject({
@@ -112,7 +133,7 @@ describe("Personal Context Modeling Gate", () => {
         provider: "provider-a",
         model: "model-a",
         input_categories: ["communication-preferences", "fitness-background"],
-        output_checksum: `sha256:${"b".repeat(64)}`,
+        output_checksum: "sha256:296494844d31f593772396a84181860b2d00b252eeec3fe8117eaa7f84629124",
       },
     });
     expect(JSON.stringify(generated)).not.toMatch(/prompt_text|response|reasoning|private user content/u);
@@ -120,12 +141,11 @@ describe("Personal Context Modeling Gate", () => {
     expect(gate.verifyGeneratedProjection({
       authorizationReceiptId: "receipt-mismatch",
       scope: scope(),
-      sourceReferences: [{ id: "source-user", checksum: `sha256:${"a".repeat(64)}` }],
+      sourceArtifacts: [{ id: "source-user", bytes: Buffer.from("source bytes") }],
       model: "model-a",
       schemaVersion: "identity-summary/v1",
       promptVersion: "fitness-background/v1",
-      generatedAt: "2026-08-25T01:00:00.000Z",
-      outputChecksum: `sha256:${"b".repeat(64)}`,
+      outputBytes: Buffer.from("output bytes"),
     })).toEqual({ status: "rejected", reasonCode: "AUTHORIZATION_RECEIPT_MISMATCH" });
   });
 
@@ -136,12 +156,11 @@ describe("Personal Context Modeling Gate", () => {
     const input = {
       authorizationReceiptId: allowed.receipt.authorization_receipt_id,
       scope: scope(),
-      sourceReferences: [{ id: "source-user", checksum: `sha256:${"a".repeat(64)}` }],
+      sourceArtifacts: [{ id: "source-user", bytes: Buffer.from("source bytes") }],
       model: "model-a",
       schemaVersion: "identity-summary/v1",
       promptVersion: "fitness-background/v1",
-      generatedAt: "2026-08-25T01:00:00.000Z",
-      outputChecksum: `sha256:${"b".repeat(64)}`,
+      outputBytes: Buffer.from("output bytes"),
     } as const;
     const first = gate.verifyGeneratedProjection(input);
     if (first.status !== "verified") throw new Error("expected provenance");
@@ -150,7 +169,7 @@ describe("Personal Context Modeling Gate", () => {
       previous: first.provenance,
       authorizationReceiptId: input.authorizationReceiptId,
       scope: input.scope,
-      sourceReferences: input.sourceReferences,
+      sourceArtifacts: input.sourceArtifacts,
       model: input.model,
       schemaVersion: input.schemaVersion,
       promptVersion: input.promptVersion,
@@ -159,7 +178,7 @@ describe("Personal Context Modeling Gate", () => {
       previous: first.provenance,
       authorizationReceiptId: input.authorizationReceiptId,
       scope: input.scope,
-      sourceReferences: [{ id: "source-user", checksum: `sha256:${"c".repeat(64)}` }],
+      sourceArtifacts: [{ id: "source-user", bytes: Buffer.from("changed source bytes") }],
       model: input.model,
       schemaVersion: input.schemaVersion,
       promptVersion: input.promptVersion,
@@ -172,10 +191,23 @@ describe("Personal Context Modeling Gate", () => {
     const request = gate.requestAuthorization(scope());
     if (request.status !== "confirmation-required") throw new Error("expected request");
     gate.authorize({ requestId: request.requestId, confirmed: true });
+    const allowed = gate.authorizeOutbound(scope());
+    if (allowed.status !== "authorized") throw new Error("expected authorization");
+    gate.verifyGeneratedProjection({
+      authorizationReceiptId: allowed.receipt.authorization_receipt_id,
+      scope: scope(),
+      sourceArtifacts: [{ id: "source-user", bytes: Buffer.from("private user content") }],
+      model: "model-a",
+      schemaVersion: "identity-summary/v1",
+      promptVersion: "fitness-background/v1",
+      outputBytes: Buffer.from("private generated projection"),
+    });
 
-    const persisted = readFileSync(join(gate.runtimeDirectory, "context-modeling", "authorization.json"), "utf8");
-    expect(persisted).not.toMatch(/private user content|\/Users\/|prompt|response|reasoning|snippet/u);
-    expect(JSON.stringify(logger.mock.calls)).not.toMatch(/private user content|\/Users\/|prompt|response|reasoning|snippet/u);
+    const persisted = ["authorization.json", "provenance.json"]
+      .map((name) => readFileSync(join(gate.runtimeDirectory, "context-modeling", name), "utf8"))
+      .join("\n");
+    expect(persisted).not.toMatch(/private user content|\/Users\/|prompt(?:_text)?\b|response|reasoning|snippet/u);
+    expect(JSON.stringify(logger.mock.calls)).not.toMatch(/private user content|\/Users\/|prompt(?:_text)?\b|response|reasoning|snippet/u);
   });
 
   it("rejects a persisted receipt whose bound scope was altered", () => {

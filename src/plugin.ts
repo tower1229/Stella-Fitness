@@ -136,13 +136,6 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 export default plugin;
 
 export {
-  createPersonalContextModelingGate,
-  type PersonalContextModelingAuthorizationReceipt,
-  type PersonalContextModelingScope,
-  type ProjectionProvenance,
-} from "./context/modeling-authorization.js";
-
-export {
   inspectFitnessContextProjectionSource,
   publishFitnessContextProjection,
   publishFitnessContextProjectionPointerStatus,
@@ -2311,13 +2304,6 @@ function formatModelingDiagnostics(
   return [
     `context-modeling: ${diagnostics.mode}`,
     `modeling-authorization: ${diagnostics.authorizationStatus}`,
-    ...(diagnostics.provider === undefined ? [] : [
-      `modeling-provider: ${diagnostics.provider}`,
-      `modeling-purpose: ${diagnostics.purpose}`,
-      `modeling-categories: ${diagnostics.dataCategories?.join(",") ?? "none"}`,
-      `modeling-retention-boundary: ${diagnostics.retentionBoundary}`,
-      `modeling-authorization-receipt: ${diagnostics.authorizationReceiptId}`,
-    ]),
   ].join("\n");
 }
 

@@ -71,7 +71,7 @@ export function createPersonalContextModelingGate(options: {
     }
     if (receipt === undefined) return blocked("AUTHORIZATION_REQUIRED");
     if (receipt.status === "revoked") return blocked("AUTHORIZATION_REVOKED");
-    if (receipt.scope_checksum !== scopeChecksum(scope)) {
+    if (!scopeIsAuthorized(scope, receipt)) {
       return blocked("AUTHORIZATION_SCOPE_MISMATCH");
     }
     return { status: "authorized" as const, receipt };
@@ -149,12 +149,11 @@ export function createPersonalContextModelingGate(options: {
     verifyGeneratedProjection(input: {
       readonly authorizationReceiptId: string;
       readonly scope: PersonalContextModelingScope;
-      readonly sourceReferences: readonly { readonly id: string; readonly checksum: string }[];
+      readonly sourceArtifacts: readonly { readonly id: string; readonly bytes: Buffer }[];
       readonly model: string;
       readonly schemaVersion: string;
       readonly promptVersion: string;
-      readonly generatedAt: string;
-      readonly outputChecksum: string;
+      readonly outputBytes: Buffer;
     }) {
       const authorization = authorizeOutbound(input.scope);
       if (authorization.status !== "authorized") {
@@ -168,17 +167,18 @@ export function createPersonalContextModelingGate(options: {
       }
       const provenance: ProjectionProvenance = {
         schema_version: PROVENANCE_SCHEMA,
-        source_references: normalizedReferences(input.sourceReferences),
+        source_references: sourceReferences(input.sourceArtifacts),
         provider: authorization.receipt.provider,
         model: input.model,
         schema_version_used: input.schemaVersion,
         prompt_version: input.promptVersion,
-        input_categories: authorization.receipt.data_categories,
-        generated_at: input.generatedAt,
-        output_checksum: input.outputChecksum,
+        input_categories: [...input.scope.dataCategories].sort(),
+        generated_at: now().toISOString(),
+        output_checksum: checksum(input.outputBytes),
         authorization_receipt_id: authorization.receipt.authorization_receipt_id,
         authorization_scope_checksum: authorization.receipt.scope_checksum,
       };
+      persistProvenance(join(directory, "provenance.json"), provenance);
       options.logger?.({
         event: "context_modeling_projection_verified",
         authorizationReceiptId: provenance.authorization_receipt_id,
@@ -193,7 +193,7 @@ export function createPersonalContextModelingGate(options: {
       readonly previous: ProjectionProvenance;
       readonly authorizationReceiptId: string;
       readonly scope: PersonalContextModelingScope;
-      readonly sourceReferences: readonly { readonly id: string; readonly checksum: string }[];
+      readonly sourceArtifacts: readonly { readonly id: string; readonly bytes: Buffer }[];
       readonly model: string;
       readonly schemaVersion: string;
       readonly promptVersion: string;
@@ -207,8 +207,10 @@ export function createPersonalContextModelingGate(options: {
         input.previous.model !== input.model ||
         input.previous.schema_version_used !== input.schemaVersion ||
         input.previous.prompt_version !== input.promptVersion ||
+        JSON.stringify(input.previous.input_categories) !==
+          JSON.stringify([...input.scope.dataCategories].sort()) ||
         JSON.stringify(input.previous.source_references) !==
-          JSON.stringify(normalizedReferences(input.sourceReferences));
+          JSON.stringify(sourceReferences(input.sourceArtifacts));
     },
     diagnostics() {
       return {
@@ -263,25 +265,39 @@ function validateScope(scope: PersonalContextModelingScope): void {
 }
 
 function validGeneratedProjectionMetadata(input: {
-  readonly sourceReferences: readonly { readonly id: string; readonly checksum: string }[];
+  readonly sourceArtifacts: readonly { readonly id: string; readonly bytes: Buffer }[];
   readonly model: string;
   readonly schemaVersion: string;
   readonly promptVersion: string;
-  readonly generatedAt: string;
-  readonly outputChecksum: string;
+  readonly outputBytes: Buffer;
 }): boolean {
-  return input.sourceReferences.length > 0 &&
-    input.sourceReferences.every(({ id, checksum }) => SAFE_ID.test(id) && CHECKSUM.test(checksum)) &&
-    new Set(input.sourceReferences.map(({ id }) => id)).size === input.sourceReferences.length &&
+  return input.sourceArtifacts.length > 0 && input.outputBytes.byteLength > 0 &&
+    input.sourceArtifacts.every(({ id, bytes }) => SAFE_ID.test(id) && bytes.byteLength > 0) &&
+    new Set(input.sourceArtifacts.map(({ id }) => id)).size === input.sourceArtifacts.length &&
     SAFE_ID.test(input.model) && SAFE_VERSION.test(input.schemaVersion) &&
-    SAFE_VERSION.test(input.promptVersion) && !Number.isNaN(Date.parse(input.generatedAt)) &&
-    CHECKSUM.test(input.outputChecksum);
+    SAFE_VERSION.test(input.promptVersion);
 }
 
-function normalizedReferences(
-  references: readonly { readonly id: string; readonly checksum: string }[],
+function sourceReferences(
+  artifacts: readonly { readonly id: string; readonly bytes: Buffer }[],
 ) {
-  return [...references].sort((left, right) => left.id.localeCompare(right.id));
+  return artifacts.map(({ id, bytes }) => ({ id, checksum: checksum(bytes) }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function checksum(bytes: Buffer): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+function scopeIsAuthorized(
+  requested: PersonalContextModelingScope,
+  authorization: PersonalContextModelingAuthorizationReceipt,
+): boolean {
+  return requested.provider === authorization.provider &&
+    requested.purpose === authorization.purpose &&
+    requested.retentionBoundary === authorization.retention_boundary &&
+    requested.dataCategories.every((category) =>
+      authorization.data_categories.includes(category));
 }
 
 function blocked(reasonCode:
@@ -302,6 +318,14 @@ function persistReceipt(
   writeFileSync(temporary, canonicalizeJcs({ schema_version: STATE_SCHEMA, receipt }), {
     mode: 0o600,
   });
+  renameSync(temporary, statePath);
+}
+
+function persistProvenance(statePath: string, provenance: ProjectionProvenance): void {
+  const directory = join(statePath, "..");
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const temporary = `${statePath}.tmp`;
+  writeFileSync(temporary, canonicalizeJcs(provenance), { mode: 0o600 });
   renameSync(temporary, statePath);
 }
 
