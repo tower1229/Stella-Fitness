@@ -35,6 +35,7 @@
     "verify:env": "node scripts/run-verification.mjs",
     "verify:network-install": "node scripts/verify-network-install.mjs",
     "verify:package": "node scripts/verify-package.mjs",
+    "verify:runtime-projection": "node scripts/verify-runtime-projection.mjs",
     "verify:clean-install": "node scripts/verify-clean-install.mjs",
     "verify:clawhub": "node scripts/verify-clawhub.mjs",
     "verify:release": "npm run verify:env -- release"

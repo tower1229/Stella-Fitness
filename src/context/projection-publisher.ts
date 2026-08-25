@@ -91,6 +91,11 @@ type ProjectionPublication = {
   }[];
 };
 
+type ProjectionRevisionSeed = Omit<
+  ProjectionManifest,
+  "schema_version" | "projection_revision" | "generated_at"
+>;
+
 type FitnessHistoryDocument = {
   readonly id: string;
   readonly category: "body-weight" | "program" | "strength-test" | "workout";
@@ -911,8 +916,7 @@ function buildProjectionPublication(options: {
     { id: "current_fitness_state" as const, state: "unavailable" as const },
     { id: "fitness_history_context" as const, state: "available" as const },
   ];
-  const revisionSeed = {
-    schema_version: "stella.context-projection-revision-seed/v1",
+  const revisionSeed: ProjectionRevisionSeed = {
     instance_id: options.instanceId,
     producer_id: PRODUCER_ID,
     consumer_id: CONSUMER_ID,
@@ -927,7 +931,7 @@ function buildProjectionPublication(options: {
     capabilities,
     payloads,
   };
-  const projectionRevision = `projection-${sha256Hex(canonicalizeJcs(revisionSeed))}`;
+  const projectionRevision = projectionRevisionFor(revisionSeed);
   const manifest: ProjectionManifest = {
     schema_version: "stella.context-projection-manifest/v1",
     instance_id: options.instanceId,
@@ -1100,8 +1104,7 @@ async function readStoredPublication(
   ) {
     throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
   }
-  const projectionRevision = `projection-${sha256Hex(canonicalizeJcs({
-    schema_version: "stella.context-projection-revision-seed/v1",
+  const projectionRevision = projectionRevisionFor({
     instance_id: manifest.instance_id,
     producer_id: manifest.producer_id,
     consumer_id: manifest.consumer_id,
@@ -1112,7 +1115,7 @@ async function readStoredPublication(
     retractions: manifest.retractions,
     capabilities: manifest.capabilities,
     payloads: manifest.payloads,
-  }))}`;
+  });
   if (projectionRevision !== manifest.projection_revision) {
     throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
   }
@@ -1611,6 +1614,13 @@ function decodeUtf8(bytes: Buffer): string {
   } catch {
     throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
   }
+}
+
+function projectionRevisionFor(seed: ProjectionRevisionSeed): string {
+  return `projection-${sha256Hex(canonicalizeJcs({
+    schema_version: "stella.context-projection-revision-seed/v1",
+    ...seed,
+  }))}`;
 }
 
 function checksum(bytes: Uint8Array): string {

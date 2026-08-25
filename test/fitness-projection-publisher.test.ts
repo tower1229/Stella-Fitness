@@ -264,6 +264,39 @@ describe("Fitness Projection Publisher", () => {
     }
   });
 
+  it("accepts a near-1MiB shard and rejects an oversize shard", async () => {
+    const repository = temporaryRepository();
+    const personalDataDirectory = join(repository, "stella", "fitness");
+    const ids = [
+      "00000000-0000-4000-8000-000000000006",
+      "00000000-0000-4000-8000-000000000012",
+      "00000000-0000-4000-8000-000000000014",
+    ] as const;
+    writeLargeWorkoutObservation(personalDataDirectory, ids[0], 0);
+
+    const nearLimit = await publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      generatedAt: "2026-08-24T03:00:00.000Z",
+    });
+    expect(readProjectionManifest(repository, nearLimit.projectionRevision).payloads)
+      .toMatchObject([{
+        byte_length: expect.any(Number),
+      }]);
+    const [nearLimitPayload] = readProjectionManifest(
+      repository,
+      nearLimit.projectionRevision,
+    ).payloads;
+    expect(nearLimitPayload!.byte_length).toBeGreaterThan(500_000);
+    expect(nearLimitPayload!.byte_length).toBeLessThanOrEqual(1_048_576);
+
+    writeLargeWorkoutObservation(personalDataDirectory, ids[1], 1);
+    writeLargeWorkoutObservation(personalDataDirectory, ids[2], 2);
+    await expect(publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      generatedAt: "2026-08-24T04:00:00.000Z",
+    })).rejects.toThrow("FITNESS_PROJECTION_PAYLOAD_OVERSIZE");
+  });
+
   it("holds an exclusive publish lock across concurrent producers", async () => {
     const repository = temporaryRepository();
     const personalDataDirectory = join(repository, "stella", "fitness");
@@ -1052,6 +1085,55 @@ function readProjectionPayloadText(
   return manifest.payloads.map(({ path }) =>
     readFileSync(join(revisionDirectory, path), "utf8")
   ).join("\n");
+}
+
+function writeLargeWorkoutObservation(
+  personalDataDirectory: string,
+  id: string,
+  dayOffset: number,
+): void {
+  const directory = join(personalDataDirectory, "observations", "workout-log");
+  mkdirSync(directory, { recursive: true });
+  const exercise = {
+    rawLabel: { value: "x", confidence: "high" },
+    exerciseId: { value: "x".repeat(256), confidence: "high" },
+    load: { value: null, confidence: "high" },
+    sets: [{ value: 1, confidence: "high", semantic: "repetitions" }],
+    actionQuality: { value: null, confidence: "high" },
+    problemNote: { value: null, confidence: "high" },
+  };
+  const occurredAt = new Date(Date.UTC(2026, 7, 20 + dayOffset)).toISOString();
+  const observation = {
+    schemaVersion: "stella-fitness/observation/workout-log/v0.1",
+    id,
+    kind: "workout-log",
+    layout: { value: "zhuoshu-three-stage-workbook", confidence: "high" },
+    stage: { value: 1, confidence: "high" },
+    week: { value: dayOffset + 1, confidence: "high" },
+    weekday: {
+      value: ["monday", "tuesday", "wednesday"][dayOffset],
+      confidence: "high",
+    },
+    sessionType: { value: "full-body", confidence: "high" },
+    exercises: Array.from({ length: 1_800 }, () => exercise),
+    occurredAt,
+    source: {
+      kind: "workout-log-image",
+      artifactId: id,
+      path: `raw-artifacts/workout-log/${id}/original.png`,
+      sha256: String(dayOffset + 1).repeat(64),
+    },
+    provenance: {
+      kind: "workout-log-recording",
+      runId: `large-workout-${dayOffset}`,
+      recordedAt: occurredAt,
+      confirmedFields: [],
+    },
+    uncertainty: [],
+  };
+  const bytes = `${JSON.stringify(observation)}\n`;
+  expect(Buffer.byteLength(bytes)).toBeLessThanOrEqual(1_048_576);
+  writeFileSync(join(directory, `${id}.json`), bytes, "utf8");
 }
 
 function programFixture(): unknown {
