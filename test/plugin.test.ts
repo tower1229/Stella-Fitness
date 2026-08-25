@@ -335,6 +335,64 @@ describe("Plugin registration", () => {
     expect(readFileSync(join(after!, "IDENTITY.md"), "utf8")).toContain("Nova");
   });
 
+  it("discloses a missing optional identity field whenever the answer depends on it", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const services: Array<Record<string, unknown>> = [];
+    const personal = configuredPersonalDirectory();
+    writeRuntimeIdentityProjection(personal.personalDataDirectory, {
+      includeAppellation: false,
+    });
+    registerStellaFitnessPlugin(
+      compatibleApi({
+        commands: [],
+        hooks,
+        cliRegistrations: [],
+        pluginConfig: personal,
+        openclawConfig: permittedOpenClawConfig(),
+        workspaceRoot: temporaryRoot(),
+        services,
+      }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+    const workspaceService = services.find(({ id }) =>
+      id === "stella-fitness-agent-workspace"
+    );
+    await (workspaceService?.start as () => Promise<void>)();
+    expect(hooks.get("reply_payload_sending")?.(
+      { kind: "final", payload: { text: "首次普通回复" } },
+      { sessionKey: "agent:fitness:webchat:degraded-first" },
+    )).toMatchObject({ payload: { text: expect.stringContaining("首次普通回复") } });
+
+    const backgroundContext = {
+      sessionKey: "agent:fitness:webchat:degraded-background",
+      runId: "degraded-background-run",
+    };
+    await hooks.get("before_prompt_build")?.(
+      { prompt: "你应该怎么称呼我？", messages: [] },
+      backgroundContext,
+    );
+    expect(hooks.get("reply_payload_sending")?.(
+      { kind: "final", payload: { text: "我不知道你的称呼。" } },
+      backgroundContext,
+    )).toMatchObject({
+      payload: {
+        text: "这项身份背景上下文尚未提供；我会基于已验证内容回答，并明确不知道的部分。\n\n我不知道你的称呼。",
+      },
+    });
+
+    const coreContext = {
+      sessionKey: "agent:fitness:webchat:degraded-core",
+      runId: "degraded-core-run",
+    };
+    await hooks.get("before_prompt_build")?.(
+      { prompt: "你叫什么？", messages: [] },
+      coreContext,
+    );
+    expect(hooks.get("reply_payload_sending")?.(
+      { kind: "final", payload: { text: "我叫 Stella。" } },
+      coreContext,
+    )).toBeUndefined();
+  });
+
   it("automatically publishes a verified minor identity-context wording update", async () => {
     vi.useFakeTimers();
     try {

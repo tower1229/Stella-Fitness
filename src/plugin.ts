@@ -98,8 +98,11 @@ const PRINTABLE_LOG_FILE_NAME = "zhuoshu-workout-log.xlsx";
 const printableLogDownloadTokens = new Map<string, number>();
 const BODY_WEIGHT_RECORDING_INPUT =
   /^\s*(?:(?:\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))?|今天|昨天|前天|today|yesterday)\s*)?(?:我\s*)?(?:记录\s*)?(?:体重|body\s*weight|weight)\s*(?:是|为|:|：)?\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?(?:\s*(?:或|还是|or)\s*[+-]?\d+(?:\.\d+)?\s*(?:(?:kg|kgs?|lb|lbs?)\b|公斤|千克|磅)?)?\s*[。.!]?\s*$/iu;
-const IDENTITY_CONTEXT_DEPENDENT_INPUT =
-  /(?:你(?:是谁|叫什么|的名字|的人格|的性格|应该怎么称呼我|会怎么称呼我)|怎么称呼我|称呼我什么|我的(?:称呼|语言|时区|交流偏好|沟通偏好|健身背景)|根据你对我的了解|who\s+are\s+you|your\s+(?:name|persona)|what\s+do\s+you\s+call\s+me|my\s+(?:preferred\s+name|language|timezone|communication\s+preferences?|fitness\s+background))/iu;
+const IDENTITY_CORE_DEPENDENT_INPUT =
+  /(?:你(?:是谁|叫什么|的名字|的人格|的性格)|who\s+are\s+you|your\s+(?:name|persona))/iu;
+const IDENTITY_BACKGROUND_DEPENDENT_INPUT =
+  /(?:你(?:应该怎么称呼我|会怎么称呼我)|怎么称呼我|称呼我什么|我的(?:称呼|语言|时区|交流偏好|沟通偏好|健身背景)|根据你对我的了解|what\s+do\s+you\s+call\s+me|my\s+(?:preferred\s+name|language|timezone|communication\s+preferences?|fitness\s+background))/iu;
+type IdentityContextDependency = "identity" | "background";
 const INITIAL_12RM_ALIASES = {
   "goblet-squat": /(?:高脚杯深蹲|goblet[\s-]*squat)/iu,
   "dumbbell-bench-press": /(?:哑铃卧推|dumbbell[\s-]*bench[\s-]*press)/iu,
@@ -128,6 +131,12 @@ const OTHER_EXERCISE_NAMES: Readonly<Record<string, string>> = {
   "dumbbell-overhead-press": "哑铃肩推",
   "dumbbell-lateral-raise": "哑铃侧平举",
 };
+
+function identityContextDependency(input: string): IdentityContextDependency | undefined {
+  if (IDENTITY_BACKGROUND_DEPENDENT_INPUT.test(input)) return "background";
+  if (IDENTITY_CORE_DEPENDENT_INPUT.test(input)) return "identity";
+  return undefined;
+}
 
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "stella-fitness",
@@ -189,14 +198,17 @@ export function registerStellaFitnessPlugin(
     | {
         readonly kind: "answer";
         readonly turn: FactPreservingReplyTurn;
-        readonly contextDependent: boolean;
+        readonly contextDependency?: IdentityContextDependency;
       }
     | {
         readonly kind: "clarification";
         readonly message: string;
-        readonly contextDependent: boolean;
+        readonly contextDependency?: IdentityContextDependency;
       }
-    | { readonly kind: "identity-context-dependency"; readonly contextDependent: true };
+    | {
+        readonly kind: "identity-context-dependency";
+        readonly contextDependency: IdentityContextDependency;
+      };
   type PreparedFitnessReplyEntry = {
     readonly value: PreparedFitnessReply;
     readonly keys: readonly string[];
@@ -455,17 +467,17 @@ export function registerStellaFitnessPlugin(
       }
       const existing = preparedFitnessReply(context);
       if (existing !== undefined) forgetPreparedFitnessReply(existing);
-      const requiresIdentityContext = IDENTITY_CONTEXT_DEPENDENT_INPUT.test(event.prompt);
+      const contextDependency = identityContextDependency(event.prompt);
       try {
         const result = await stellaRuntime.queryFitness({
           text: event.prompt,
           receivedAt: new Date().toISOString(),
         });
         if (result.status === "not-applicable") {
-          if (requiresIdentityContext) {
+          if (contextDependency !== undefined) {
             rememberPreparedFitnessReply(context, {
               kind: "identity-context-dependency",
-              contextDependent: true,
+              contextDependency,
             });
           }
           return;
@@ -474,7 +486,7 @@ export function registerStellaFitnessPlugin(
           rememberPreparedFitnessReply(context, {
             kind: "clarification",
             message: result.question,
-            contextDependent: requiresIdentityContext,
+            ...(contextDependency === undefined ? {} : { contextDependency }),
           });
           return;
         }
@@ -486,17 +498,17 @@ export function registerStellaFitnessPlugin(
         rememberPreparedFitnessReply(context, {
           kind: "answer",
           turn,
-          contextDependent: requiresIdentityContext,
+          ...(contextDependency === undefined ? {} : { contextDependency }),
         });
         return { appendSystemContext: turn.systemContext };
       } catch (error) {
         api.logger?.error(
           `stella-fitness fact-preserving reply preparation failed: ${String(error)}`,
         );
-        if (requiresIdentityContext) {
+        if (contextDependency !== undefined) {
           rememberPreparedFitnessReply(context, {
             kind: "identity-context-dependency",
-            contextDependent: true,
+            contextDependency,
           });
         }
         return;
@@ -519,7 +531,9 @@ export function registerStellaFitnessPlugin(
       const identityNotice = originalText === undefined
         ? undefined
         : identityBootstrap.publishedDisclosure({
-            contextDependent: entry?.value.contextDependent === true,
+            ...(entry?.value.contextDependency === undefined
+              ? {}
+              : { contextDependency: entry.value.contextDependency }),
           });
       let text = originalText;
       if (entry !== undefined && entry.value.kind === "answer") {
@@ -1400,7 +1414,7 @@ function registerFitnessAgentWorkspace(
 ): {
   currentCandidate(): FitnessIdentityBootstrapCandidate;
   publishedDisclosure(options?: {
-    readonly contextDependent?: boolean;
+    readonly contextDependency?: IdentityContextDependency;
   }): string | undefined;
   statusSummary(): string;
 } {
@@ -1734,7 +1748,7 @@ function registerFitnessAgentWorkspace(
           identityEvolutionState.pending?.updateId ?? "NONE",
           identityEvolutionState.pending?.decision ?? "NONE",
         ].join("\0");
-        if (lastDisclosureKey === noticeKey && options.contextDependent !== true) {
+        if (lastDisclosureKey === noticeKey && options.contextDependency === undefined) {
           return undefined;
         }
         lastDisclosureKey = noticeKey;
@@ -1752,7 +1766,15 @@ function registerFitnessAgentWorkspace(
         current.freshness,
         current.asOf,
       ].join("\0");
-      if (lastDisclosureKey === disclosureKey) return undefined;
+      if (lastDisclosureKey === disclosureKey) {
+        if (
+          current.contextCompleteness === "degraded" &&
+          options.contextDependency === "background"
+        ) {
+          return "这项身份背景上下文尚未提供；我会基于已验证内容回答，并明确不知道的部分。";
+        }
+        return undefined;
+      }
       const firstDisclosure = lastDisclosureKey === undefined;
       lastDisclosureKey = disclosureKey;
       if (firstDisclosure) {
