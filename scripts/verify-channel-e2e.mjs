@@ -525,6 +525,17 @@ export async function verifyTelegramChannelFlow(options) {
       invalidEditFactsCursor,
       (text) => text === "读取体重记录时遇到问题，请稍后重试。你的已有记录没有被修改。",
     );
+    await verifyWebChatMemoryTurn(options);
+    const memoryTurnCursor = telegram.messageCount();
+    telegram.pushText("我把训练毛巾叫作星云巾，请只回复收到。");
+    await telegram.waitForTextAfter(
+      memoryTurnCursor,
+      (text) => text.includes("星云巾"),
+    );
+    await stopGateway(gateway);
+    gateway = undefined;
+    progress("gateway stopped before memory index verification");
+    const memory = verifyFitnessAgentMemory(options);
 
     return {
       channel: "telegram",
@@ -561,6 +572,8 @@ export async function verifyTelegramChannelFlow(options) {
       pendingConfirmationUpgraded: true,
       legacyActionRequired: true,
       invalidManualEditIsolated: true,
+      conversationalMemoryTurns: true,
+      memory,
       observationId,
     };
   } finally {
@@ -735,6 +748,18 @@ function configureOpenClaw(options, input) {
       id: "fitness",
       workspace: join(options.temporaryRoot, "workspace-fitness"),
       model: "stella-e2e/fixture-v1",
+      memorySearch: {
+        enabled: true,
+        sources: ["memory", "sessions"],
+        provider: "stella-e2e",
+        model: "fixture-embedding-v1",
+        extraPaths: [
+          join(options.temporaryRoot, "workspace-fitness", "USER.md"),
+          join(options.temporaryRoot, "workspace-fitness", "memory"),
+        ],
+        qmd: { extraCollections: [] },
+        experimental: { sessionMemory: true },
+      },
     },
   ], ["--replace"]);
   set("bindings", [
@@ -744,7 +769,7 @@ function configureOpenClaw(options, input) {
     },
   ], ["--replace"]);
   set("models.providers.stella-e2e", {
-    baseUrl: "http://127.0.0.1:9/v1",
+    baseUrl: `${input.telegramBaseUrl}/v1`,
     api: "openai-completions",
     models: [{ id: "fixture-v1", name: "Fixture v1" }],
   });
@@ -760,6 +785,118 @@ function configureOpenClaw(options, input) {
     capabilities: { inlineButtons: "all" },
     pollingStallThresholdMs: 30_000,
   });
+}
+
+function verifyFitnessAgentMemory(options) {
+  options.run(options.openclaw, [
+    "memory",
+    "index",
+    "--agent",
+    "fitness",
+    "--force",
+  ]);
+  const search = (agentId, query) => JSON.parse(options.run(options.openclaw, [
+    "memory",
+    "search",
+    query,
+    "--agent",
+    agentId,
+    "--json",
+    "--max-results",
+    "20",
+    "--min-score",
+    "0",
+  ]));
+  const results = (value) => Array.isArray(value) ? value : value.results ?? [];
+  const webChatResults = results(search("fitness", "蓝鲸杯"));
+  const telegramResults = results(search("fitness", "星云巾"));
+  const mainResults = results(search("main", "星云巾"));
+  const status = (agentId) => JSON.parse(options.run(options.openclaw, [
+    "memory",
+    "status",
+    "--agent",
+    agentId,
+    "--json",
+  ]))[0]?.status;
+  const fitness = status("fitness");
+  const main = status("main");
+  if (
+    !webChatResults.some(({ source, snippet }) =>
+      source === "sessions" && String(snippet).includes("蓝鲸杯")
+    ) ||
+    !telegramResults.some(({ source, snippet }) =>
+      source === "sessions" && String(snippet).includes("星云巾")
+    ) ||
+    mainResults.length !== 0
+  ) {
+    throw new Error(`Agent-scoped cross-channel memory recall failed: ${JSON.stringify({ webChatResults, telegramResults, mainResults, fitness, main })}`);
+  }
+  const expectedExtraPaths = [
+    join(options.temporaryRoot, "workspace-fitness", "USER.md"),
+    join(options.temporaryRoot, "workspace-fitness", "memory"),
+  ].sort();
+  if (
+    fitness?.dbPath === undefined ||
+    main?.dbPath === undefined ||
+    fitness.dbPath === main.dbPath ||
+    JSON.stringify([...(fitness.sources ?? [])].sort()) !==
+      JSON.stringify(["memory", "sessions"]) ||
+    JSON.stringify([...(fitness.extraPaths ?? [])].sort()) !==
+      JSON.stringify(expectedExtraPaths) ||
+    (main.sources ?? []).includes("sessions")
+  ) {
+    throw new Error(`Agent memory isolation failed: ${JSON.stringify({ fitness, main })}`);
+  }
+  return {
+    crossSessionRecall: true,
+    crossChannelRecall: true,
+    isolatedIndex: true,
+    fitnessDbPath: fitness.dbPath,
+  };
+}
+
+async function verifyWebChatMemoryTurn(options) {
+  const sessionKey = "agent:fitness:stella-clean-install-webchat-memory";
+  options.run(options.openclaw, [
+    "gateway",
+    "call",
+    "chat.send",
+    "--expect-final",
+    "--json",
+    "--token",
+    GATEWAY_TOKEN,
+    "--timeout",
+    String(REQUEST_TIMEOUT_MS),
+    "--params",
+    JSON.stringify({
+      sessionKey,
+      agentId: "fitness",
+      message: "我把训练水杯叫作蓝鲸杯，请只回复收到。",
+      deliver: false,
+      idempotencyKey: "8a515186-b9be-49ac-a67a-d67b90cb3fd7",
+    }),
+  ]);
+  let history;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    history = JSON.parse(options.run(options.openclaw, [
+      "gateway",
+      "call",
+      "chat.history",
+      "--json",
+      "--token",
+      GATEWAY_TOKEN,
+      "--params",
+      JSON.stringify({ sessionKey, agentId: "fitness", limit: 10 }),
+    ]));
+    if (
+      history.sessionInfo?.hasActiveRun === false &&
+      JSON.stringify(history).includes("蓝鲸杯")
+    ) break;
+    await delay(100);
+  }
+  if (!JSON.stringify(history).includes("收到：蓝鲸杯")) {
+    throw new Error(`WebChat conversational memory turn failed: ${JSON.stringify(history)}`);
+  }
 }
 
 async function verifyWebChatFlow(options, gatewayPort) {
@@ -980,6 +1117,52 @@ async function createFakeTelegramApi() {
   const ordinaryImage = Buffer.concat([image, Buffer.from([1])]);
   const server = createServer(async (request, response) => {
     try {
+      if (request.url === "/v1/chat/completions") {
+        const body = await requestBody(request);
+        const serialized = JSON.stringify(body);
+        const content = serialized.includes("蓝鲸杯")
+          ? "收到：蓝鲸杯。"
+          : serialized.includes("星云巾")
+            ? "收到：星云巾。"
+            : "收到。";
+        if (body.stream === true) {
+          response.writeHead(200, {
+            "content-type": "text/event-stream",
+            "cache-control": "no-cache",
+          });
+          response.write(`data: ${JSON.stringify({
+            id: "chatcmpl-stella-e2e",
+            object: "chat.completion.chunk",
+            created: nowSeconds(),
+            model: "fixture-v1",
+            choices: [{
+              index: 0,
+              delta: { role: "assistant", content },
+              finish_reason: null,
+            }],
+          })}\n\n`);
+          response.write(`data: ${JSON.stringify({
+            id: "chatcmpl-stella-e2e",
+            object: "chat.completion.chunk",
+            created: nowSeconds(),
+            model: "fixture-v1",
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+            usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+          })}\n\n`);
+          response.end("data: [DONE]\n\n");
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          id: "chatcmpl-stella-e2e",
+          object: "chat.completion",
+          created: nowSeconds(),
+          model: "fixture-v1",
+          choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+        }));
+        return;
+      }
       if (request.url === `/file/bot${BOT_TOKEN}/photos/workout.png`) {
         response.writeHead(200, { "content-type": "image/png" });
         response.end(image);

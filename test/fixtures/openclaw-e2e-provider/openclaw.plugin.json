@@ -6,6 +6,11 @@
   "activation": {
     "onStartup": true
   },
+  "contracts": {
+    "memoryEmbeddingProviders": [
+      "stella-e2e"
+    ]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

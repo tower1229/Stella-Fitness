@@ -201,6 +201,14 @@ describe("Plugin registration", () => {
     const workspace = openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
       ?.workspace;
     expect(workspace).toBeDefined();
+    expect(openclawConfig.agents?.list?.find(({ id }) => id === "fitness")
+      ?.memorySearch).toMatchObject({
+        enabled: true,
+        sources: ["memory", "sessions"],
+        experimental: { sessionMemory: true },
+        extraPaths: [join(workspace!, "USER.md"), join(workspace!, "memory")],
+        qmd: { extraCollections: [] },
+      });
     expect(readFileSync(join(workspace!, "IDENTITY.md"), "utf8")).toContain("Stella");
     expect(readFileSync(join(workspace!, "SOUL.md"), "utf8")).toContain("温和、直接");
     expect(readFileSync(join(workspace!, "USER.md"), "utf8")).toContain("涛哥");
@@ -891,6 +899,64 @@ describe("Plugin registration", () => {
       reply: { text: expect.stringContaining("已准备好引体向上杆") },
     });
   });
+
+  it("does not treat group traffic on a bound account as a private Fitness Principal entry", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const directories = configuredPersonalDirectory();
+    const openclawConfig = permittedOpenClawConfig();
+    openclawConfig.bindings = [{
+      agentId: "fitness",
+      match: { channel: "telegram", accountId: "default" },
+    }];
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: directories,
+      openclawConfig,
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(hooks.get("inbound_claim")?.(
+      {
+        content: "我已准备好可拆卸哑铃",
+        channel: "telegram",
+        accountId: "default",
+        messageId: "group-prerequisite",
+        timestamp: "2026-08-14T03:00:00.000Z",
+        isGroup: true,
+      },
+      {
+        channelId: "group-515151",
+        sessionKey: "agent:fitness:telegram:group:515151",
+      },
+    )).resolves.toBeUndefined();
+  });
+
+  it.each(["subagent", "cron", "acp", "callback", "probe", "index"])(
+    "does not treat a Fitness %s runtime path as a private principal session",
+    async (kind) => {
+      const hooks = new Map<string, (...args: unknown[]) => unknown>();
+      const directories = configuredPersonalDirectory();
+      const api = compatibleApi({
+        commands: [],
+        hooks,
+        cliRegistrations: [],
+        pluginConfig: directories,
+        openclawConfig: permittedOpenClawConfig(),
+      });
+      registerStellaFitnessPlugin(
+        api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+      );
+
+      await expect(hooks.get("before_agent_run")?.(
+        { prompt: "我已准备好可拆卸哑铃" },
+        { sessionKey: `agent:fitness:${kind}:runtime-check` },
+      )).resolves.toEqual({ outcome: "pass" });
+    },
+  );
 
   it("claims dedicated-agent natural-language Journey input before model execution", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
@@ -3554,10 +3620,10 @@ function compatibleApi(options: {
       config: {
         current: () => openclawConfig,
         async mutateConfigFile(input: {
-          readonly mutate: (draft: TestOpenClawConfig) => void;
+          readonly mutate: (draft: TestOpenClawConfig) => unknown;
         }) {
-          input.mutate(openclawConfig);
-          return { result: undefined };
+          const result = input.mutate(openclawConfig);
+          return { result, nextConfig: openclawConfig };
         },
       },
       agent: {
@@ -3759,7 +3825,17 @@ type TestOpenClawConfig = {
       userTimezone: string;
       models: Record<string, Record<string, never>>;
     };
-    list?: Array<{ id: string; workspace?: string }>;
+    list?: Array<{
+      id: string;
+      workspace?: string;
+      memorySearch?: {
+        enabled?: boolean;
+        sources?: Array<"memory" | "sessions">;
+        extraPaths?: string[];
+        qmd?: { extraCollections?: Array<{ path: string; name?: string }> };
+        experimental?: { sessionMemory?: boolean };
+      };
+    }>;
   };
   bindings?: Array<{
     agentId: string;
