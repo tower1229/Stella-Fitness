@@ -35,8 +35,8 @@ const CONSUMER_ID = "stella-runtime" as const;
 const DESIRED_SET_SCHEMA = "stella-fitness/fitness-history-context/v1";
 const SOURCE_SNAPSHOT_SCHEMA = "stella-fitness/projection-source-snapshot/v1";
 const MANIFEST_FILE = "manifest.json";
-const PAYLOAD_PATH = "payloads/fitness-history.json";
-const SEARCH_PAYLOAD_PATH = "payloads/fitness-history.md";
+const PAYLOAD_SHARD_COUNT = 32;
+const EMPTY_PAYLOAD_STABLE_ID = "fitness-history-empty";
 const PUBLISH_PHASES = [
   "locked",
   "candidate-written",
@@ -70,6 +70,7 @@ type ProjectionManifest = {
     readonly state: "available" | "unavailable";
   }[];
   readonly payloads: readonly {
+    readonly stable_id: string;
     readonly path: string;
     readonly media_type: "application/json" | "text/markdown";
     readonly byte_length: number;
@@ -892,29 +893,14 @@ function buildProjectionPublication(options: {
   readonly desiredSet: FitnessProjectionSnapshot["desiredSet"];
   readonly generatedAt: string;
 }): ProjectionPublication {
-  const payloadBytes = canonicalizeJcs(options.desiredSet);
-  const searchBytes = canonicalTextBytes(renderSearchableDesiredSet(options.desiredSet));
-  if (
-    payloadBytes.byteLength < 1 ||
-    payloadBytes.byteLength > 1_048_576 ||
-    searchBytes.byteLength < 1 ||
-    searchBytes.byteLength > 1_048_576
-  ) {
-    throw new Error("FITNESS_PROJECTION_PAYLOAD_OVERSIZE");
-  }
-  const payloadChecksum = checksum(payloadBytes);
-  const searchChecksum = checksum(searchBytes);
-  const payloads = [{
-    path: PAYLOAD_PATH,
-    media_type: "application/json" as const,
-    byte_length: payloadBytes.byteLength,
-    checksum: payloadChecksum,
-  }, {
-    path: SEARCH_PAYLOAD_PATH,
+  const publicationPayloads = buildProjectionPayloads(options.desiredSet);
+  const payloads = publicationPayloads.map((payload) => ({
+    stable_id: payload.stableId,
+    path: payload.path,
     media_type: "text/markdown" as const,
-    byte_length: searchBytes.byteLength,
-    checksum: searchChecksum,
-  }];
+    byte_length: payload.bytes.byteLength,
+    checksum: payload.checksum,
+  }));
   const sourceReferences = [...options.sourceReferences].sort((left, right) =>
     left.id.localeCompare(right.id) || left.path.localeCompare(right.path)
   );
@@ -963,16 +949,53 @@ function buildProjectionPublication(options: {
     manifest,
     manifestBytes,
     manifestChecksum: checksum(manifestBytes),
-    payloads: [{
-      path: PAYLOAD_PATH,
-      bytes: payloadBytes,
-      checksum: payloadChecksum,
-    }, {
-      path: SEARCH_PAYLOAD_PATH,
-      bytes: searchBytes,
-      checksum: searchChecksum,
-    }],
+    payloads: publicationPayloads.map(({ path, bytes, checksum: value }) => ({
+      path,
+      bytes,
+      checksum: value,
+    })),
   };
+}
+
+function buildProjectionPayloads(
+  desiredSet: FitnessProjectionSnapshot["desiredSet"],
+): readonly {
+  readonly stableId: string;
+  readonly path: string;
+  readonly bytes: Buffer;
+  readonly checksum: string;
+}[] {
+  const buckets = new Map<number, FitnessHistoryDocument[]>();
+  for (const document of desiredSet.documents) {
+    const shard = Number.parseInt(sha256Hex(Buffer.from(document.id, "utf8")).slice(0, 8), 16)
+      % PAYLOAD_SHARD_COUNT;
+    const documents = buckets.get(shard) ?? [];
+    documents.push(document);
+    buckets.set(shard, documents);
+  }
+  const shards = buckets.size === 0
+    ? [{ stableId: EMPTY_PAYLOAD_STABLE_ID, documents: [] as FitnessHistoryDocument[] }]
+    : [...buckets.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([shard, documents]) => ({
+        stableId: `fitness-history-${String(shard).padStart(2, "0")}`,
+        documents,
+      }));
+  return shards.map(({ stableId, documents }) => {
+    const bytes = canonicalTextBytes(renderSearchableDesiredSet({
+      ...desiredSet,
+      documents,
+    }));
+    if (bytes.byteLength < 1 || bytes.byteLength > 1_048_576) {
+      throw new Error("FITNESS_PROJECTION_PAYLOAD_OVERSIZE");
+    }
+    return {
+      stableId,
+      path: `payloads/${stableId}.md`,
+      bytes,
+      checksum: checksum(bytes),
+    };
+  });
 }
 
 function renderSearchableDesiredSet(
@@ -1065,43 +1088,56 @@ async function readStoredPublication(
   expectedSourceRevision: string,
 ): Promise<ProjectionPublication> {
   assertStoredRevisionDirectory(revisionDirectory, expectedProjectionRevision);
-  await assertStoredRevisionTree(revisionDirectory);
   const manifestBytes = await readSafePublishedFile(
     join(revisionDirectory, MANIFEST_FILE),
     revisionDirectory,
   );
   const manifest = parseStoredManifest(manifestBytes);
+  await assertStoredRevisionTree(revisionDirectory, manifest);
   if (
     manifest.projection_revision !== expectedProjectionRevision ||
     manifest.source.revision !== expectedSourceRevision
   ) {
     throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
   }
-  const desiredBytes = await readSafePublishedFile(
-    join(revisionDirectory, PAYLOAD_PATH),
-    revisionDirectory,
-  );
-  const desiredSet = parseStoredDesiredSet(desiredBytes);
-  const rebuilt = buildProjectionPublication({
-    instanceId: manifest.instance_id,
-    sourceRevision: manifest.source.revision,
-    sourceAsOf: manifest.source.as_of,
-    sourceReferences: manifest.source_references,
-    desiredSet,
-    generatedAt: manifest.generated_at,
-  });
-  if (!rebuilt.manifestBytes.equals(manifestBytes)) {
+  const projectionRevision = `projection-${sha256Hex(canonicalizeJcs({
+    schema_version: "stella.context-projection-revision-seed/v1",
+    instance_id: manifest.instance_id,
+    producer_id: manifest.producer_id,
+    consumer_id: manifest.consumer_id,
+    source: manifest.source,
+    categories: manifest.categories,
+    source_references: manifest.source_references,
+    conflicts: manifest.conflicts,
+    retractions: manifest.retractions,
+    capabilities: manifest.capabilities,
+    payloads: manifest.payloads,
+  }))}`;
+  if (projectionRevision !== manifest.projection_revision) {
     throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
   }
-  for (const payload of rebuilt.payloads) {
+  const payloads: ProjectionPublication["payloads"][number][] = [];
+  for (const metadata of manifest.payloads) {
     const stored = await readSafePublishedFile(
-      join(revisionDirectory, payload.path),
+      join(revisionDirectory, metadata.path),
       revisionDirectory,
     );
-    if (!stored.equals(payload.bytes)) {
+    if (
+      stored.byteLength !== metadata.byte_length ||
+      checksum(stored) !== metadata.checksum ||
+      !canonicalTextBytes(decodeUtf8(stored)).equals(stored)
+    ) {
       throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
     }
+    payloads.push({ path: metadata.path, bytes: stored, checksum: metadata.checksum });
   }
+  const rebuilt: ProjectionPublication = {
+    projectionRevision,
+    manifest,
+    manifestBytes,
+    manifestChecksum: checksum(manifestBytes),
+    payloads,
+  };
   const activePath = join(dirname(dirname(revisionDirectory)), "active.json");
   const active = await readOptionalSafePublishedFile(
     activePath,
@@ -1158,7 +1194,10 @@ function assertStoredRevisionDirectory(
   }
 }
 
-async function assertStoredRevisionTree(revisionDirectory: string): Promise<void> {
+async function assertStoredRevisionTree(
+  revisionDirectory: string,
+  manifest: ProjectionManifest,
+): Promise<void> {
   const rootEntries = await readdir(revisionDirectory, { withFileTypes: true });
   if (
     rootEntries.map(({ name }) => name).sort().join(",") !== "manifest.json,payloads" ||
@@ -1171,10 +1210,10 @@ async function assertStoredRevisionTree(revisionDirectory: string): Promise<void
   const payloadDirectory = join(revisionDirectory, "payloads");
   const payloadMetadata = lstatSync(payloadDirectory);
   const payloadEntries = await readdir(payloadDirectory, { withFileTypes: true });
+  const expectedNames = manifest.payloads.map(({ path }) => basename(path)).sort();
   if (
     payloadMetadata.isSymbolicLink() || !payloadMetadata.isDirectory() ||
-    payloadEntries.map(({ name }) => name).sort().join(",") !==
-      "fitness-history.json,fitness-history.md" ||
+    payloadEntries.map(({ name }) => name).sort().join(",") !== expectedNames.join(",") ||
     payloadEntries.some((entry) => !entry.isFile())
   ) {
     throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
@@ -1202,6 +1241,22 @@ function parseStoredManifest(bytes: Buffer): ProjectionManifest {
       typeof reference.path !== "string" || typeof reference.revision !== "string" ||
       typeof reference.checksum !== "string"
     ) ||
+    !Array.isArray(value.payloads) || value.payloads.length < 1 ||
+    value.payloads.length > PAYLOAD_SHARD_COUNT ||
+    value.payloads.some((payload) =>
+      !isRecord(payload) ||
+      typeof payload.stable_id !== "string" ||
+      !/^fitness-history-(?:[0-9]{2}|empty)$/u.test(payload.stable_id) ||
+      payload.path !== `payloads/${payload.stable_id}.md` ||
+      payload.media_type !== "text/markdown" ||
+      !Number.isSafeInteger(payload.byte_length) ||
+      Number(payload.byte_length) < 1 || Number(payload.byte_length) > 1_048_576 ||
+      typeof payload.checksum !== "string" ||
+      !/^sha256:[a-f0-9]{64}$/u.test(payload.checksum)
+    ) ||
+    new Set(value.payloads.map((payload) =>
+      isRecord(payload) ? payload.stable_id : undefined
+    )).size !== value.payloads.length ||
     typeof value.generated_at !== "string"
   ) {
     throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
@@ -1209,35 +1264,6 @@ function parseStoredManifest(bytes: Buffer): ProjectionManifest {
   canonicalTimestamp(value.source.as_of);
   canonicalTimestamp(value.generated_at);
   return value as unknown as ProjectionManifest;
-}
-
-function parseStoredDesiredSet(
-  bytes: Buffer,
-): FitnessProjectionSnapshot["desiredSet"] {
-  let value: unknown;
-  try {
-    value = JSON.parse(bytes.toString("utf8"));
-  } catch {
-    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
-  }
-  if (
-    !isRecord(value) || !canonicalizeJcs(value).equals(bytes) ||
-    value.schema_version !== DESIRED_SET_SCHEMA || value.authoritative !== false ||
-    typeof value.source_revision !== "string" || typeof value.source_as_of !== "string" ||
-    !Array.isArray(value.documents) || value.documents.some((document) =>
-      !isRecord(document) || typeof document.id !== "string" ||
-      !["body-weight", "program", "strength-test", "workout"].includes(
-        String(document.category),
-      ) ||
-      !Array.isArray(document.source_reference_ids) ||
-      document.source_reference_ids.some((id) => typeof id !== "string") ||
-      !isRecord(document.facts)
-    )
-  ) {
-    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
-  }
-  canonicalTimestamp(value.source_as_of);
-  return value as unknown as FitnessProjectionSnapshot["desiredSet"];
 }
 
 function buildActivePointer(options: {
@@ -1577,6 +1603,14 @@ function canonicalTimestamp(value: string): string {
     throw new Error("FITNESS_PROJECTION_TIMESTAMP_INVALID");
   }
   return value;
+}
+
+function decodeUtf8(bytes: Buffer): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error("FITNESS_PROJECTION_REVISION_TAMPERED");
+  }
 }
 
 function checksum(bytes: Uint8Array): string {

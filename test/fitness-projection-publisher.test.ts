@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -92,18 +92,13 @@ describe("Fitness Projection Publisher", () => {
     ) as {
       capabilities: readonly { id: string; state: string }[];
       source_references: readonly { id: string; path: string }[];
-    };
-    const desiredSetBytes = readFileSync(
-      join(revisionDirectory, "payloads", "fitness-history.json"),
-    );
-    const desiredSet = JSON.parse(desiredSetBytes.toString("utf8")) as {
-      authoritative: boolean;
-      documents: readonly {
-        id: string;
-        category: string;
-        facts: Readonly<Record<string, unknown>>;
+      payloads: readonly {
+        stable_id: string;
+        path: string;
+        media_type: string;
       }[];
     };
+    const desiredSetText = readProjectionPayloadText(repository, first.projectionRevision);
 
     expect(first).toMatchObject({ status: "published", reusedRevision: false });
     expect(pointer.projection_revision).toBe(first.projectionRevision);
@@ -120,23 +115,27 @@ describe("Fitness Projection Publisher", () => {
         checksum: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
       },
     ]);
-    expect(desiredSet).toEqual({
-      schema_version: "stella-fitness/fitness-history-context/v1",
-      authoritative: false,
-      source_revision: pointer.source_revision,
-      source_as_of: "2026-08-24T00:00:00.000Z",
-      documents: [{
-        id: `body-weight:${observation.id}`,
-        category: "body-weight",
-        source_reference_ids: [`body-weight-${observation.id}`],
-        facts: {
-          amount: 68.4,
-          occurred_at: "2026-08-23T23:00:00.000Z",
-          unit: "kg",
-        },
-      }],
-    });
-    expect(desiredSetBytes.toString("utf8")).not.toContain("个人原文");
+    expect(manifest.payloads).toEqual([
+      {
+        stable_id: expect.stringMatching(/^fitness-history-[0-9]{2}$/u),
+        path: expect.stringMatching(/^payloads\/fitness-history-[0-9]{2}\.md$/u),
+        media_type: "text/markdown",
+        byte_length: expect.any(Number),
+        checksum: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+      },
+    ]);
+    expect(desiredSetText).toContain("authoritative: false");
+    expect(desiredSetText).toContain(`source_revision: ${pointer.source_revision}`);
+    expect(desiredSetText).toContain("source_as_of: 2026-08-24T00:00:00.000Z");
+    expect(desiredSetText).toContain(`## body-weight:${observation.id}`);
+    expect(desiredSetText).toContain("category: body-weight");
+    expect(desiredSetText).toContain(
+      `source_reference_ids: body-weight-${observation.id}`,
+    );
+    expect(desiredSetText).toContain(
+      'facts: {"amount":68.4,"occurred_at":"2026-08-23T23:00:00.000Z","unit":"kg"}',
+    );
+    expect(desiredSetText).not.toContain("个人原文");
 
     const retry = await publishFitnessContextProjection({
       openclawConfig: locatorConfig(repository),
@@ -210,72 +209,59 @@ describe("Fitness Projection Publisher", () => {
       openclawConfig: locatorConfig(repository),
       generatedAt: "2026-08-24T00:01:00.000Z",
     });
-    const payloadPath = join(
-      repository,
-      "stella",
-      "projections",
-      "stella",
-      "revisions",
-      result.projectionRevision,
-      "payloads",
-      "fitness-history.json",
+    const payloadText = readProjectionPayloadText(repository, result.projectionRevision);
+    expect(payloadText).toContain(`## program:${state.id}`);
+    expect(payloadText).toContain(
+      'facts: {"cycle_start":"2026-08-10","program_id":"zhuoshu-12-week","program_version":"0.2.0"}',
     );
-    const payloadBytes = readFileSync(payloadPath);
-    const searchPayloadBytes = readFileSync(join(
-      dirname(payloadPath),
-      "fitness-history.md",
-    ));
-    const payload = JSON.parse(payloadBytes.toString("utf8")) as {
-      documents: readonly {
-        id: string;
-        category: string;
-        facts: Readonly<Record<string, unknown>>;
-      }[];
-    };
+    expect(payloadText).toContain(`## workout:${persisted.observation.id}`);
+    expect(payloadText).toContain(
+      'facts: {"exercises":[{"exercise_id":"goblet-squat","load":{"kind":"kg","unit":"kg","value":20},"sets":[{"semantic":"repetitions","value":10},{"semantic":"repetitions","value":null}]}],"occurred_at":"2026-08-10T08:00:00.000Z","session_type":"full-body","stage":1,"week":1,"weekday":"monday"}',
+    );
+    expect(payloadText).not.toMatch(
+      /raw-artifacts|private-workout|私人训练备注|messageId|problemNote|actionQuality/u,
+    );
+    expect(payloadText).toMatch(/[^\n]\n$/u);
+    expect(payloadText).not.toContain("\r");
+  });
 
-    expect(payload.documents).toEqual([
-      {
-        id: `program:${state.id}`,
-        category: "program",
-        source_reference_ids: [
-          `program-spec-${state.id}`,
-          `program-state-${state.id}`,
-        ],
-        facts: {
-          cycle_start: "2026-08-10",
-          program_id: "zhuoshu-12-week",
-          program_version: "0.2.0",
-        },
-      },
-      {
-        id: `workout:${persisted.observation.id}`,
-        category: "workout",
-        source_reference_ids: [`workout-${persisted.observation.id}`],
-        facts: {
-          exercises: [{
-            exercise_id: "goblet-squat",
-            load: { kind: "kg", unit: "kg", value: 20 },
-            sets: [
-              { semantic: "repetitions", value: 10 },
-              { semantic: "repetitions", value: null },
-            ],
-          }],
-          occurred_at: "2026-08-10T08:00:00.000Z",
-          session_type: "full-body",
-          stage: 1,
-          week: 1,
-          weekday: "monday",
-        },
-      },
-    ]);
-    expect(payloadBytes.toString("utf8")).not.toMatch(
-      /raw-artifacts|private-workout|私人训练备注|messageId|problemNote|actionQuality/u,
-    );
-    expect(searchPayloadBytes.toString("utf8")).not.toMatch(
-      /raw-artifacts|private-workout|私人训练备注|messageId|problemNote|actionQuality/u,
-    );
-    expect(searchPayloadBytes.toString("utf8")).toMatch(/[^\n]\n$/u);
-    expect(searchPayloadBytes.toString("utf8")).not.toContain("\r");
+  it("keeps a complete history in at most 32 stable index-document shards", async () => {
+    const repository = temporaryRepository();
+    const personalDataDirectory = join(repository, "stella", "fitness");
+    const observationIds: string[] = [];
+    for (let index = 0; index < 64; index += 1) {
+      const occurredAt = new Date(Date.UTC(2026, 7, 23, 22, index)).toISOString();
+      const recordedAt = new Date(Date.UTC(2026, 7, 23, 23, index)).toISOString();
+      const observation = await persistBodyWeightObservation({
+        personalDataDirectory,
+        amount: 68 + index / 10,
+        unit: "kg",
+        occurredAt,
+        recordedAt,
+        source: { kind: "user-text", text: `${68 + index / 10} kg` },
+      });
+      observationIds.push(observation.id);
+    }
+
+    const published = await publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      generatedAt: "2026-08-24T02:00:00.000Z",
+    });
+    const manifest = readProjectionManifest(repository, published.projectionRevision);
+    const payloadText = readProjectionPayloadText(repository, published.projectionRevision);
+
+    expect(manifest.payloads.length).toBeLessThanOrEqual(32);
+    expect(new Set(manifest.payloads.map(({ stable_id }) => stable_id)).size)
+      .toBe(manifest.payloads.length);
+    expect(manifest.payloads.every(({ stable_id, path, media_type, byte_length }) =>
+      /^fitness-history-[0-9]{2}$/u.test(stable_id) &&
+      path === `payloads/${stable_id}.md` &&
+      media_type === "text/markdown" &&
+      byte_length > 0 && byte_length <= 1_048_576
+    )).toBe(true);
+    for (const id of observationIds) {
+      expect(payloadText.match(new RegExp(`## body-weight:${id}`, "gu"))).toHaveLength(1);
+    }
   });
 
   it("holds an exclusive publish lock across concurrent producers", async () => {
@@ -640,6 +626,7 @@ describe("Fitness Projection Publisher", () => {
       openclawConfig: locatorConfig(repository),
       generatedAt: "2026-08-24T00:01:00.000Z",
     });
+    const publishedManifest = readProjectionManifest(repository, published.projectionRevision);
     writeFileSync(join(
       repository,
       "stella",
@@ -647,8 +634,7 @@ describe("Fitness Projection Publisher", () => {
       "stella",
       "revisions",
       published.projectionRevision,
-      "payloads",
-      "fitness-history.json",
+      publishedManifest.payloads[0]!.path,
     ), "{}", "utf8");
 
     await expect(publishFitnessContextProjection({
@@ -745,20 +731,14 @@ describe("Fitness Projection Publisher", () => {
       openclawConfig: locatorConfig(repository),
       generatedAt: "2026-08-24T01:01:00.000Z",
     });
-    const secondPayload = readFileSync(join(
-      repository,
-      "stella",
-      "projections",
-      "stella",
-      "revisions",
-      second.projectionRevision,
-      "payloads",
-      "fitness-history.json",
-    ), "utf8");
+    const secondPayload = readProjectionPayloadText(repository, second.projectionRevision);
+    const secondManifest = readProjectionManifest(repository, second.projectionRevision);
 
     expect(second.projectionRevision).not.toBe(first.projectionRevision);
     expect(secondPayload).toContain(`body-weight:${correction.id}`);
     expect(secondPayload).not.toContain(`body-weight:${original.id}`);
+    expect(JSON.stringify(secondManifest)).toContain(`body-weight-${correction.id}`);
+    expect(JSON.stringify(secondManifest)).not.toContain(`body-weight-${original.id}`);
   });
 
   it("publishes an empty complete desired set after the last fact is deleted", async () => {
@@ -787,22 +767,16 @@ describe("Fitness Projection Publisher", () => {
       openclawConfig: locatorConfig(repository),
       generatedAt: "2026-08-24T01:01:00.000Z",
     });
-    const payload = JSON.parse(readFileSync(join(
-      repository,
-      "stella",
-      "projections",
-      "stella",
-      "revisions",
-      second.projectionRevision,
-      "payloads",
-      "fitness-history.json",
-    ), "utf8")) as { source_as_of: string; documents: readonly unknown[] };
+    const payload = readProjectionPayloadText(repository, second.projectionRevision);
 
     expect(second.projectionRevision).not.toBe(first.projectionRevision);
-    expect(payload).toMatchObject({
-      source_as_of: "2026-08-24T01:00:00.000Z",
-      documents: [],
-    });
+    expect(payload).toContain("source_as_of: 2026-08-24T01:00:00.000Z");
+    expect(payload).not.toContain("\n## ");
+    expect(readProjectionManifest(repository, second.projectionRevision).payloads)
+      .toMatchObject([{
+        stable_id: "fitness-history-empty",
+        path: "payloads/fitness-history-empty.md",
+      }]);
   });
 
   it("atomically blocks retraction and restores only the last verified tuple", async () => {
@@ -953,16 +927,7 @@ describe("Fitness Projection Publisher", () => {
     expect(active).toMatchObject({ status: "active" });
     if (active?.status !== "active") throw new Error("expected active pointer");
     expect(active.projectionRevision).not.toBe(first.projectionRevision);
-    const payload = readFileSync(join(
-      repository,
-      "stella",
-      "projections",
-      "stella",
-      "revisions",
-      active.projectionRevision,
-      "payloads",
-      "fitness-history.json",
-    ), "utf8");
+    const payload = readProjectionPayloadText(repository, active.projectionRevision);
     expect(payload).toContain(`body-weight:${correction.id}`);
     expect(payload).not.toContain(`body-weight:${original.id}`);
     expect(existsSync(join(
@@ -1038,6 +1003,55 @@ function locatorConfig(repository: string): unknown {
       },
     },
   };
+}
+
+function readProjectionManifest(
+  repository: string,
+  projectionRevision: string,
+): {
+  readonly payloads: readonly {
+    readonly stable_id: string;
+    readonly path: string;
+    readonly media_type: string;
+    readonly byte_length: number;
+    readonly checksum: string;
+  }[];
+} {
+  return JSON.parse(readFileSync(join(
+    repository,
+    "stella",
+    "projections",
+    "stella",
+    "revisions",
+    projectionRevision,
+    "manifest.json",
+  ), "utf8")) as {
+    readonly payloads: readonly {
+      readonly stable_id: string;
+      readonly path: string;
+      readonly media_type: string;
+      readonly byte_length: number;
+      readonly checksum: string;
+    }[];
+  };
+}
+
+function readProjectionPayloadText(
+  repository: string,
+  projectionRevision: string,
+): string {
+  const revisionDirectory = join(
+    repository,
+    "stella",
+    "projections",
+    "stella",
+    "revisions",
+    projectionRevision,
+  );
+  const manifest = readProjectionManifest(repository, projectionRevision);
+  return manifest.payloads.map(({ path }) =>
+    readFileSync(join(revisionDirectory, path), "utf8")
+  ).join("\n");
 }
 
 function programFixture(): unknown {
