@@ -504,6 +504,93 @@ describe("Fitness Agent workspace manager", () => {
     })).resolves.toMatchObject({ status: "ready", ownershipRevision: 2 });
   });
 
+  it("atomically retains the complete workspace as standalone degraded on uninstall", async () => {
+    const fixture = await workspaceFixture();
+    const canonicalDirectory = join(fixture.root, "personal-data");
+    await mkdir(canonicalDirectory);
+    await writeFile(join(canonicalDirectory, "observation.json"), "canonical fact\n");
+    const manager = createFitnessAgentWorkspaceManager({
+      runtimeDirectory: fixture.runtimeDirectory,
+      host: fixture.host,
+    });
+    const created = await manager.initialize({
+      agentId: "fitness",
+      artifacts: [
+        ...managedArtifacts("recording-only live capabilities\n"),
+        { path: "USER.md", managedContent: "last verified user context\n" },
+      ],
+    });
+    const agentsPath = join(created.workspace!, "AGENTS.md");
+    await writeFile(
+      agentsPath,
+      (await readFile(agentsPath, "utf8")).replace(
+        "<!-- stella-fitness:user:start -->\n",
+        "<!-- stella-fitness:user:start -->\nuser-owned instruction\n",
+      ),
+    );
+
+    const degraded = await manager.transitionToStandaloneDegraded({
+      agentId: "fitness",
+      asOf: "2026-08-24T01:00:00.000Z",
+    });
+
+    expect(degraded).toMatchObject({
+      status: "standalone-degraded",
+      ownershipRevision: 2,
+    });
+    expect(degraded.workspace).not.toBe(created.workspace);
+    expect(fixture.activeAgents.get("fitness")).toBe(degraded.workspace);
+    const retainedAgents = await readFile(
+      join(degraded.workspace!, "AGENTS.md"),
+      "utf8",
+    );
+    expect(retainedAgents).toContain("status: standalone-degraded");
+    expect(retainedAgents).toContain("last verified as-of: 2026-08-24T01:00:00.000Z");
+    expect(retainedAgents).toContain("must not be represented as current or real-time");
+    expect(retainedAgents).toContain("user-owned instruction");
+    expect(await readFile(join(degraded.workspace!, "IDENTITY.md"), "utf8"))
+      .toContain("Stella Fitness identity projection");
+    expect(await readFile(join(degraded.workspace!, "SOUL.md"), "utf8"))
+      .toContain("Stella Fitness persona projection");
+    expect(await readFile(join(degraded.workspace!, "USER.md"), "utf8"))
+      .toContain("last verified user context");
+    expect(await readFile(join(canonicalDirectory, "observation.json"), "utf8"))
+      .toBe("canonical fact\n");
+
+    await expect(manager.transitionToStandaloneDegraded({
+      agentId: "fitness",
+      asOf: "2026-08-24T01:00:00.000Z",
+    })).resolves.toEqual(degraded);
+  });
+
+  it("keeps the live workspace unchanged when standalone retention finds an ownership conflict", async () => {
+    const fixture = await workspaceFixture();
+    const manager = createFitnessAgentWorkspaceManager({
+      runtimeDirectory: fixture.runtimeDirectory,
+      host: fixture.host,
+    });
+    const created = await manager.initialize({
+      agentId: "fitness",
+      artifacts: managedArtifacts("recording-only live capabilities\n"),
+    });
+    const soulPath = join(created.workspace!, "SOUL.md");
+    await writeFile(
+      soulPath,
+      (await readFile(soulPath, "utf8")).replace("persona", "tampered persona"),
+    );
+
+    await expect(manager.transitionToStandaloneDegraded({
+      agentId: "fitness",
+      asOf: "2026-08-24T01:00:00.000Z",
+    })).resolves.toMatchObject({
+      status: "conflicted",
+      workspace: created.workspace,
+      reasonCode: "MANAGED_ARTIFACT_TAMPERED",
+    });
+    expect(fixture.activeAgents.get("fitness")).toBe(created.workspace);
+    expect(await readFile(soulPath, "utf8")).toContain("tampered persona");
+  });
+
   it("recovers a durable merge choice when activation crashes after switching", async () => {
     const fixture = await workspaceFixture();
     const existingWorkspace = join(fixture.root, "workspace-fitness");
@@ -832,6 +919,10 @@ async function workspaceFixture(): Promise<{
       },
       async activateAgent(agentId, workspace) {
         calls.push(`activate:${agentId}:${workspace}`);
+        activeAgents.set(agentId, workspace);
+      },
+      async retainAgent(agentId, workspace) {
+        calls.push(`retain:${agentId}:${workspace}`);
         activeAgents.set(agentId, workspace);
       },
     },

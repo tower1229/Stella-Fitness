@@ -68,6 +68,24 @@ export function createOpenClawFitnessAgentWorkspaceHost(
         },
       });
     },
+    async retainAgent(agentId, workspace) {
+      await api.runtime.config.mutateConfigFile({
+        afterWrite: { mode: "auto" },
+        mutate(draft) {
+          const list = draft.agents?.list ?? [];
+          const existingIndex = list.findIndex((agent) => agent.id === agentId);
+          if (existingIndex < 0) {
+            throw new Error("Fitness Agent must exist before lifecycle retention");
+          }
+          draft.agents = {
+            ...draft.agents,
+            list: list.map((agent, index) =>
+              index === existingIndex ? { ...agent, workspace } : agent
+            ),
+          };
+        },
+      });
+    },
   };
 }
 

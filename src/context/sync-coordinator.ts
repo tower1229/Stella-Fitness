@@ -124,6 +124,9 @@ export type FitnessContextSyncCoordinator = {
   checkForExternalRevision(input?: {
     readonly signal?: AbortSignal;
   }): Promise<FitnessContextSyncResult>;
+  markStandaloneDegraded(input: {
+    readonly asOf: string;
+  }): Promise<FitnessContextSyncResult>;
   diagnostics(): Promise<FitnessContextSyncState>;
 };
 
@@ -495,6 +498,39 @@ export function createFitnessContextSyncCoordinator(
           return resultFromState(state);
         }
         return await refresh({ trigger: "external-revision", signal });
+      });
+    },
+    markStandaloneDegraded(input: { readonly asOf: string }) {
+      return enqueue(async () => {
+        const parsedAsOf = new Date(input.asOf);
+        if (
+          !Number.isFinite(parsedAsOf.valueOf()) ||
+          parsedAsOf.toISOString() !== input.asOf
+        ) {
+          throw new Error("Standalone degraded as-of must be an ISO timestamp");
+        }
+        const previous = await readState(options.runtimeDirectory);
+        const state: FitnessContextSyncState = {
+          schema_version: CONTEXT_SYNC_STATE_SCHEMA,
+          status: "standalone-degraded",
+          source_category: "workspace",
+          ...(previous?.source_revision === undefined
+            ? {}
+            : { source_revision: previous.source_revision }),
+          ...(previous?.projection_revision === undefined
+            ? {}
+            : { projection_revision: previous.projection_revision }),
+          ...(previous?.manifest_checksum === undefined
+            ? {}
+            : { manifest_checksum: previous.manifest_checksum }),
+          as_of: previous?.as_of ?? input.asOf,
+          reason_code: "PLUGIN_UNINSTALLED",
+          recovery_action: "reinstall-and-run-full-preflight",
+          attempt_count: 0,
+          updated_at: now(options),
+        };
+        await persistState(options.runtimeDirectory, state);
+        return resultFromState(state);
       });
     },
     async diagnostics(): Promise<FitnessContextSyncState> {
