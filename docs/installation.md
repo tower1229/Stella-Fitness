@@ -1,6 +1,6 @@
 # 发布与安装契约
 
-目标 package identity 为 `@tower1229/stella-fitness`，owner 为 `tower1229`。当前开发与最低兼容基线为本机 OpenClaw extended-stable `2026.6.34`，package 接受 `>=2026.6.34`；发布前仍须按届时 stable OpenClaw/ClawHub 实机复验。
+目标 package identity 为 `@tower1229/stella-fitness`，owner 为 `tower1229`。当前开发与打包基线为本机 OpenClaw `2026.7.1-2`，最低兼容版本仍为 `2026.6.34`，package 接受 `>=2026.6.34`；公开发布前仍须完成课程派生制品授权、真实 Telegram smoke 与 ClawHub owner 权限验证。
 
 ## 首次使用
 

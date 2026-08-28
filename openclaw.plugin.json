@@ -2,7 +2,7 @@
   "id": "stella-fitness",
   "name": "Stella Fitness",
   "description": "Deterministic training-plan execution and recording without diagnosis or supervision",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "activation": {
     "onStartup": true
   },

@@ -2,9 +2,9 @@
 
 ## GAP-001：OpenClaw stable 兼容契约
 
-**状态：CLOSED / VERIFIED AGAINST LOCAL EXTENDED-STABLE 2026.6.34**
+**状态：CLOSED / REVERIFIED AGAINST LOCAL 2026.7.1-2**
 
-2026-08-10 已以本机 OpenClaw extended-stable `2026.6.34` 核验 Plugin hooks、structured media extraction、model permission、execution metadata、timeout/cancellation 与 package install/enable/load。Package 声明最低兼容版本 `>=2026.6.34`，不再锁定单一修订版本；运行时继续按实际能力 fail closed。
+2026-08-10 已以本机 OpenClaw extended-stable `2026.6.34` 建立最低兼容基线。2026-08-28 又以本机 `2026.7.1-2` SDK 完成 478 个 deterministic tests、package 验证，以及包含 13 次 Gateway restart 的 clean-install 验收。Package 声明最低兼容版本 `>=2026.6.34`，不使用精确版本白名单；运行时继续按实际能力 fail closed。
 
 ## GAP-002：ProgramSpec schema 与完整 fixture validator
 

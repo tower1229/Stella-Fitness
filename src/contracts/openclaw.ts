@@ -5,7 +5,7 @@ import {
 import type { OpenClawConfig } from "openclaw/plugin-sdk/plugin-entry";
 
 export const OPENCLAW_CONTRACT_BASELINE = {
-  developmentVersion: "2026.6.34",
+  developmentVersion: "2026.7.1-2",
   minimumVersion: "2026.6.34",
   hooks: [
     "inbound_claim",

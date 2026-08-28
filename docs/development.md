@@ -4,7 +4,7 @@ Phase 0 已批准进入实现，Plugin foundation 与 scenario harness 已建立
 
 ## 第一个实施切片
 
-1. 以本机 OpenClaw extended-stable `2026.6.34` 为开发基线，声明 `>=2026.6.34` 兼容范围，并以能力预检替代精确版本白名单；
+1. 以本机 OpenClaw `2026.7.1-2` 为当前开发与打包基线，保留 `>=2026.6.34` 最低兼容范围，并以能力预检替代精确版本白名单；
 2. 核验 hooks、structured media、model permission、execution metadata 与 timeout/cancellation；
 3. 创建可安装、可启用、可加载并返回 deterministic status 的 Native Plugin；
 4. 建立 controlled extraction result scenario harness；

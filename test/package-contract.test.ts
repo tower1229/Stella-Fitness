@@ -17,6 +17,7 @@ describe("installable Plugin package contract", () => {
 
     expect(packageJson).toMatchObject({
       name: "@tower1229/stella-fitness",
+      version: "0.2.0",
       private: true,
       scripts: {
         "verify:internal": expect.any(String),
@@ -35,10 +36,15 @@ describe("installable Plugin package contract", () => {
           pluginApi: ">=2026.6.34",
           minGatewayVersion: "2026.6.34",
         },
+        build: {
+          openclawVersion: "2026.7.1-2",
+          pluginSdkVersion: "2026.7.1-2",
+        },
       },
     });
     expect(manifest).toMatchObject({
       id: "stella-fitness",
+      version: "0.2.0",
       activation: { onStartup: true },
       contracts: {
         trustedToolPolicies: ["stella-fitness-managed-artifacts"],
