@@ -1065,6 +1065,9 @@ export function registerStellaFitnessPlugin(
           text: formatContextSyncDiagnostics(await contextSync.diagnostics()),
         };
       }
+      if (isHelpOrUsageQuery(text)) {
+        return { text: dedicatedAgentHelp() };
+      }
       const activationIntent = parseNaturalActivationIntent(text, receivedAt.slice(0, 10));
       if (activationIntent !== undefined) {
         const status = await stellaRuntime.programJourneyStatus({
@@ -3424,6 +3427,22 @@ function isUnambiguousWeeklyTrainingQuery(text: string): boolean {
   return /^(?:我)?(?:本周|这周)(?:应该|该|要|需要|可以)?(?:练|训练)(?:什么|哪些|啥)(?:内容|项目|动作)?[呢啊吗。.!！?？]*$/u.test(
     text.trim(),
   );
+}
+
+function isHelpOrUsageQuery(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return false;
+  const stripped = trimmed.replace(/[\p{P}\p{S}\s]/gu, "");
+  if (stripped.length === 0) {
+    return true;
+  }
+  return /^(?:stella|(?:stella\s+)?(?:help|帮助|使用说明|使用指南|功能|介绍)|(?:你是谁|你能做(?:什么|啥)|你会做(?:什么|啥)|怎么用|如何使用|有什么功能))[。.!！?？]*$/iu.test(
+    trimmed,
+  );
+}
+
+function dedicatedAgentHelp(): string {
+  return "你可以直接问“今天练什么”“下次练什么”“本周训练计划”或“体重变化”，也可以直接发送训练打卡记录或体重。我只能记录训练事实并按原计划查询安排，不能评价表现、诊断问题或调整训练和饮食。";
 }
 
 function factsUsage(): string {

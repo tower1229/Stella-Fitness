@@ -1867,6 +1867,35 @@ describe("Plugin registration", () => {
     });
   });
 
+  it("answers help, usage and punctuation-only inputs with dedicated agent guidance", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: { dedicatedAgentId: "fitness" },
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    const expectedHelpText =
+      "你可以直接问“今天练什么”“下次练什么”“本周训练计划”或“体重变化”，也可以直接发送训练打卡记录或体重。我只能记录训练事实并按原计划查询安排，不能评价表现、诊断问题或调整训练和饮食。";
+
+    for (const input of ["? /?", "?", "？", "/?", "help", "帮助", "你能做什么", "你是谁？", "怎么用"]) {
+      await expect(hooks.get("before_agent_reply")?.(
+        { cleanedBody: input },
+        { sessionKey: "agent:fitness:webchat:test" },
+      )).resolves.toEqual({
+        handled: true,
+        reply: {
+          text: expectedHelpText,
+        },
+      });
+    }
+  });
+
   it("advances prerequisite acknowledgements from controlled natural language in the dedicated agent", async () => {
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const directories = configuredPersonalDirectory();
