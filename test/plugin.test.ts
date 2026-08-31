@@ -23,6 +23,7 @@ import { workoutLogCandidate } from "./support/workout-log-candidate.js";
 const temporaryRoots: string[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -1303,9 +1304,7 @@ describe("Plugin registration", () => {
       reason: "stella-dedicated-input-is-plugin-owned",
       message: expect.stringContaining("不能评价表现、诊断问题或调整训练和饮食"),
     });
-    expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([
-      "program",
-    ]);
+    expect(readdirSync(personalDataDirectory.personalDataDirectory)).toEqual([]);
   });
 
   it("claims Journey input only from the configured dedicated agent without plugin binding", async () => {
@@ -1462,6 +1461,8 @@ describe("Plugin registration", () => {
   });
 
   it("lets the real Agent answer Current Fitness State and replaces unsafe facts before delivery", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-24T08:00:00.000Z"));
     const hooks = new Map<string, (...args: unknown[]) => unknown>();
     const directories = configuredPersonalDirectory();
     const api = compatibleApi({
@@ -1834,6 +1835,30 @@ describe("Plugin registration", () => {
     await expect(hooks.get("before_agent_reply")?.(
       { cleanedBody: "我应该怎么调整训练和饮食？" },
       { sessionKey: "agent:fitness:main", messageProvider: "telegram" },
+    )).resolves.toEqual({
+      handled: true,
+      reply: {
+        text: "我只能记录训练事实并按原计划查询安排，不能评价表现、诊断问题或调整训练和饮食。",
+      },
+    });
+  });
+
+  it("answers a generic dedicated-agent question without requiring a Runtime locator", async () => {
+    const hooks = new Map<string, (...args: unknown[]) => unknown>();
+    const api = compatibleApi({
+      commands: [],
+      hooks,
+      cliRegistrations: [],
+      pluginConfig: { dedicatedAgentId: "fitness" },
+      openclawConfig: permittedOpenClawConfig(),
+    });
+    registerStellaFitnessPlugin(
+      api as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
+    );
+
+    await expect(hooks.get("before_agent_reply")?.(
+      { cleanedBody: "好了吗？" },
+      { sessionKey: "agent:fitness:dashboard:missing-locator" },
     )).resolves.toEqual({
       handled: true,
       reply: {

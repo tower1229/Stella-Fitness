@@ -114,6 +114,41 @@ describe("Fitness Context Sync Coordinator", () => {
     });
   });
 
+  it("reports a missing Runtime locator instead of mislabeling the projection pointer", async () => {
+    const runtimeDirectory = temporaryRuntimeDirectory();
+    const coordinator = createFitnessContextSyncCoordinator({
+      runtimeDirectory,
+      maxAttempts: 1,
+      publish: async () => {
+        throw Object.assign(new Error("locator missing"), {
+          code: "LOCATOR_REQUIRED",
+        });
+      },
+      inspectSource: async () => {
+        throw Object.assign(new Error("locator missing"), {
+          code: "LOCATOR_REQUIRED",
+        });
+      },
+      readPointer: async () => {
+        throw Object.assign(new Error("locator missing"), {
+          code: "LOCATOR_REQUIRED",
+        });
+      },
+      publishPointerStatus: async () => undefined,
+      now: () => new Date("2026-08-24T01:01:00.000Z"),
+    });
+
+    await expect(coordinator.resync({ trigger: "explicit" })).resolves.toMatchObject({
+      status: "degraded",
+      reasonCode: "LOCATOR_REQUIRED",
+    });
+    await expect(coordinator.diagnostics()).resolves.toMatchObject({
+      status: "degraded",
+      reason_code: "LOCATOR_REQUIRED",
+      recovery_action: "configure-runtime-locator-and-resync",
+    });
+  });
+
   it("blocks old context before a correction and publishes only the new desired set", async () => {
     const runtimeDirectory = temporaryRuntimeDirectory();
     let sourceRevision = "source-old";

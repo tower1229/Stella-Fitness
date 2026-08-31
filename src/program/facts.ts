@@ -57,6 +57,13 @@ export type ProgramFactsResult =
 const RECORDING_ONLY_SCOPE =
   "Stella Fitness only reports source-program, Program State and recorded facts; it does not diagnose, advise or adjust the plan.";
 
+export function unsupportedProgramFacts(): Extract<
+  ProgramFactsResult,
+  { readonly kind: "unsupported" }
+> {
+  return { kind: "unsupported", scope: RECORDING_ONLY_SCOPE };
+}
+
 type ResolvedLoad = {
   readonly symbol: string;
   readonly value: number;
@@ -86,7 +93,7 @@ export async function queryProgramFacts(options: {
   readonly query: ProgramFactsQuery;
 }): Promise<ProgramFactsResult> {
   if (options.query.kind === "unsupported") {
-    return { kind: "unsupported", scope: RECORDING_ONLY_SCOPE };
+    return unsupportedProgramFacts();
   }
   const { program, state } = await readActiveProgram({
     personalDataDirectory: options.personalDataDirectory,

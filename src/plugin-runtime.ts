@@ -62,6 +62,7 @@ import {
 import {
   queryProgramFacts,
   type ProgramFactsQuery,
+  unsupportedProgramFacts,
 } from "./program/facts.js";
 import {
   buildCurrentFitnessState,
@@ -521,17 +522,16 @@ export function createStellaFitnessRuntime(options: {
       return await afterCanonicalWrite(() => journey().activate(cycleStart));
     },
     async programFacts(query) {
+      if (query.kind === "unsupported") return unsupportedProgramFacts();
       await journey().migrateLegacyProgramStateReferences();
       await enqueueSpecialSessionStateRebuild(requiredPersonalDataDirectory(options));
-      if (query.kind !== "unsupported") {
-        const status = await journey().status(
-          query.kind === "today" || query.kind === "next" || query.kind === "week"
-            ? { date: query.date }
-            : {},
-        );
-        if (status.state !== "ACTIVE") {
-          throw new Error(`Program Facts is unavailable in ${status.state}`);
-        }
+      const status = await journey().status(
+        query.kind === "today" || query.kind === "next" || query.kind === "week"
+          ? { date: query.date }
+          : {},
+      );
+      if (status.state !== "ACTIVE") {
+        throw new Error(`Program Facts is unavailable in ${status.state}`);
       }
       const result = await queryProgramFacts({
         personalDataDirectory: requiredPersonalDataDirectory(options),

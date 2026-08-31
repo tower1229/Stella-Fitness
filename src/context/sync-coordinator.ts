@@ -201,13 +201,16 @@ export function createFitnessContextSyncCoordinator(
     let verifiedPointer: FitnessProjectionPointerSnapshot | undefined;
     try {
       verifiedPointer = await options.readPointer?.();
-    } catch {
+    } catch (error) {
+      const locatorErrorCode = runtimeLocatorErrorCode(error);
       const state: FitnessContextSyncState = {
         schema_version: CONTEXT_SYNC_STATE_SCHEMA,
-        status: "conflicted",
+        status: locatorErrorCode === undefined ? "conflicted" : "degraded",
         source_category: "fitness-canonical",
-        reason_code: "PROJECTION_POINTER_INVALID",
-        recovery_action: "inspect-projection-pointer-and-resync",
+        reason_code: locatorErrorCode ?? "PROJECTION_POINTER_INVALID",
+        recovery_action: locatorErrorCode === undefined
+          ? "inspect-projection-pointer-and-resync"
+          : "configure-runtime-locator-and-resync",
         attempt_count: attempt,
         updated_at: now(options),
       };
@@ -836,6 +839,14 @@ function isInvalidCanonicalSourceError(error: unknown): boolean {
     error.message === "FITNESS_PROJECTION_SOURCE_OVERSIZE" ||
     error.message === "FITNESS_PROJECTION_SOURCE_CHANGED" ||
     error.message === "FITNESS_PROJECTION_TIMESTAMP_INVALID";
+}
+
+function runtimeLocatorErrorCode(error: unknown): string | undefined {
+  if (!(error instanceof Error) || !("code" in error)) return undefined;
+  const code = error.code;
+  return typeof code === "string" && code.startsWith("LOCATOR_")
+    ? code
+    : undefined;
 }
 
 function crashAtPhase(
