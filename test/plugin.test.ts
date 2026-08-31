@@ -2382,8 +2382,30 @@ describe("Plugin registration", () => {
   it("activates with the first session and keeps all bound Program Facts deterministic after restart", async () => {
     const directories = configuredPersonalDirectory();
     const bound = { sessionKey: "agent:fitness:webchat:test" };
-    const llmComplete = vi.fn().mockResolvedValue({
-      text: JSON.stringify({ kind: "week", confidence: "high" }),
+    let markSemanticClassifierStarted = (): void => {};
+    const semanticClassifierStarted = new Promise<void>((resolve) => {
+      markSemanticClassifierStarted = resolve;
+    });
+    const llmComplete = vi.fn().mockImplementation(async (input: {
+      readonly messages: readonly { readonly content: string }[];
+      readonly signal: AbortSignal;
+    }) => {
+      if (input.messages[0]?.content.includes("我本周该练什么")) {
+        markSemanticClassifierStarted();
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("provider unavailable")),
+            6_000,
+          );
+          input.signal.addEventListener("abort", () => {
+            clearTimeout(timeout);
+            reject(input.signal.reason);
+          }, { once: true });
+        });
+      }
+      return {
+        text: JSON.stringify({ kind: "week", confidence: "high" }),
+      };
     });
     const createHooks = () => {
       const hooks = new Map<string, (...args: unknown[]) => unknown>();
@@ -2516,7 +2538,10 @@ describe("Plugin registration", () => {
     vi.setSystemTime(new Date("2026-08-14T08:02:45.000Z"));
     try {
       const deterministicWeek = await askWeek("本周的训练安排");
-      const semanticWeek = await askWeek("我本周该练什么");
+      const semanticWeekPromise = askWeek("我本周该练什么");
+      await semanticClassifierStarted;
+      await vi.advanceTimersToNextTimerAsync();
+      const semanticWeek = await semanticWeekPromise;
       expect(semanticWeek).toBe(deterministicWeek);
     } finally {
       vi.useRealTimers();

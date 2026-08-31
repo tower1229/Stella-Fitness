@@ -224,6 +224,13 @@ export function registerStellaFitnessPlugin(
       currentPluginConfig(currentOpenClawConfig(api)),
     ),
   });
+  const dedicatedFitnessQueryClassifier = createOpenClawFitnessQueryClassifier({
+    complete: (input) => api.runtime.llm.complete(input),
+    agentId: () => resolveDedicatedAgentId(
+      currentPluginConfig(currentOpenClawConfig(api)),
+    ),
+    timeoutMs: 30_000,
+  });
   const stellaRuntime = createStellaFitnessRuntime({
     extractionRuntime: createCurrentExtractionRuntime(api),
     personalDataDirectory: () =>
@@ -1143,12 +1150,15 @@ export function registerStellaFitnessPlugin(
         };
       }
       if (!isBodyWeightInput(text)) {
-        const semanticQuery = await fitnessQueryClassifier.classify({
+        const semanticQuery = await dedicatedFitnessQueryClassifier.classify({
           text,
         });
         if (
-          semanticQuery.status === "classified" &&
-          semanticQuery.intent.kind === "week" &&
+          (
+            semanticQuery.status === "classified"
+              ? semanticQuery.intent.kind === "week"
+              : isUnambiguousWeeklyTrainingQuery(text)
+          ) &&
           parseDeterministicFitnessQuery(text) === undefined
         ) {
           const date = confirmedFitnessLocalDate(
@@ -1290,7 +1300,7 @@ export function registerStellaFitnessPlugin(
         ? undefined
         : { handled: true, reply: { text: naturalRecordingReply } };
     },
-    { priority: 100, timeoutMs: 6_000 },
+    { priority: 100, timeoutMs: 35_000 },
   );
 
   api.on(
@@ -1375,7 +1385,7 @@ export function registerStellaFitnessPlugin(
             category: "plugin-command",
           };
     },
-    { priority: 100, timeoutMs: 6_000 },
+    { priority: 100, timeoutMs: 35_000 },
   );
   return stellaRuntime;
 }
@@ -3407,6 +3417,12 @@ function isWeightFactsQuery(text: string): boolean {
 function isQuestion(text: string): boolean {
   return /(?:[?？]|吗(?:[。.!！]?\s*)$|呢(?:[。.!！]?\s*)$|多少|怎么|如何|能不能|可不可以|是否|会不会|是不是|what|when|where|which|who|why|how|can\s+i|should\s+i)/iu.test(
     text,
+  );
+}
+
+function isUnambiguousWeeklyTrainingQuery(text: string): boolean {
+  return /^(?:我)?(?:本周|这周)(?:应该|该|要|需要|可以)?(?:练|训练)(?:什么|哪些|啥)(?:内容|项目|动作)?[呢啊吗。.!！?？]*$/u.test(
+    text.trim(),
   );
 }
 
