@@ -2382,6 +2382,9 @@ describe("Plugin registration", () => {
   it("activates with the first session and keeps all bound Program Facts deterministic after restart", async () => {
     const directories = configuredPersonalDirectory();
     const bound = { sessionKey: "agent:fitness:webchat:test" };
+    const llmComplete = vi.fn().mockResolvedValue({
+      text: JSON.stringify({ kind: "week", confidence: "high" }),
+    });
     const createHooks = () => {
       const hooks = new Map<string, (...args: unknown[]) => unknown>();
       registerStellaFitnessPlugin(
@@ -2391,6 +2394,7 @@ describe("Plugin registration", () => {
           cliRegistrations: [],
           pluginConfig: directories,
           openclawConfig: permittedOpenClawConfig(),
+          llmComplete,
         }) as unknown as Parameters<typeof registerStellaFitnessPlugin>[0],
       );
       return hooks;
@@ -2499,6 +2503,31 @@ describe("Plugin registration", () => {
         ),
       },
     });
+    const askWeek = async (prompt: string) => {
+      const result = await inbound({
+        content: prompt,
+        channel: "test-channel",
+        timestamp: "2026-08-14T08:02:45.000Z",
+        isGroup: false,
+      }, bound) as { reply: { text: string } };
+      return result.reply.text;
+    };
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-14T08:02:45.000Z"));
+    try {
+      const deterministicWeek = await askWeek("本周的训练安排");
+      const semanticWeek = await askWeek("我本周该练什么");
+      expect(semanticWeek).toBe(deterministicWeek);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(llmComplete).toHaveBeenCalledWith(expect.objectContaining({
+      purpose: "stella-fitness-query-intent",
+      messages: [{
+        role: "user",
+        content: JSON.stringify({ text: "我本周该练什么" }),
+      }],
+    }));
     await expect(inbound({
       content: "/stella-facts week 2026-08-14",
       channel: "test-channel",

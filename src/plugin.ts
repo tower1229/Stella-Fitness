@@ -218,6 +218,12 @@ export function registerStellaFitnessPlugin(
     identityBootstrap.statusSummary(),
     formatModelingDiagnostics(contextModeling.diagnostics()),
   ].join("\n");
+  const fitnessQueryClassifier = createOpenClawFitnessQueryClassifier({
+    complete: (input) => api.runtime.llm.complete(input),
+    agentId: () => resolveDedicatedAgentId(
+      currentPluginConfig(currentOpenClawConfig(api)),
+    ),
+  });
   const stellaRuntime = createStellaFitnessRuntime({
     extractionRuntime: createCurrentExtractionRuntime(api),
     personalDataDirectory: () =>
@@ -225,12 +231,7 @@ export function registerStellaFitnessPlugin(
     runtimeDirectory: () =>
       join(api.runtime.state.resolveStateDir(process.env), PLUGIN_ID),
     userTimezone: () => currentOpenClawConfig(api).agents?.defaults?.userTimezone,
-    queryClassifier: createOpenClawFitnessQueryClassifier({
-      complete: (input) => api.runtime.llm.complete(input),
-      agentId: () => resolveDedicatedAgentId(
-        currentPluginConfig(currentOpenClawConfig(api)),
-      ),
-    }),
+    queryClassifier: fitnessQueryClassifier,
     contextSync,
     preflight,
   });
@@ -1142,6 +1143,30 @@ export function registerStellaFitnessPlugin(
         };
       }
       if (!isBodyWeightInput(text)) {
+        const semanticQuery = await fitnessQueryClassifier.classify({
+          text,
+        });
+        if (
+          semanticQuery.status === "classified" &&
+          semanticQuery.intent.kind === "week" &&
+          parseDeterministicFitnessQuery(text) === undefined
+        ) {
+          const date = confirmedFitnessLocalDate(
+            receivedAt,
+            currentOpenClawConfig(api).agents?.defaults?.userTimezone,
+          );
+          if (date === undefined) {
+            return {
+              text: "请先确认你的 IANA 时区，我才能确定“今天”和“本周”的日期边界。",
+            };
+          }
+          return {
+            text: await formatAvailableProgramFacts(stellaRuntime, {
+              kind: "week",
+              date,
+            }),
+          };
+        }
         if (isQuestion(text)) {
           const result = await stellaRuntime.programFacts({
             kind: "unsupported",
