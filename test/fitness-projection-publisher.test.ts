@@ -45,6 +45,60 @@ afterEach(() => {
 });
 
 describe("Fitness Projection Publisher", () => {
+  it("publishes an initialized empty repository without fabricating Fitness facts", async () => {
+    const repository = temporaryRepository();
+
+    const publication = await publishFitnessContextProjection({
+      openclawConfig: locatorConfig(repository),
+      generatedAt: "2026-09-01T00:01:00.000Z",
+    });
+    const manifest = readProjectionManifest(repository, publication.projectionRevision);
+    const payload = readProjectionPayloadText(repository, publication.projectionRevision);
+
+    expect(publication.asOf).toBe("2026-09-01T00:00:00.000Z");
+    expect(manifest.source_references).toEqual([]);
+    expect(manifest.capabilities).toEqual([
+      { id: "current_fitness_state", state: "unavailable" },
+      { id: "fitness_history_context", state: "available" },
+    ]);
+    expect(manifest.payloads).toEqual([{
+      stable_id: "fitness-history-empty",
+      path: "payloads/fitness-history-empty.md",
+      media_type: "text/markdown",
+      byte_length: expect.any(Number),
+      checksum: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+    }]);
+    expect(payload).toContain("source_as_of: 2026-09-01T00:00:00.000Z");
+    expect(payload).not.toContain("\n## ");
+  });
+
+  it("fails closed when Stella has not initialized the repository", async () => {
+    const repository = temporaryRepository();
+    unlinkSync(join(repository, "stella", "repository.json"));
+
+    await expect(inspectFitnessContextProjectionSource({
+      openclawConfig: locatorConfig(repository),
+    })).rejects.toMatchObject({
+      code: "PERSONAL_DATA_REPOSITORY_UNINITIALIZED",
+    });
+  });
+
+  it("rejects a repository initialization bound to another Runtime instance", async () => {
+    const repository = temporaryRepository();
+    writeFileSync(join(repository, "stella", "repository.json"), JSON.stringify({
+      initialized_at: "2026-09-01T00:00:00.000Z",
+      instance_id: "another-instance",
+      layout_version: "stella.personal-data-layout/v1",
+      schema_version: "stella.personal-data-repository/v1",
+    }) + "\n", { mode: 0o600 });
+
+    await expect(inspectFitnessContextProjectionSource({
+      openclawConfig: locatorConfig(repository),
+    })).rejects.toMatchObject({
+      code: "PERSONAL_DATA_REPOSITORY_INSTANCE_MISMATCH",
+    });
+  });
+
   it("publishes one immutable complete desired set and reuses it on retry", async () => {
     const repository = temporaryRepository();
     const personalDataDirectory = join(repository, "stella", "fitness");
@@ -1016,6 +1070,12 @@ function temporaryRepository(): string {
     recursive: true,
     mode: 0o700,
   });
+  writeFileSync(join(repository, "stella", "repository.json"), JSON.stringify({
+    initialized_at: "2026-09-01T00:00:00.000Z",
+    instance_id: "instance-fitness-test",
+    layout_version: "stella.personal-data-layout/v1",
+    schema_version: "stella.personal-data-repository/v1",
+  }) + "\n", { mode: 0o600 });
   return repository;
 }
 
@@ -1042,6 +1102,8 @@ function readProjectionManifest(
   repository: string,
   projectionRevision: string,
 ): {
+  readonly source_references: readonly unknown[];
+  readonly capabilities: readonly { readonly id: string; readonly state: string }[];
   readonly payloads: readonly {
     readonly stable_id: string;
     readonly path: string;
@@ -1059,6 +1121,8 @@ function readProjectionManifest(
     projectionRevision,
     "manifest.json",
   ), "utf8")) as {
+    readonly source_references: readonly unknown[];
+    readonly capabilities: readonly { readonly id: string; readonly state: string }[];
     readonly payloads: readonly {
       readonly stable_id: string;
       readonly path: string;

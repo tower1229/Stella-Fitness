@@ -4506,7 +4506,13 @@ function configuredPersonalDirectory(): {
 } {
   const repository = join(temporaryRoot(), "repository");
   const personalDataDirectory = join(repository, "stella", "fitness");
-  mkdirSync(personalDataDirectory, { recursive: true });
+  mkdirSync(personalDataDirectory, { recursive: true, mode: 0o700 });
+  writeFileSync(join(repository, "stella", "repository.json"), JSON.stringify({
+    initialized_at: "2026-08-24T00:00:00.000Z",
+    instance_id: "stella-primary",
+    layout_version: "stella.personal-data-layout/v1",
+    schema_version: "stella.personal-data-repository/v1",
+  }) + "\n", { mode: 0o600 });
   return { personalDataDirectory, dedicatedAgentId: "fitness" };
 }
 

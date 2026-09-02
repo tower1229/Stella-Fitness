@@ -221,9 +221,13 @@ export function createFitnessContextSyncCoordinator(
     try {
       source = await options.inspectSource();
     } catch (error) {
+      const repositoryErrorCode = personalDataRepositoryErrorCode(error);
       const invalidSource = isInvalidCanonicalSourceError(error);
       if (
-        invalidSource &&
+        (invalidSource || (
+          repositoryErrorCode !== undefined &&
+          repositoryErrorCode !== "PERSONAL_DATA_REPOSITORY_UNINITIALIZED"
+        )) &&
         (verifiedPointer?.status === "active" || verifiedPointer?.status === "stale")
       ) {
         try {
@@ -239,7 +243,10 @@ export function createFitnessContextSyncCoordinator(
       }
       const state: FitnessContextSyncState = {
         schema_version: CONTEXT_SYNC_STATE_SCHEMA,
-        status: invalidSource ? "conflicted" : "degraded",
+        status: invalidSource || (
+          repositoryErrorCode !== undefined &&
+          repositoryErrorCode !== "PERSONAL_DATA_REPOSITORY_UNINITIALIZED"
+        ) ? "conflicted" : "degraded",
         source_category: "fitness-canonical",
         ...(verifiedPointer?.status === "active" || verifiedPointer?.status === "stale"
           ? {
@@ -249,12 +256,16 @@ export function createFitnessContextSyncCoordinator(
               as_of: verifiedPointer.asOf,
             }
           : {}),
-        reason_code: invalidSource
+        reason_code: repositoryErrorCode ?? (invalidSource
           ? "CANONICAL_SOURCE_INVALID"
-          : "CANONICAL_SOURCE_UNAVAILABLE",
-        recovery_action: invalidSource
-          ? "repair-canonical-source-and-resync"
-          : "retry-on-startup-write-or-resync",
+          : "CANONICAL_SOURCE_UNAVAILABLE"),
+        recovery_action: repositoryErrorCode === "PERSONAL_DATA_REPOSITORY_UNINITIALIZED"
+          ? "run-runtime-personal-data-initialize-and-resync"
+          : repositoryErrorCode !== undefined
+            ? "repair-personal-data-repository-initialization-and-resync"
+            : invalidSource
+              ? "repair-canonical-source-and-resync"
+              : "retry-on-startup-write-or-resync",
         attempt_count: attempt,
         updated_at: now(options),
       };
@@ -845,6 +856,14 @@ function runtimeLocatorErrorCode(error: unknown): string | undefined {
   if (!(error instanceof Error) || !("code" in error)) return undefined;
   const code = error.code;
   return typeof code === "string" && code.startsWith("LOCATOR_")
+    ? code
+    : undefined;
+}
+
+function personalDataRepositoryErrorCode(error: unknown): string | undefined {
+  if (!(error instanceof Error) || !("code" in error)) return undefined;
+  const code = error.code;
+  return typeof code === "string" && code.startsWith("PERSONAL_DATA_REPOSITORY_")
     ? code
     : undefined;
 }

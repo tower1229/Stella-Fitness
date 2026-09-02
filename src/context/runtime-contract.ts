@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import {
   accessSync,
+  closeSync,
   constants,
+  fstatSync,
   lstatSync,
+  openSync,
   readFileSync,
   realpathSync,
   readdirSync,
@@ -26,6 +29,10 @@ export type FitnessContextContractErrorCode =
   | "LOCATOR_PERMISSION_DENIED"
   | "LOCATOR_SYMLINK_FORBIDDEN"
   | "LOCATOR_PATH_ESCAPE"
+  | "PERSONAL_DATA_REPOSITORY_UNINITIALIZED"
+  | "PERSONAL_DATA_REPOSITORY_INVALID"
+  | "PERSONAL_DATA_REPOSITORY_INSTANCE_MISMATCH"
+  | "PERSONAL_DATA_REPOSITORY_PERMISSION_DENIED"
   | "JCS_VALUE_INVALID"
   | "CONTRACT_INCOMPATIBLE"
   | "PROJECTION_FILE_INVALID"
@@ -50,6 +57,13 @@ export type StellaPersonalDataPaths = {
   readonly fitnessData: string;
   readonly runtimeToFitness: string;
   readonly fitnessToRuntime: string;
+};
+
+export type PersonalDataRepositoryInitialization = {
+  readonly schemaVersion: "stella.personal-data-repository/v1";
+  readonly instanceId: string;
+  readonly layoutVersion: "stella.personal-data-layout/v1";
+  readonly initializedAt: string;
 };
 
 export type RuntimeProjectionBinding = {
@@ -195,6 +209,91 @@ export function resolveStellaPersonalDataPaths(
     fitnessData,
     runtimeToFitness: join(repository, "stella", "projections", "fitness"),
     fitnessToRuntime: join(repository, "stella", "projections", "stella"),
+  };
+}
+
+export function readPersonalDataRepositoryInitialization(
+  paths: StellaPersonalDataPaths,
+): PersonalDataRepositoryInitialization {
+  const manifestPath = join(paths.stellaRoot, "repository.json");
+  let metadata;
+  try {
+    metadata = lstatSync(manifestPath);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      throw contractError("PERSONAL_DATA_REPOSITORY_UNINITIALIZED");
+    }
+    if (isPermissionError(error)) {
+      throw contractError("PERSONAL_DATA_REPOSITORY_PERMISSION_DENIED");
+    }
+    throw contractError("PERSONAL_DATA_REPOSITORY_INVALID");
+  }
+  if (
+    metadata.isSymbolicLink() ||
+    !metadata.isFile() ||
+    metadata.nlink !== 1 ||
+    (metadata.mode & 0o077) !== 0 ||
+    (process.getuid?.() !== undefined && metadata.uid !== process.getuid?.())
+  ) {
+    throw contractError("PERSONAL_DATA_REPOSITORY_INVALID");
+  }
+  let descriptor: number | undefined;
+  let bytes: Buffer;
+  try {
+    descriptor = openSync(manifestPath, "r");
+    const opened = fstatSync(descriptor);
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      opened.dev !== metadata.dev ||
+      opened.ino !== metadata.ino ||
+      opened.size !== metadata.size
+    ) {
+      throw contractError("PERSONAL_DATA_REPOSITORY_INVALID");
+    }
+    bytes = readFileSync(descriptor);
+  } catch (error) {
+    if (error instanceof FitnessContextContractError) throw error;
+    if (isPermissionError(error)) {
+      throw contractError("PERSONAL_DATA_REPOSITORY_PERMISSION_DENIED");
+    }
+    throw contractError("PERSONAL_DATA_REPOSITORY_INVALID");
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+  if (bytes.byteLength < 2 || bytes.byteLength > 4096) {
+    throw contractError("PERSONAL_DATA_REPOSITORY_INVALID");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw contractError("PERSONAL_DATA_REPOSITORY_INVALID");
+  }
+  const record = asRecord(value);
+  if (
+    record === undefined ||
+    Object.keys(record).sort().join(",") !==
+      ["initialized_at", "instance_id", "layout_version", "schema_version"].join(",") ||
+    record.schema_version !== "stella.personal-data-repository/v1" ||
+    record.layout_version !== "stella.personal-data-layout/v1" ||
+    typeof record.instance_id !== "string" ||
+    !INSTANCE_ID_PATTERN.test(record.instance_id) ||
+    typeof record.initialized_at !== "string" ||
+    !Number.isFinite(Date.parse(record.initialized_at)) ||
+    new Date(record.initialized_at).toISOString() !== record.initialized_at ||
+    !canonicalizeJcs(record).equals(bytes.subarray(0, bytes.at(-1) === 0x0a ? -1 : undefined))
+  ) {
+    throw contractError("PERSONAL_DATA_REPOSITORY_INVALID");
+  }
+  if (record.instance_id !== paths.instanceId) {
+    throw contractError("PERSONAL_DATA_REPOSITORY_INSTANCE_MISMATCH");
+  }
+  return {
+    schemaVersion: record.schema_version,
+    instanceId: record.instance_id,
+    layoutVersion: record.layout_version,
+    initializedAt: record.initialized_at,
   };
 }
 
@@ -684,8 +783,14 @@ function isStrictChild(root: string, candidate: string): boolean {
 }
 
 function isPermissionError(error: unknown): boolean {
-  return isPlainRecord(error) &&
-    (error.code === "EACCES" || error.code === "EPERM");
+  const code = errorCode(error);
+  return code === "EACCES" || code === "EPERM";
+}
+
+function errorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error
+    ? error.code
+    : undefined;
 }
 
 function sha256(value: Uint8Array): string {

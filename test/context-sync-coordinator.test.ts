@@ -149,6 +149,32 @@ describe("Fitness Context Sync Coordinator", () => {
     });
   });
 
+  it("reports that Stella must initialize the Personal Data Repository", async () => {
+    const runtimeDirectory = temporaryRuntimeDirectory();
+    const uninitialized = () => Object.assign(
+      new Error("repository initialization missing"),
+      { code: "PERSONAL_DATA_REPOSITORY_UNINITIALIZED" },
+    );
+    const coordinator = createFitnessContextSyncCoordinator({
+      runtimeDirectory,
+      maxAttempts: 1,
+      publish: async () => { throw uninitialized(); },
+      inspectSource: async () => { throw uninitialized(); },
+      publishPointerStatus: async () => undefined,
+      now: () => new Date("2026-09-01T00:00:00.000Z"),
+    });
+
+    await expect(coordinator.resync({ trigger: "startup" })).resolves.toMatchObject({
+      status: "degraded",
+      reasonCode: "PERSONAL_DATA_REPOSITORY_UNINITIALIZED",
+    });
+    await expect(coordinator.diagnostics()).resolves.toMatchObject({
+      status: "degraded",
+      reason_code: "PERSONAL_DATA_REPOSITORY_UNINITIALIZED",
+      recovery_action: "run-runtime-personal-data-initialize-and-resync",
+    });
+  });
+
   it("blocks old context before a correction and publishes only the new desired set", async () => {
     const runtimeDirectory = temporaryRuntimeDirectory();
     let sourceRevision = "source-old";

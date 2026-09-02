@@ -26,7 +26,12 @@ import { rebuildTrainingRecordView } from "../storage/training-record.js";
 import {
   canonicalizeJcs,
   canonicalTextBytes,
+  readPersonalDataRepositoryInitialization,
   resolveStellaPersonalDataPaths,
+} from "./runtime-contract.js";
+import type {
+  PersonalDataRepositoryInitialization,
+  StellaPersonalDataPaths,
 } from "./runtime-contract.js";
 import type { FitnessProjectionPointerSnapshot } from "./sync-coordinator.js";
 
@@ -134,7 +139,10 @@ export async function inspectFitnessContextProjectionSource(options: {
   readonly openclawConfig: unknown;
 }): Promise<{ readonly sourceRevision: string; readonly asOf: string }> {
   const paths = resolveStellaPersonalDataPaths(options.openclawConfig);
-  const snapshot = await buildFitnessProjectionSnapshot(paths.fitnessData);
+  const snapshot = await buildFitnessProjectionSnapshot(
+    paths.fitnessData,
+    readPersonalDataRepositoryInitialization(paths).initializedAt,
+  );
   return {
     sourceRevision: snapshot.sourceRevision,
     asOf: snapshot.sourceAsOf,
@@ -247,9 +255,14 @@ export async function publishFitnessContextProjection(options: {
 }): Promise<FitnessProjectionPublishResult> {
   const paths = resolveStellaPersonalDataPaths(options.openclawConfig);
   const publicationRoot = validatePublicationRoot(paths.repository, paths.fitnessToRuntime);
+  const repositoryInitialization = readPersonalDataRepositoryInitialization(paths);
   const snapshot = await buildFitnessProjectionSnapshot(
     paths.fitnessData,
-    options.testHooks?.afterSourceSnapshot,
+    repositoryInitialization.initializedAt,
+    async () => {
+      assertRepositoryInitializationUnchanged(paths, repositoryInitialization);
+      await options.testHooks?.afterSourceSnapshot?.();
+    },
   );
   const generatedAt = canonicalTimestamp(options.generatedAt ?? new Date().toISOString());
   const publication = buildProjectionPublication({
@@ -274,6 +287,7 @@ export async function publishFitnessContextProjection(options: {
     await options.testHooks?.afterLock?.();
     crashAtPhase(options.testHooks?.crashAfterPhase, "locked");
     await assertSourceInventoryUnchanged(paths.fitnessData, snapshot.sourceInventory);
+    assertRepositoryInitializationUnchanged(paths, repositoryInitialization);
     const revisionsRoot = join(publicationRoot, "revisions");
     const revisionDirectory = join(revisionsRoot, publication.projectionRevision);
     await mkdir(revisionsRoot, { recursive: true, mode: 0o700 });
@@ -303,6 +317,7 @@ export async function publishFitnessContextProjection(options: {
       changedAt: generatedAt,
     });
     await assertSourceInventoryUnchanged(paths.fitnessData, snapshot.sourceInventory);
+    assertRepositoryInitializationUnchanged(paths, repositoryInitialization);
     const currentStatus = currentPointer === undefined
       ? undefined
       : parseProjectionPointer(currentPointer);
@@ -338,6 +353,16 @@ export async function publishFitnessContextProjection(options: {
     throw error;
   } finally {
     if (!preserveLock) await releasePublishLock(lock);
+  }
+}
+
+function assertRepositoryInitializationUnchanged(
+  paths: StellaPersonalDataPaths,
+  expected: PersonalDataRepositoryInitialization,
+): void {
+  const current = readPersonalDataRepositoryInitialization(paths);
+  if (!canonicalizeJcs(current).equals(canonicalizeJcs(expected))) {
+    throw new Error("FITNESS_PROJECTION_SOURCE_CHANGED");
   }
 }
 
@@ -573,6 +598,7 @@ function crashAtPhase(
 
 async function buildFitnessProjectionSnapshot(
   personalDataDirectory: string,
+  repositoryInitializedAt: string,
   afterSourceSnapshot?: () => Promise<void> | void,
 ): Promise<FitnessProjectionSnapshot> {
   const initialInventory = await canonicalSourceInventory(personalDataDirectory);
@@ -706,7 +732,7 @@ async function buildFitnessProjectionSnapshot(
     sourceTimes.push(observation.provenance.recordedAt);
   }
   if (sourceTimes.length === 0) {
-    throw new Error("FITNESS_PROJECTION_SOURCE_EMPTY");
+    sourceTimes.push(repositoryInitializedAt);
   }
   documents.sort((left, right) => left.id.localeCompare(right.id));
   references.sort((left, right) => left.id.localeCompare(right.id));
