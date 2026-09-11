@@ -45,7 +45,7 @@
     "openclaw": ">=2026.6.34"
   },
   "dependencies": {
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.4",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
